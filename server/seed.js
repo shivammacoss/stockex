@@ -1,0 +1,337 @@
+import mongoose from 'mongoose';
+import dotenv from 'dotenv';
+import Admin from './models/Admin.js';
+import User from './models/User.js';
+
+dotenv.config();
+
+/**
+ * Hierarchy Structure:
+ * SUPER_ADMIN (Level 0) - Can create ADMIN, BROKER, SUB_BROKER directly + Users
+ * ADMIN (Level 1) - Can create BROKER, SUB_BROKER directly + Users
+ * BROKER (Level 2) - Can create SUB_BROKER + Users
+ * SUB_BROKER (Level 3) - Can create Users only
+ * 
+ * Each role can have their own personal users (trading clients)
+ * 
+ * Example:
+ * SUPER_ADMIN
+ * ├── ADMIN (under Super Admin)
+ * │   ├── BROKER (under Admin)
+ * │   ├── SUB_BROKER (under Admin)
+ * │   └── Users (under Admin)
+ * ├── BROKER (directly under Super Admin)
+ * │   ├── SUB_BROKER (under Broker)
+ * │   └── Users (under Broker)
+ * ├── SUB_BROKER (directly under Super Admin)
+ * │   └── Users (under Sub Broker)
+ * └── Users (under Super Admin - not allowed, must create via Admin/Broker/SubBroker)
+ */
+
+const seedHierarchy = async () => {
+  try {
+    await mongoose.connect(process.env.MONGODB_URI);
+    console.log('MongoDB Connected');
+    console.log('\n========== SEEDING HIERARCHY ==========\n');
+
+    // ========== 1. SUPER ADMIN ==========
+    let superAdmin = await Admin.findOne({ role: 'SUPER_ADMIN' });
+    
+    if (superAdmin) {
+      console.log('✓ Super Admin already exists!');
+      console.log('  Email:', superAdmin.email);
+    } else {
+      superAdmin = await Admin.create({
+        role: 'SUPER_ADMIN',
+        username: 'superadmin',
+        name: 'Super Administrator',
+        email: 'superadmin@ntrader.com',
+        phone: '9999999999',
+        password: 'admin123', 
+        pin: '1234',
+        wallet: { balance: 10000000 }, // 1 Crore initial balance
+        hierarchyLevel: 0,
+        hierarchyPath: []
+      });
+      
+      console.log('✓ Super Admin Created!');
+      console.log('  Email: superadmin@ntrader.com');
+      console.log('  Password: admin123');
+      console.log('  Admin Code:', superAdmin.adminCode);
+    }
+
+    // ========== 2. ADMIN (created by Super Admin) ==========
+    let admin = await Admin.findOne({ role: 'ADMIN', username: 'demoadmin' });
+    
+    if (admin) {
+      console.log('\n✓ Demo Admin already exists!');
+      console.log('  Admin Code:', admin.adminCode);
+    } else {
+      admin = await Admin.create({
+        role: 'ADMIN',
+        username: 'demoadmin',
+        name: 'Demo Admin',
+        email: 'admin@ntrader.com',
+        phone: '9876543210',
+        password: 'admin123',
+        pin: '1234',
+        wallet: { balance: 1000000 }, // 10 Lakh initial balance
+        createdBy: superAdmin._id,
+        parentId: superAdmin._id,
+        hierarchyPath: [superAdmin._id]
+      });
+      
+      console.log('\n✓ Demo Admin Created!');
+      console.log('  Email: admin@ntrader.com');
+      console.log('  Password: admin123');
+      console.log('  Admin Code:', admin.adminCode);
+      console.log('  Created By: Super Admin');
+    }
+
+    // ========== 3. BROKER (created by Admin) ==========
+    let broker = await Admin.findOne({ role: 'BROKER', username: 'demobroker' });
+    
+    if (broker) {
+      console.log('\n✓ Demo Broker (under Admin) already exists!');
+      console.log('  Admin Code:', broker.adminCode);
+    } else {
+      broker = await Admin.create({
+        role: 'BROKER',
+        username: 'demobroker',
+        name: 'Demo Broker',
+        email: 'broker@ntrader.com',
+        phone: '9876543211',
+        password: 'admin123',
+        pin: '1234',
+        wallet: { balance: 500000 }, // 5 Lakh initial balance
+        createdBy: admin._id,
+        parentId: admin._id,
+        hierarchyPath: [superAdmin._id, admin._id]
+      });
+      
+      console.log('\n✓ Demo Broker Created (under Admin)!');
+      console.log('  Email: broker@ntrader.com');
+      console.log('  Password: admin123');
+      console.log('  Admin Code:', broker.adminCode);
+      console.log('  Created By: Demo Admin');
+    }
+
+    // ========== 3b. BROKER (created directly by Super Admin) ==========
+    let superBroker = await Admin.findOne({ role: 'BROKER', username: 'superbroker' });
+    
+    if (superBroker) {
+      console.log('\n✓ Super Broker (under Super Admin) already exists!');
+      console.log('  Admin Code:', superBroker.adminCode);
+    } else {
+      superBroker = await Admin.create({
+        role: 'BROKER',
+        username: 'superbroker',
+        name: 'Super Broker',
+        email: 'superbroker@ntrader.com',
+        phone: '9876543220',
+        password: 'admin123',
+        pin: '1234',
+        wallet: { balance: 500000 },
+        createdBy: superAdmin._id,
+        parentId: superAdmin._id,
+        hierarchyPath: [superAdmin._id]
+      });
+      
+      console.log('\n✓ Super Broker Created (directly under Super Admin)!');
+      console.log('  Email: superbroker@ntrader.com');
+      console.log('  Password: admin123');
+      console.log('  Admin Code:', superBroker.adminCode);
+      console.log('  Created By: Super Admin');
+    }
+
+    // ========== 4. SUB BROKER (created by Broker) ==========
+    let subBroker = await Admin.findOne({ role: 'SUB_BROKER', username: 'demosubbroker' });
+    
+    if (subBroker) {
+      console.log('\n✓ Demo Sub Broker (under Broker) already exists!');
+      console.log('  Admin Code:', subBroker.adminCode);
+    } else {
+      subBroker = await Admin.create({
+        role: 'SUB_BROKER',
+        username: 'demosubbroker',
+        name: 'Demo Sub Broker',
+        email: 'subbroker@ntrader.com',
+        phone: '9876543212',
+        password: 'admin123',
+        pin: '1234',
+        wallet: { balance: 100000 }, // 1 Lakh initial balance
+        createdBy: broker._id,
+        parentId: broker._id,
+        hierarchyPath: [superAdmin._id, admin._id, broker._id]
+      });
+      
+      console.log('\n✓ Demo Sub Broker Created (under Broker)!');
+      console.log('  Email: subbroker@ntrader.com');
+      console.log('  Password: admin123');
+      console.log('  Admin Code:', subBroker.adminCode);
+      console.log('  Created By: Demo Broker');
+    }
+
+    // ========== 4b. SUB BROKER (created directly by Admin) ==========
+    let adminSubBroker = await Admin.findOne({ role: 'SUB_BROKER', username: 'adminsubbroker' });
+    
+    if (adminSubBroker) {
+      console.log('\n✓ Admin Sub Broker (under Admin) already exists!');
+      console.log('  Admin Code:', adminSubBroker.adminCode);
+    } else {
+      adminSubBroker = await Admin.create({
+        role: 'SUB_BROKER',
+        username: 'adminsubbroker',
+        name: 'Admin Sub Broker',
+        email: 'adminsubbroker@ntrader.com',
+        phone: '9876543230',
+        password: 'admin123',
+        pin: '1234',
+        wallet: { balance: 100000 },
+        createdBy: admin._id,
+        parentId: admin._id,
+        hierarchyPath: [superAdmin._id, admin._id]
+      });
+      
+      console.log('\n✓ Admin Sub Broker Created (directly under Admin)!');
+      console.log('  Email: adminsubbroker@ntrader.com');
+      console.log('  Password: admin123');
+      console.log('  Admin Code:', adminSubBroker.adminCode);
+      console.log('  Created By: Demo Admin');
+    }
+
+    // ========== 4c. SUB BROKER (created directly by Super Admin) ==========
+    let superSubBroker = await Admin.findOne({ role: 'SUB_BROKER', username: 'supersubbroker' });
+    
+    if (superSubBroker) {
+      console.log('\n✓ Super Sub Broker (under Super Admin) already exists!');
+      console.log('  Admin Code:', superSubBroker.adminCode);
+    } else {
+      superSubBroker = await Admin.create({
+        role: 'SUB_BROKER',
+        username: 'supersubbroker',
+        name: 'Super Sub Broker',
+        email: 'supersubbroker@ntrader.com',
+        phone: '9876543240',
+        password: 'admin123',
+        pin: '1234',
+        wallet: { balance: 100000 },
+        createdBy: superAdmin._id,
+        parentId: superAdmin._id,
+        hierarchyPath: [superAdmin._id]
+      });
+      
+      console.log('\n✓ Super Sub Broker Created (directly under Super Admin)!');
+      console.log('  Email: supersubbroker@ntrader.com');
+      console.log('  Password: admin123');
+      console.log('  Admin Code:', superSubBroker.adminCode);
+      console.log('  Created By: Super Admin');
+    }
+
+    // ========== 5. SAMPLE USERS FOR EACH LEVEL ==========
+    console.log('\n---------- Creating Sample Users ----------');
+
+    // User under Admin
+    let adminUser = await User.findOne({ username: 'adminuser1' });
+    if (!adminUser) {
+      adminUser = await User.create({
+        username: 'adminuser1',
+        email: 'adminuser1@ntrader.com',
+        password: 'user123',
+        fullName: 'Admin User 1',
+        phone: '9000000001',
+        admin: admin._id,
+        adminCode: admin.adminCode,
+        creatorRole: 'ADMIN',
+        hierarchyPath: [superAdmin._id, admin._id],
+        createdBy: admin._id
+      });
+      console.log('\n✓ User created under Admin');
+      console.log('  Email: adminuser1@ntrader.com');
+      console.log('  Password: user123');
+    } else {
+      console.log('\n✓ Admin User already exists');
+    }
+
+    // User under Broker
+    let brokerUser = await User.findOne({ username: 'brokeruser1' });
+    if (!brokerUser) {
+      brokerUser = await User.create({
+        username: 'brokeruser1',
+        email: 'brokeruser1@ntrader.com',
+        password: 'user123',
+        fullName: 'Broker User 1',
+        phone: '9000000002',
+        admin: broker._id,
+        adminCode: broker.adminCode,
+        creatorRole: 'BROKER',
+        hierarchyPath: [superAdmin._id, admin._id, broker._id],
+        createdBy: broker._id
+      });
+      console.log('\n✓ User created under Broker');
+      console.log('  Email: brokeruser1@ntrader.com');
+      console.log('  Password: user123');
+    } else {
+      console.log('\n✓ Broker User already exists');
+    }
+
+    // User under Sub Broker
+    let subBrokerUser = await User.findOne({ username: 'subbrokeruser1' });
+    if (!subBrokerUser) {
+      subBrokerUser = await User.create({
+        username: 'subbrokeruser1',
+        email: 'subbrokeruser1@ntrader.com',
+        password: 'user123',
+        fullName: 'Sub Broker User 1',
+        phone: '9000000003',
+        admin: subBroker._id,
+        adminCode: subBroker.adminCode,
+        creatorRole: 'SUB_BROKER',
+        hierarchyPath: [superAdmin._id, admin._id, broker._id, subBroker._id],
+        createdBy: subBroker._id
+      });
+      console.log('\n✓ User created under Sub Broker');
+      console.log('  Email: subbrokeruser1@ntrader.com');
+      console.log('  Password: user123');
+    } else {
+      console.log('\n✓ Sub Broker User already exists');
+    }
+
+    // ========== SUMMARY ==========
+    console.log('\n========================================');
+    console.log('         HIERARCHY SUMMARY');
+    console.log('========================================');
+    console.log(`
+SUPER_ADMIN (Level 0) - ${superAdmin.email} (Code: ${superAdmin.adminCode})
+│
+├── ADMIN (Level 1) - ${admin.email} (Code: ${admin.adminCode})
+│   ├── User: adminuser1@ntrader.com
+│   ├── BROKER - ${broker.email} (Code: ${broker.adminCode})
+│   │   ├── User: brokeruser1@ntrader.com
+│   │   └── SUB_BROKER - ${subBroker.email} (Code: ${subBroker.adminCode})
+│   │       └── User: subbrokeruser1@ntrader.com
+│   └── SUB_BROKER - ${adminSubBroker.email} (Code: ${adminSubBroker.adminCode})
+│
+├── BROKER (directly under Super Admin) - ${superBroker.email} (Code: ${superBroker.adminCode})
+│
+└── SUB_BROKER (directly under Super Admin) - ${superSubBroker.email} (Code: ${superSubBroker.adminCode})
+
+PERMISSIONS:
+- SUPER_ADMIN can create: ADMIN, BROKER, SUB_BROKER
+- ADMIN can create: BROKER, SUB_BROKER, Users
+- BROKER can create: SUB_BROKER, Users
+- SUB_BROKER can create: Users only
+    `);
+    console.log('========================================');
+    console.log('All passwords: admin123 (for admins), user123 (for users)');
+    console.log('========================================\n');
+
+    process.exit(0);
+  } catch (error) {
+    console.error('Error:', error.message);
+    console.error(error.stack);
+    process.exit(1);
+  }
+};
+
+seedHierarchy();
