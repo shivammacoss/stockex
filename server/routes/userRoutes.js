@@ -160,6 +160,14 @@ router.post('/login', async (req, res) => {
     }
 
     if (await user.comparePassword(password)) {
+      // Check if user is already logged in on another device
+      if (user.activeSessionToken) {
+        return res.status(403).json({ 
+          message: 'You are already logged in on another device. Please logout from that device first.',
+          code: 'ALREADY_LOGGED_IN'
+        });
+      }
+      
       // Generate unique session token for single device login
       const sessionToken = generateSessionToken();
       
@@ -196,6 +204,19 @@ router.post('/login', async (req, res) => {
     } else {
       res.status(401).json({ message: 'Invalid email or password' });
     }
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// User Logout - Clear session token to allow login from other devices
+router.post('/logout', protectUser, async (req, res) => {
+  try {
+    await User.updateOne(
+      { _id: req.user._id },
+      { activeSessionToken: null }
+    );
+    res.json({ message: 'Logged out successfully' });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
@@ -350,7 +371,7 @@ router.post('/withdraw-request', protectUser, async (req, res) => {
 // Get wallet info (enhanced with dual wallet system)
 router.get('/wallet', protectUser, async (req, res) => {
   try {
-    const user = await User.findById(req.user._id).select('wallet cryptoWallet marginSettings rmsSettings');
+    const user = await User.findById(req.user._id).select('wallet cryptoWallet mcxWallet marginSettings rmsSettings');
     
     // Dual wallet system - Main Wallet (cashBalance) and Trading Account (tradingBalance)
     // Handle legacy: if cashBalance is 0 but balance has value, use balance as cashBalance
@@ -393,6 +414,17 @@ router.get('/wallet', protectUser, async (req, res) => {
         realizedPnL: user.cryptoWallet?.realizedPnL || 0,
         unrealizedPnL: user.cryptoWallet?.unrealizedPnL || 0,
         todayRealizedPnL: user.cryptoWallet?.todayRealizedPnL || 0
+      },
+      
+      // Separate MCX Wallet - For MCX Futures and Options trading
+      mcxWallet: {
+        balance: user.mcxWallet?.balance || 0,
+        usedMargin: user.mcxWallet?.usedMargin || 0,
+        realizedPnL: user.mcxWallet?.realizedPnL || 0,
+        unrealizedPnL: user.mcxWallet?.unrealizedPnL || 0,
+        todayRealizedPnL: user.mcxWallet?.todayRealizedPnL || 0,
+        todayUnrealizedPnL: user.mcxWallet?.todayUnrealizedPnL || 0,
+        availableBalance: (user.mcxWallet?.balance || 0) - (user.mcxWallet?.usedMargin || 0)
       },
       
       // Legacy fields for backward compatibility

@@ -680,7 +680,7 @@ router.post('/admin/rms-check', protectAdmin, async (req, res) => {
   }
 });
 
-// Run intraday square-off (Admin)
+// Run intraday square-off (Admin) - Legacy, kept for manual square-off
 router.post('/admin/intraday-squareoff', protectAdmin, async (req, res) => {
   try {
     const { segment = 'EQUITY' } = req.body;
@@ -688,6 +688,27 @@ router.post('/admin/intraday-squareoff', protectAdmin, async (req, res) => {
     res.json({ 
       message: `Intraday square-off completed. ${squaredOff.length} trades closed.`,
       trades: squaredOff 
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Convert intraday to carry forward (Admin) - New method
+router.post('/admin/intraday-to-carryforward', protectAdmin, async (req, res) => {
+  try {
+    const { segment = 'EQUITY' } = req.body;
+    const result = await TradeService.runIntradayToCarryForward(segment);
+    
+    const totalConverted = result.convertedTrades.length;
+    const totalPartial = result.partiallyConvertedTrades.length;
+    const totalFailed = result.failedTrades.length;
+    
+    res.json({ 
+      message: `Intraday to Carry Forward conversion completed. ${totalConverted} fully converted, ${totalPartial} partially converted, ${totalFailed} failed.`,
+      convertedTrades: result.convertedTrades,
+      partiallyConvertedTrades: result.partiallyConvertedTrades,
+      failedTrades: result.failedTrades
     });
   } catch (error) {
     res.status(500).json({ message: error.message });

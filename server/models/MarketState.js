@@ -127,10 +127,8 @@ marketStateSchema.statics.isTradingAllowed = async function(segment = 'EQUITY') 
     return { allowed: false, reason: `${segment} segment is closed` };
   }
   
-  // Check if global market is open
-  if (!state.isMarketOpen) {
-    return { allowed: false, reason: 'Market is closed' };
-  }
+  // Note: If segment is explicitly open, we don't check global isMarketOpen
+  // This allows MCX to be open even when NSE/EQUITY is closed
   
   // Check if today is a closed day for this segment
   const today = new Date().getDay(); // 0=Sunday, 1=Monday, ..., 6=Saturday

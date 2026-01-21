@@ -3,7 +3,7 @@ import { useAuth } from '../context/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import {
-  Wallet, Plus, Minus, RefreshCw, IndianRupee, MoreHorizontal, X, ArrowRight, ArrowLeftRight, Bitcoin, DollarSign
+  Wallet, Plus, Minus, RefreshCw, IndianRupee, MoreHorizontal, X, ArrowRight, ArrowLeftRight, Bitcoin, DollarSign, Gem
 } from 'lucide-react';
 
 const UserAccounts = () => {
@@ -15,6 +15,8 @@ const UserAccounts = () => {
   const [transferDirection, setTransferDirection] = useState('toAccount'); // 'toAccount' or 'toWallet'
   const [showCryptoTransferModal, setShowCryptoTransferModal] = useState(false);
   const [cryptoTransferDirection, setCryptoTransferDirection] = useState('toCrypto'); // 'toCrypto' or 'fromCrypto'
+  const [showMcxTransferModal, setShowMcxTransferModal] = useState(false);
+  const [mcxTransferDirection, setMcxTransferDirection] = useState('toMcx'); // 'toMcx' or 'fromMcx'
 
   useEffect(() => {
     fetchWallet();
@@ -54,6 +56,12 @@ const UserAccounts = () => {
   const cryptoBalance = walletData?.cryptoWallet?.balance || 0;
   const cryptoRealizedPnL = walletData?.cryptoWallet?.realizedPnL || 0;
 
+  // MCX wallet balance (INR for MCX trading)
+  const mcxBalance = walletData?.mcxWallet?.balance || 0;
+  const mcxUsedMargin = walletData?.mcxWallet?.usedMargin || 0;
+  const mcxAvailableBalance = mcxBalance - mcxUsedMargin;
+  const mcxRealizedPnL = walletData?.mcxWallet?.realizedPnL || 0;
+
   const openCryptoTransfer = (direction) => {
     setCryptoTransferDirection(direction);
     setShowCryptoTransferModal(true);
@@ -61,6 +69,15 @@ const UserAccounts = () => {
 
   const openCryptoTrading = () => {
     navigate('/user/trader-room?mode=crypto');
+  };
+
+  const openMcxTransfer = (direction) => {
+    setMcxTransferDirection(direction);
+    setShowMcxTransferModal(true);
+  };
+
+  const openMcxTrading = () => {
+    navigate('/user/trader-room?mode=mcx');
   };
 
   if (loading) {
@@ -218,6 +235,77 @@ const UserAccounts = () => {
             </button>
           </div>
         </div>
+
+        {/* MCX Account */}
+        <div className="bg-dark-800 rounded-xl overflow-hidden">
+          {/* Account Header */}
+          <div className="p-4 border-b border-dark-600">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 bg-gradient-to-br from-yellow-500 to-amber-600 rounded-lg flex items-center justify-center">
+                  <Gem size={20} className="text-white" />
+                </div>
+                <div>
+                  <div className="font-semibold">MCX-{user?.userId?.slice(-5) || '00000'}</div>
+                  <div className="text-xs text-gray-500">COMMODITY TRADING</div>
+                </div>
+              </div>
+              <button className="text-gray-400 hover:text-white">
+                <MoreHorizontal size={20} />
+              </button>
+            </div>
+          </div>
+
+          {/* Account Body */}
+          <div className="p-6 bg-gradient-to-br from-yellow-900/20 to-dark-800">
+            <div className="flex items-center gap-2 mb-4">
+              <span className="w-2 h-2 bg-yellow-400 rounded-full"></span>
+              <span className="text-sm text-yellow-400">MCX Account</span>
+            </div>
+            
+            <div className="text-4xl font-bold mb-1">
+              ₹{mcxBalance.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+            </div>
+            <div className="text-sm text-gray-500">MCX Trading Balance</div>
+            {mcxUsedMargin > 0 && (
+              <div className="text-xs text-yellow-400 mt-1">
+                Margin Used: ₹{mcxUsedMargin.toLocaleString()} | Available: ₹{mcxAvailableBalance.toLocaleString()}
+              </div>
+            )}
+            {mcxRealizedPnL !== 0 && (
+              <div className={`text-xs mt-1 ${mcxRealizedPnL >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                P&L: {mcxRealizedPnL >= 0 ? '+' : ''}₹{mcxRealizedPnL.toLocaleString()}
+              </div>
+            )}
+          </div>
+
+          {/* Account Actions */}
+          <div className="p-4 flex gap-2">
+            <button 
+              onClick={openMcxTrading}
+              className="flex-1 flex items-center justify-center gap-2 bg-yellow-600 hover:bg-yellow-700 py-3 rounded-lg font-medium transition"
+            >
+              <Gem size={18} />
+              Trade
+            </button>
+            <button 
+              onClick={() => openMcxTransfer('toMcx')}
+              className="flex items-center justify-center gap-2 bg-green-600 hover:bg-green-700 px-4 py-3 rounded-lg transition"
+              title="Transfer from Main Wallet to MCX Account"
+            >
+              <Plus size={18} />
+              Deposit
+            </button>
+            <button 
+              onClick={() => openMcxTransfer('fromMcx')}
+              className="flex items-center justify-center gap-2 bg-red-600 hover:bg-red-700 px-4 py-3 rounded-lg transition"
+              title="Transfer from MCX Account to Main Wallet"
+            >
+              <Minus size={18} />
+              Withdraw
+            </button>
+          </div>
+        </div>
       </div>
 
       {/* Account Summary */}
@@ -240,6 +328,12 @@ const UserAccounts = () => {
             <div className="text-sm text-gray-400 mb-1">Crypto Account</div>
             <div className="text-2xl font-bold text-orange-400">
               ${cryptoBalance.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+            </div>
+          </div>
+          <div>
+            <div className="text-sm text-gray-400 mb-1">MCX Account</div>
+            <div className="text-2xl font-bold text-yellow-400">
+              ₹{mcxBalance.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
             </div>
           </div>
           <div>
@@ -284,6 +378,18 @@ const UserAccounts = () => {
           direction={cryptoTransferDirection}
           onClose={() => setShowCryptoTransferModal(false)}
           onSuccess={() => { fetchWallet(); setShowCryptoTransferModal(false); }}
+        />
+      )}
+
+      {/* MCX Transfer Modal */}
+      {showMcxTransferModal && (
+        <McxTransferModal
+          user={user}
+          walletBalance={mainWalletBalance}
+          mcxBalance={mcxAvailableBalance}
+          direction={mcxTransferDirection}
+          onClose={() => setShowMcxTransferModal(false)}
+          onSuccess={() => { fetchWallet(); setShowMcxTransferModal(false); }}
         />
       )}
     </div>
@@ -562,6 +668,145 @@ const CryptoTransferModal = ({ user, walletBalance, cryptoBalance, direction, on
             className="w-full bg-orange-600 hover:bg-orange-700 disabled:opacity-50 py-3 rounded-lg font-medium transition"
           >
             {loading ? 'Transferring...' : `Transfer to ${destLabel.split(' ')[0]}`}
+          </button>
+        </form>
+      </div>
+    </div>
+  );
+};
+
+// MCX Transfer Modal - Transfer between Main Wallet and MCX Account
+const McxTransferModal = ({ user, walletBalance, mcxBalance, direction, onClose, onSuccess }) => {
+  const [amount, setAmount] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  const isToMcx = direction === 'toMcx';
+  const sourceBalance = isToMcx ? walletBalance : mcxBalance;
+  const sourceLabel = isToMcx ? 'Main Wallet' : 'MCX Account';
+  const destLabel = isToMcx ? 'MCX Account' : 'Main Wallet';
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    const amt = parseFloat(amount);
+    
+    if (!amt || amt <= 0) {
+      setError('Please enter a valid amount');
+      return;
+    }
+    if (amt > sourceBalance) {
+      setError(`Insufficient balance in ${sourceLabel}`);
+      return;
+    }
+
+    setLoading(true);
+    setError('');
+
+    try {
+      await axios.post('/api/user/funds/mcx-transfer', {
+        amount: amt,
+        direction: direction // 'toMcx' or 'fromMcx'
+      }, {
+        headers: { Authorization: `Bearer ${user.token}` }
+      });
+      onSuccess();
+    } catch (err) {
+      setError(err.response?.data?.message || 'Transfer failed');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+      <div className="bg-dark-800 rounded-xl w-full max-w-md p-6">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-lg font-bold flex items-center gap-2">
+            <Gem size={20} className="text-yellow-400" />
+            MCX Transfer
+          </h3>
+          <button onClick={onClose} className="text-gray-400 hover:text-white">
+            <X size={20} />
+          </button>
+        </div>
+
+        {/* Transfer Direction Display */}
+        <div className="bg-dark-700 rounded-lg p-4 mb-4">
+          <div className="flex items-center justify-between">
+            <div className="text-center flex-1">
+              <div className="text-xs text-gray-400 mb-1">{sourceLabel}</div>
+              <div className={`text-lg font-bold ${isToMcx ? 'text-blue-400' : 'text-yellow-400'}`}>
+                ₹{sourceBalance.toLocaleString()}
+              </div>
+            </div>
+            <div className="px-4">
+              <ArrowRight size={24} className="text-yellow-400" />
+            </div>
+            <div className="text-center flex-1">
+              <div className="text-xs text-gray-400 mb-1">{destLabel}</div>
+              <div className={`text-lg font-bold ${isToMcx ? 'text-yellow-400' : 'text-blue-400'}`}>
+                ₹{(isToMcx ? mcxBalance : walletBalance).toLocaleString()}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* MCX Info */}
+        <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-lg p-3 mb-4 text-sm">
+          <div className="flex items-center gap-2 text-yellow-400">
+            <Gem size={16} />
+            <span>MCX Commodity Trading Account</span>
+          </div>
+          <div className="mt-1 text-gray-300 text-xs">
+            Trade Gold, Silver, Crude Oil, Natural Gas & more
+          </div>
+        </div>
+
+        {error && (
+          <div className="bg-red-500/20 text-red-400 p-3 rounded-lg mb-4 text-sm">
+            {error}
+          </div>
+        )}
+
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <label className="block text-sm text-gray-400 mb-1">Amount (₹)</label>
+            <input
+              type="number"
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+              placeholder="Enter amount to transfer"
+              className="w-full bg-dark-700 border border-dark-600 rounded-lg px-4 py-3 focus:outline-none focus:border-yellow-500 text-lg"
+            />
+          </div>
+
+          {/* Quick Amount Buttons */}
+          <div className="flex gap-2 flex-wrap">
+            {[1000, 5000, 10000, 50000].map(amt => (
+              <button
+                key={amt}
+                type="button"
+                onClick={() => setAmount(String(sourceBalance > 0 ? Math.min(amt, sourceBalance) : amt))}
+                className="flex-1 min-w-[60px] bg-dark-700 hover:bg-dark-600 py-2 rounded text-sm transition"
+              >
+                ₹{amt.toLocaleString()}
+              </button>
+            ))}
+            <button
+              type="button"
+              onClick={() => setAmount(String(Math.max(sourceBalance, 0)))}
+              className="flex-1 min-w-[60px] bg-yellow-600 hover:bg-yellow-700 py-2 rounded text-sm font-medium transition"
+            >
+              Max
+            </button>
+          </div>
+
+          <button
+            type="submit"
+            disabled={loading}
+            className="w-full bg-yellow-600 hover:bg-yellow-700 disabled:opacity-50 py-3 rounded-lg font-medium transition"
+          >
+            {loading ? 'Transferring...' : `Transfer to ${destLabel}`}
           </button>
         </form>
       </div>

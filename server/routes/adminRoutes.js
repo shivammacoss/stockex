@@ -64,7 +64,11 @@ router.post('/login', async (req, res) => {
       return res.status(401).json({ message: 'Invalid email or password' });
     }
 
-    // Return all necessary fields
+    // Update last login time
+    admin.lastLoginAt = new Date();
+    await admin.save();
+
+    // Return all necessary fields (admins can login from multiple devices)
     res.json({
       _id: admin._id,
       username: admin.username,
@@ -81,6 +85,15 @@ router.post('/login', async (req, res) => {
       stats: admin.stats,
       token: generateToken(admin._id)
     });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Admin Logout (just clears local storage on client, no server action needed for multi-device)
+router.post('/logout', protectAdmin, async (req, res) => {
+  try {
+    res.json({ message: 'Logged out successfully' });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
@@ -311,6 +324,30 @@ router.delete('/users/:id', protectAdmin, async (req, res) => {
     }
     await User.findByIdAndDelete(req.params.id);
     res.json({ message: 'User deleted successfully' });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Force logout user (Super Admin only) - Clear user's session token
+router.post('/users/:id/force-logout', protectAdmin, async (req, res) => {
+  try {
+    if (req.admin.role !== 'SUPER_ADMIN') {
+      return res.status(403).json({ message: 'Only Super Admin can force logout users' });
+    }
+
+    const user = await User.findById(req.params.id);
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    // Clear the session token to force logout
+    await User.updateOne(
+      { _id: req.params.id },
+      { $set: { activeSessionToken: null } }
+    );
+
+    res.json({ message: 'User has been logged out successfully' });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }

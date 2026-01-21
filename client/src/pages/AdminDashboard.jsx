@@ -168,8 +168,8 @@ const AdminDashboard = () => {
     }
   };
 
-  const handleLogout = () => {
-    logoutAdmin();
+  const handleLogout = async () => {
+    await logoutAdmin();
     navigate('/admin/login');
   };
 
@@ -11214,6 +11214,7 @@ const ProfileSettings = () => {
 // All Users Management (Super Admin only) - View all users and transfer between admins
 const AllUsersManagement = () => {
   const { admin } = useAuth();
+  const isSuperAdmin = admin?.role === 'SUPER_ADMIN';
   const [users, setUsers] = useState([]);
   const [admins, setAdmins] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -11428,6 +11429,21 @@ const AllUsersManagement = () => {
       fetchAllUsers();
     } catch (error) {
       alert(error.response?.data?.message || 'Error deleting user');
+    }
+  };
+
+  const handleForceLogoutUser = async (userId, username) => {
+    if (!confirm(`Are you sure you want to force logout user "${username}"? They will be logged out from all devices.`)) {
+      return;
+    }
+    try {
+      await axios.post(`/api/admin/users/${userId}/force-logout`, {}, {
+        headers: { Authorization: `Bearer ${admin.token}` }
+      });
+      alert('User has been logged out successfully');
+      fetchAllUsers();
+    } catch (error) {
+      alert(error.response?.data?.message || 'Error logging out user');
     }
   };
 
@@ -11700,6 +11716,15 @@ const AllUsersManagement = () => {
                       >
                         <UserPlus size={16} />
                       </button>
+                      {isSuperAdmin && (
+                        <button
+                          onClick={() => handleForceLogoutUser(user._id, user.fullName || user.username)}
+                          className="p-2 hover:bg-dark-600 rounded transition text-orange-400"
+                          title="Force Logout User"
+                        >
+                          <LogOut size={16} />
+                        </button>
+                      )}
                       <button
                         onClick={() => handleDeleteUser(user._id, user.username)}
                         className="p-2 hover:bg-dark-600 rounded transition text-red-400"
@@ -13655,6 +13680,7 @@ const CryptoWalletModal = ({ user, onClose, onSuccess, token }) => {
 
 const UserManagement = () => {
   const { admin } = useAuth();
+  const isSuperAdmin = admin?.role === 'SUPER_ADMIN';
   const navigate = useNavigate();
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -13963,6 +13989,7 @@ const UserManagement = () => {
                   <button onClick={() => openSettingsModal(user)} className="p-2 bg-dark-700 rounded text-purple-400"><Settings size={16} /></button>
                   <button onClick={() => { setSelectedUser(user); setShowCopyModal(true); }} className="p-2 bg-dark-700 rounded text-cyan-400"><Copy size={16} /></button>
                   <button onClick={() => { setSelectedUser(user); setShowWalletModal(true); }} className="p-2 bg-dark-700 rounded text-green-400" title="Manage INR Wallet"><Wallet size={16} /></button>
+                  {isSuperAdmin && <button onClick={() => handleForceLogoutUser(user._id, user.fullName || user.username)} className="p-2 bg-dark-700 rounded text-orange-400" title="Force Logout"><LogOut size={16} /></button>}
                   <button onClick={() => handleDelete(user._id)} className="p-2 bg-dark-700 rounded text-red-400"><Trash2 size={16} /></button>
                 </div>
               </div>
@@ -14063,6 +14090,15 @@ const UserManagement = () => {
                       >
                         <Wallet size={16} />
                       </button>
+                      {isSuperAdmin && (
+                        <button
+                          onClick={() => handleForceLogoutUser(user._id, user.fullName || user.username)}
+                          className="p-2 hover:bg-dark-600 rounded transition text-orange-400"
+                          title="Force Logout User"
+                        >
+                          <LogOut size={16} />
+                        </button>
+                      )}
                       <button
                         onClick={() => handleDelete(user._id)}
                         className="p-2 hover:bg-dark-600 rounded transition text-red-400"

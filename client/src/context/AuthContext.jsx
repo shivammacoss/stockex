@@ -10,12 +10,20 @@ export const AuthProvider = ({ children }) => {
   const [admin, setAdmin] = useState(null);
   const [loading, setLoading] = useState(true);
 
-  // Handle session expired from another device
-  const handleSessionExpired = useCallback((message) => {
+  // Handle session expired from another device (for users)
+  const handleUserSessionExpired = useCallback((message) => {
     setUser(null);
     localStorage.removeItem('user');
     sessionStorage.setItem('logout_message', message);
     window.location.href = '/login';
+  }, []);
+
+  // Handle session expired from another device (for admins)
+  const handleAdminSessionExpired = useCallback((message) => {
+    setAdmin(null);
+    localStorage.removeItem('admin');
+    sessionStorage.setItem('logout_message', message);
+    window.location.href = '/admin/login';
   }, []);
 
   useEffect(() => {
@@ -37,7 +45,13 @@ export const AuthProvider = ({ children }) => {
       (response) => response,
       (error) => {
         if (error.response?.status === 401 && error.response?.data?.code === 'SESSION_EXPIRED_OTHER_DEVICE') {
-          handleSessionExpired(error.response.data.message);
+          // Check if it's an admin or user request based on the URL
+          const requestUrl = error.config?.url || '';
+          if (requestUrl.includes('/api/admin/')) {
+            handleAdminSessionExpired(error.response.data.message);
+          } else {
+            handleUserSessionExpired(error.response.data.message);
+          }
         }
         return Promise.reject(error);
       }
@@ -46,7 +60,7 @@ export const AuthProvider = ({ children }) => {
     return () => {
       axios.interceptors.response.eject(interceptor);
     };
-  }, [handleSessionExpired]);
+  }, [handleUserSessionExpired, handleAdminSessionExpired]);
 
   const loginUser = async (email, password) => {
     const { data } = await axios.post('/api/user/login', { email, password });
@@ -83,16 +97,45 @@ export const AuthProvider = ({ children }) => {
     return data;
   };
 
-  const logoutUser = (message = null) => {
+  const logoutUser = async (message = null) => {
+    // Call logout API to clear session token on server
+    try {
+      const storedUser = localStorage.getItem('user');
+      if (storedUser) {
+        const userData = JSON.parse(storedUser);
+        if (userData.token) {
+          await axios.post('/api/user/logout', {}, {
+            headers: { Authorization: `Bearer ${userData.token}` }
+          });
+        }
+      }
+    } catch (error) {
+      console.error('Logout API error:', error);
+    }
+    
     setUser(null);
     localStorage.removeItem('user');
     if (message) {
-      // Store message to show on login page
       sessionStorage.setItem('logout_message', message);
     }
   };
 
-  const logoutAdmin = () => {
+  const logoutAdmin = async () => {
+    // Call logout API to clear session token on server
+    try {
+      const storedAdmin = localStorage.getItem('admin');
+      if (storedAdmin) {
+        const adminData = JSON.parse(storedAdmin);
+        if (adminData.token) {
+          await axios.post('/api/admin/logout', {}, {
+            headers: { Authorization: `Bearer ${adminData.token}` }
+          });
+        }
+      }
+    } catch (error) {
+      console.error('Admin logout API error:', error);
+    }
+    
     setAdmin(null);
     localStorage.removeItem('admin');
   };

@@ -244,6 +244,27 @@ const tradeSchema = new mongoose.Schema({
   closedAt: {
     type: Date,
     default: null
+  },
+  
+  // Intraday to Carry Forward conversion fields
+  convertedFromIntraday: {
+    type: Boolean,
+    default: false
+  },
+  conversionTime: {
+    type: Date,
+    default: null
+  },
+  conversionDetails: {
+    additionalMarginDeducted: { type: Number, default: 0 },
+    deductedFromProfit: { type: Number, default: 0 },
+    deductedFromBalance: { type: Number, default: 0 }
+  },
+  partialClose: {
+    closedQuantity: { type: Number, default: 0 },
+    closedLots: { type: Number, default: 0 },
+    closedPnL: { type: Number, default: 0 },
+    closeReason: { type: String, default: null }
   }
 }, { timestamps: true });
 

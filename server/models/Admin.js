@@ -86,6 +86,16 @@ const adminSchema = new mongoose.Schema({
     default: true
   },
   
+  // Session token for single device login - only one active session at a time
+  activeSessionToken: {
+    type: String,
+    default: null
+  },
+  lastLoginAt: {
+    type: Date,
+    default: null
+  },
+  
   // Admin Charges (for ADMIN role)
   charges: {
     brokerage: {

@@ -207,6 +207,40 @@ const userSchema = new mongoose.Schema({
       default: 0
     }
   },
+  
+  // Separate MCX Wallet - For MCX Futures and Options trading only
+  mcxWallet: {
+    // MCX Trading Balance in INR
+    balance: {
+      type: Number,
+      default: 0
+    },
+    // Used Margin - Currently blocked for open MCX positions
+    usedMargin: {
+      type: Number,
+      default: 0
+    },
+    // Realized P&L from MCX trades
+    realizedPnL: {
+      type: Number,
+      default: 0
+    },
+    // Unrealized P&L from open MCX positions
+    unrealizedPnL: {
+      type: Number,
+      default: 0
+    },
+    // Today's Realized P&L
+    todayRealizedPnL: {
+      type: Number,
+      default: 0
+    },
+    // Today's Unrealized P&L
+    todayUnrealizedPnL: {
+      type: Number,
+      default: 0
+    }
+  },
   // Margin Settings
   marginSettings: {
     // Equity Intraday Leverage (e.g., 5 means 5x)
@@ -490,6 +524,10 @@ userSchema.pre('save', async function(next) {
   }
   if (this.cryptoWallet && this.cryptoWallet.balance < 0) {
     this.cryptoWallet.balance = 0;
+  }
+  if (this.mcxWallet) {
+    if (this.mcxWallet.balance < 0) this.mcxWallet.balance = 0;
+    if (this.mcxWallet.usedMargin < 0) this.mcxWallet.usedMargin = 0;
   }
   
   next();

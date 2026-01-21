@@ -28,18 +28,39 @@ class TradeService {
     return notionalValue / leverage;
   }
   
+  // Check if trade segment is MCX (uses separate MCX wallet)
+  static isMcxTrade(segment, exchange) {
+    const segmentUpper = segment?.toUpperCase() || '';
+    const exchangeUpper = exchange?.toUpperCase() || '';
+    return segmentUpper === 'MCX' || segmentUpper === 'MCXFUT' || segmentUpper === 'MCXOPT' || 
+           segmentUpper === 'COMMODITY' || exchangeUpper === 'MCX';
+  }
+  
   // Validate if user has sufficient margin
-  static async validateMargin(userId, requiredMargin) {
+  static async validateMargin(userId, requiredMargin, segment = null, exchange = null) {
     const user = await User.findById(userId);
     if (!user) throw new Error('User not found');
     
-    const availableMargin = user.wallet.cashBalance - user.wallet.usedMargin + user.wallet.collateralValue;
+    // Use MCX wallet for MCX trades
+    const isMcx = this.isMcxTrade(segment, exchange);
+    let availableMargin;
+    let walletType;
     
-    if (availableMargin < requiredMargin) {
-      throw new Error(`Insufficient margin. Required: ₹${requiredMargin.toFixed(2)}, Available: ₹${availableMargin.toFixed(2)}`);
+    if (isMcx) {
+      const mcxBalance = user.mcxWallet?.balance || 0;
+      const mcxUsedMargin = user.mcxWallet?.usedMargin || 0;
+      availableMargin = mcxBalance - mcxUsedMargin;
+      walletType = 'MCX';
+    } else {
+      availableMargin = user.wallet.cashBalance - user.wallet.usedMargin + user.wallet.collateralValue;
+      walletType = 'Main';
     }
     
-    return { user, availableMargin };
+    if (availableMargin < requiredMargin) {
+      throw new Error(`Insufficient margin in ${walletType} Account. Required: ₹${requiredMargin.toFixed(2)}, Available: ₹${availableMargin.toFixed(2)}`);
+    }
+    
+    return { user, availableMargin, isMcx };
   }
   
   // Get user's segment settings for a trade
@@ -388,14 +409,22 @@ class TradeService {
       requiredMargin = this.calculateMargin(marginPrice, tradeData.quantity, lotSize, leverage, tradeData.productType);
     }
     
-    // 11. Validate margin
-    await this.validateMargin(userId, requiredMargin);
+    // 11. Validate margin - pass segment and exchange for MCX wallet check
+    const isMcx = this.isMcxTrade(tradeData.segment, tradeData.exchange);
+    await this.validateMargin(userId, requiredMargin, tradeData.segment, tradeData.exchange);
     
-    // 12. Block margin - use updateOne to avoid validation issues
-    await User.updateOne(
-      { _id: userId },
-      { $inc: { 'wallet.usedMargin': requiredMargin } }
-    );
+    // 12. Block margin - use MCX wallet for MCX trades
+    if (isMcx) {
+      await User.updateOne(
+        { _id: userId },
+        { $inc: { 'mcxWallet.usedMargin': requiredMargin } }
+      );
+    } else {
+      await User.updateOne(
+        { _id: userId },
+        { $inc: { 'wallet.usedMargin': requiredMargin } }
+      );
+    }
     
     // 13. Create trade with user's settings applied
     const trade = await Trade.create({
@@ -460,20 +489,36 @@ class TradeService {
     // Close trade and calculate P&L
     trade.closeTrade(exitPrice, reason);
     
+    // Check if MCX trade - use MCX wallet
+    const isMcx = this.isMcxTrade(trade.segment, trade.exchange);
+    
     // Release margin and book P&L - use updateOne to avoid validation issues
-    await User.updateOne(
-      { _id: user._id },
-      { $inc: { 
-        'wallet.usedMargin': -trade.marginUsed,
-        'wallet.cashBalance': trade.netPnL,
-        'wallet.realizedPnL': trade.netPnL,
-        'wallet.todayRealizedPnL': trade.netPnL
-      }}
-    );
+    if (isMcx) {
+      await User.updateOne(
+        { _id: user._id },
+        { $inc: { 
+          'mcxWallet.usedMargin': -trade.marginUsed,
+          'mcxWallet.balance': trade.netPnL,
+          'mcxWallet.realizedPnL': trade.netPnL,
+          'mcxWallet.todayRealizedPnL': trade.netPnL
+        }}
+      );
+    } else {
+      await User.updateOne(
+        { _id: user._id },
+        { $inc: { 
+          'wallet.usedMargin': -trade.marginUsed,
+          'wallet.cashBalance': trade.netPnL,
+          'wallet.realizedPnL': trade.netPnL,
+          'wallet.todayRealizedPnL': trade.netPnL
+        }}
+      );
+    }
     
     await trade.save();
     
     // Create ledger entry for user
+    const balanceAfter = isMcx ? (user.mcxWallet?.balance || 0) : user.wallet.cashBalance;
     await WalletLedger.create({
       ownerType: 'USER',
       ownerId: user._id,
@@ -481,9 +526,9 @@ class TradeService {
       type: trade.netPnL >= 0 ? 'CREDIT' : 'DEBIT',
       reason: 'TRADE_PNL',
       amount: Math.abs(trade.netPnL),
-      balanceAfter: user.wallet.cashBalance,
+      balanceAfter: balanceAfter,
       reference: { type: 'Trade', id: trade._id },
-      description: `${trade.symbol} ${trade.side} P&L`
+      description: `${trade.symbol} ${trade.side} P&L${isMcx ? ' (MCX)' : ''}`
     });
     
     // Update admin P&L (B_BOOK)
@@ -576,7 +621,284 @@ class TradeService {
     return squaredOffTrades;
   }
   
-  // Time-based auto square-off for intraday positions
+  // Convert intraday (MIS) positions to carry forward (NRML) at market close
+  // Instead of square-off, we convert to carry forward with leverage adjustment
+  static async runIntradayToCarryForward(segment = 'EQUITY') {
+    const openTrades = await Trade.find({ 
+      status: 'OPEN',
+      productType: 'MIS',
+      segment
+    });
+    
+    const convertedTrades = [];
+    const partiallyConvertedTrades = [];
+    const failedTrades = [];
+    
+    for (const trade of openTrades) {
+      try {
+        const result = await this.convertIntradayToCarryForward(trade);
+        if (result.fullyConverted) {
+          convertedTrades.push(result);
+        } else {
+          partiallyConvertedTrades.push(result);
+        }
+      } catch (error) {
+        console.error(`Failed to convert trade ${trade._id}:`, error.message);
+        failedTrades.push({ trade, error: error.message });
+      }
+    }
+    
+    return { convertedTrades, partiallyConvertedTrades, failedTrades };
+  }
+  
+  // Convert a single intraday trade to carry forward
+  static async convertIntradayToCarryForward(trade) {
+    const user = await User.findById(trade.user);
+    if (!user) throw new Error('User not found');
+    
+    const admin = await Admin.findOne({ adminCode: trade.adminCode });
+    if (!admin) throw new Error('Admin not found');
+    
+    // Get leverage values
+    const intradayLeverage = trade.leverage || admin.charges?.intradayLeverage || 5;
+    const carryForwardLeverage = admin.charges?.deliveryLeverage || 1;
+    
+    // Calculate current margin used (intraday)
+    const currentMarginUsed = trade.marginUsed;
+    
+    // Calculate required margin for carry forward (higher margin needed)
+    const notionalValue = trade.entryPrice * trade.quantity * (trade.lotSize || 1);
+    const requiredCarryForwardMargin = notionalValue / carryForwardLeverage;
+    
+    // Calculate additional margin needed
+    const additionalMarginNeeded = requiredCarryForwardMargin - currentMarginUsed;
+    
+    // Calculate current unrealized P&L
+    const currentPrice = trade.currentPrice || trade.entryPrice;
+    const priceDiff = trade.side === 'BUY' 
+      ? (currentPrice - trade.entryPrice) 
+      : (trade.entryPrice - currentPrice);
+    const unrealizedPnL = priceDiff * trade.quantity * (trade.lotSize || 1);
+    
+    // Check if MCX trade - use MCX wallet
+    const isMcx = this.isMcxTrade(trade.segment, trade.exchange);
+    
+    // Available balance = wallet balance - used margin + unrealized profit (if positive)
+    let availableBalance;
+    if (isMcx) {
+      const mcxBalance = user.mcxWallet?.balance || 0;
+      const mcxUsedMargin = user.mcxWallet?.usedMargin || 0;
+      availableBalance = mcxBalance - mcxUsedMargin;
+    } else {
+      availableBalance = user.wallet.cashBalance - user.wallet.usedMargin;
+    }
+    const availableWithProfit = availableBalance + Math.max(0, unrealizedPnL);
+    
+    let result = {
+      tradeId: trade._id,
+      symbol: trade.symbol,
+      originalQuantity: trade.quantity,
+      originalLots: trade.lots,
+      intradayLeverage,
+      carryForwardLeverage,
+      currentMarginUsed,
+      requiredCarryForwardMargin,
+      additionalMarginNeeded,
+      unrealizedPnL,
+      fullyConverted: false
+    };
+    
+    if (additionalMarginNeeded <= 0) {
+      // No additional margin needed (rare case where carry forward leverage >= intraday)
+      await Trade.updateOne(
+        { _id: trade._id },
+        { 
+          productType: 'NRML',
+          leverage: carryForwardLeverage,
+          convertedFromIntraday: true,
+          conversionTime: new Date()
+        }
+      );
+      result.fullyConverted = true;
+      result.newProductType = 'NRML';
+      result.message = 'Converted to carry forward - no additional margin needed';
+      
+    } else if (availableWithProfit >= additionalMarginNeeded) {
+      // User has enough balance (including profit) to cover additional margin
+      
+      // First, deduct from profit if available
+      let deductedFromProfit = 0;
+      let deductedFromBalance = additionalMarginNeeded;
+      
+      if (unrealizedPnL > 0) {
+        deductedFromProfit = Math.min(unrealizedPnL, additionalMarginNeeded);
+        deductedFromBalance = additionalMarginNeeded - deductedFromProfit;
+      }
+      
+      // Update user's margin - use MCX wallet for MCX trades
+      if (isMcx) {
+        await User.updateOne(
+          { _id: user._id },
+          { $inc: { 'mcxWallet.usedMargin': additionalMarginNeeded } }
+        );
+      } else {
+        await User.updateOne(
+          { _id: user._id },
+          { $inc: { 'wallet.usedMargin': additionalMarginNeeded } }
+        );
+      }
+      
+      // Update trade to carry forward
+      await Trade.updateOne(
+        { _id: trade._id },
+        { 
+          productType: 'NRML',
+          leverage: carryForwardLeverage,
+          marginUsed: requiredCarryForwardMargin,
+          convertedFromIntraday: true,
+          conversionTime: new Date(),
+          conversionDetails: {
+            additionalMarginDeducted: additionalMarginNeeded,
+            deductedFromProfit,
+            deductedFromBalance
+          }
+        }
+      );
+      
+      // Create ledger entry for margin adjustment
+      const balanceAfterConversion = isMcx 
+        ? (user.mcxWallet?.balance || 0) - (user.mcxWallet?.usedMargin || 0) - additionalMarginNeeded
+        : user.wallet.cashBalance - user.wallet.usedMargin - additionalMarginNeeded;
+      await WalletLedger.create({
+        ownerType: 'USER',
+        ownerId: user._id,
+        userId: user.userId,
+        adminCode: user.adminCode,
+        type: 'DEBIT',
+        reason: 'MARGIN_ADJUSTMENT',
+        amount: additionalMarginNeeded,
+        balanceAfter: balanceAfterConversion,
+        reference: { type: 'Trade', id: trade._id },
+        description: `Intraday to Carry Forward conversion - ${trade.symbol}${isMcx ? ' (MCX)' : ''}`
+      });
+      
+      result.fullyConverted = true;
+      result.newProductType = 'NRML';
+      result.deductedFromProfit = deductedFromProfit;
+      result.deductedFromBalance = deductedFromBalance;
+      result.message = 'Converted to carry forward - additional margin deducted';
+      
+    } else {
+      // Not enough balance - need to reduce position size
+      // Calculate how many lots can be converted with available margin
+      const marginPerLot = requiredCarryForwardMargin / trade.lots;
+      const totalAvailableForConversion = currentMarginUsed + availableWithProfit;
+      const lotsCanConvert = Math.floor(totalAvailableForConversion / marginPerLot);
+      
+      if (lotsCanConvert <= 0) {
+        // Cannot convert any lots - close the entire position
+        const exitPrice = trade.currentPrice || trade.entryPrice;
+        await this.closeTrade(trade._id, exitPrice, 'MARGIN_INSUFFICIENT');
+        
+        result.fullyConverted = false;
+        result.action = 'CLOSED';
+        result.message = 'Position closed - insufficient margin for carry forward';
+        result.closedQuantity = trade.quantity;
+        
+      } else {
+        // Partial conversion - convert some lots, close the rest
+        const lotsToClose = trade.lots - lotsCanConvert;
+        const quantityToClose = lotsToClose * (trade.lotSize || 1);
+        const quantityToKeep = lotsCanConvert * (trade.lotSize || 1);
+        
+        // Calculate margin for kept position
+        const newMarginRequired = marginPerLot * lotsCanConvert;
+        const marginToRelease = currentMarginUsed - newMarginRequired;
+        
+        // Close partial position
+        const exitPrice = trade.currentPrice || trade.entryPrice;
+        const pnlPerUnit = trade.side === 'BUY' 
+          ? (exitPrice - trade.entryPrice) 
+          : (trade.entryPrice - exitPrice);
+        const closedPnL = pnlPerUnit * quantityToClose * (trade.lotSize || 1);
+        
+        // Update user wallet - release margin for closed portion, add P&L
+        // Use MCX wallet for MCX trades
+        if (isMcx) {
+          await User.updateOne(
+            { _id: user._id },
+            { 
+              $inc: { 
+                'mcxWallet.usedMargin': -marginToRelease,
+                'mcxWallet.balance': closedPnL,
+                'mcxWallet.realizedPnL': closedPnL,
+                'mcxWallet.todayRealizedPnL': closedPnL
+              } 
+            }
+          );
+        } else {
+          await User.updateOne(
+            { _id: user._id },
+            { 
+              $inc: { 
+                'wallet.usedMargin': -marginToRelease,
+                'wallet.cashBalance': closedPnL
+              } 
+            }
+          );
+        }
+        
+        // Update trade with reduced quantity and carry forward
+        await Trade.updateOne(
+          { _id: trade._id },
+          { 
+            productType: 'NRML',
+            leverage: carryForwardLeverage,
+            quantity: quantityToKeep,
+            lots: lotsCanConvert,
+            marginUsed: newMarginRequired,
+            convertedFromIntraday: true,
+            conversionTime: new Date(),
+            partialClose: {
+              closedQuantity: quantityToClose,
+              closedLots: lotsToClose,
+              closedPnL,
+              closeReason: 'MARGIN_INSUFFICIENT_PARTIAL'
+            }
+          }
+        );
+        
+        // Create ledger entry
+        const partialCloseBalance = isMcx 
+          ? (user.mcxWallet?.balance || 0) + closedPnL
+          : user.wallet.cashBalance + closedPnL;
+        await WalletLedger.create({
+          ownerType: 'USER',
+          ownerId: user._id,
+          userId: user.userId,
+          adminCode: user.adminCode,
+          type: closedPnL >= 0 ? 'CREDIT' : 'DEBIT',
+          reason: 'PARTIAL_CLOSE',
+          amount: Math.abs(closedPnL),
+          balanceAfter: partialCloseBalance,
+          reference: { type: 'Trade', id: trade._id },
+          description: `Partial close for carry forward conversion - ${trade.symbol} (${lotsToClose} lots)${isMcx ? ' (MCX)' : ''}`
+        });
+        
+        result.fullyConverted = false;
+        result.action = 'PARTIAL_CONVERSION';
+        result.newProductType = 'NRML';
+        result.keptLots = lotsCanConvert;
+        result.closedLots = lotsToClose;
+        result.closedPnL = closedPnL;
+        result.message = `Partially converted - ${lotsCanConvert} lots kept, ${lotsToClose} lots closed`;
+      }
+    }
+    
+    return result;
+  }
+  
+  // Legacy square-off method (kept for manual square-off)
   static async runIntradaySquareOff(segment = 'EQUITY') {
     const openTrades = await Trade.find({ 
       status: 'OPEN',

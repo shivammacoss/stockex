@@ -444,4 +444,102 @@ router.post('/crypto-transfer', protectUser, async (req, res) => {
   }
 });
 
+// MCX transfer between main wallet and MCX account
+router.post('/mcx-transfer', protectUser, async (req, res) => {
+  try {
+    const { amount, direction } = req.body;
+    
+    if (!amount || amount <= 0) {
+      return res.status(400).json({ message: 'Invalid amount' });
+    }
+    
+    if (!['toMcx', 'fromMcx'].includes(direction)) {
+      return res.status(400).json({ message: 'Invalid transfer direction' });
+    }
+    
+    const user = await User.findById(req.user._id);
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+    
+    // Get current balances
+    let mainWalletBalance = user.wallet?.cashBalance || 0;
+    if (mainWalletBalance === 0 && user.wallet?.balance > 0) {
+      mainWalletBalance = user.wallet.balance;
+      user.wallet.cashBalance = mainWalletBalance;
+    }
+    const mcxBalance = user.mcxWallet?.balance || 0;
+    const mcxUsedMargin = user.mcxWallet?.usedMargin || 0;
+    
+    let newCashBalance, newMcxBalance;
+    
+    if (direction === 'toMcx') {
+      // Transfer from Main Wallet to MCX Account
+      if (amount > mainWalletBalance) {
+        return res.status(400).json({ message: `Insufficient balance in Main Wallet. Available: ₹${mainWalletBalance.toLocaleString()}` });
+      }
+      
+      newCashBalance = mainWalletBalance - amount;
+      newMcxBalance = mcxBalance + amount;
+      
+    } else {
+      // Transfer from MCX Account to Main Wallet
+      // Block withdrawal if any margin is in use (open positions)
+      if (mcxUsedMargin > 0) {
+        return res.status(400).json({ 
+          message: `Cannot withdraw while margin is in use. Close all MCX positions first. Used margin: ₹${mcxUsedMargin.toLocaleString()}` 
+        });
+      }
+      
+      if (amount > mcxBalance) {
+        return res.status(400).json({ message: `Insufficient balance in MCX Account. Available: ₹${mcxBalance.toLocaleString()}` });
+      }
+      
+      newMcxBalance = mcxBalance - amount;
+      newCashBalance = mainWalletBalance + amount;
+    }
+    
+    // Use updateOne to avoid full document validation issues
+    await User.updateOne(
+      { _id: req.user._id },
+      { 
+        $set: { 
+          'wallet.cashBalance': newCashBalance,
+          'wallet.balance': newCashBalance,
+          'mcxWallet.balance': newMcxBalance
+        }
+      }
+    );
+    
+    // Create ledger entry for the transfer
+    const description = direction === 'toMcx' 
+      ? `MCX Transfer: Wallet → MCX Account (₹${amount.toLocaleString()})`
+      : `MCX Transfer: MCX Account → Wallet (₹${amount.toLocaleString()})`;
+    
+    await WalletLedger.create({
+      ownerType: 'USER',
+      ownerId: user._id,
+      adminCode: user.adminCode,
+      type: direction === 'toMcx' ? 'DEBIT' : 'CREDIT',
+      reason: 'MCX_TRANSFER',
+      amount: amount,
+      balanceAfter: newCashBalance,
+      description,
+      reference: {
+        type: 'Manual',
+        id: null
+      }
+    });
+    
+    res.json({ 
+      message: 'Transfer successful',
+      mainWalletBalance: newCashBalance,
+      mcxBalance: newMcxBalance
+    });
+  } catch (error) {
+    console.error('MCX transfer error:', error);
+    res.status(500).json({ message: error.message });
+  }
+});
+
 export default router;

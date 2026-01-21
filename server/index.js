@@ -123,8 +123,9 @@ httpServer.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
 
-// Auto square-off intraday (MIS) positions at market close
-const runIntradayAutoSquareOff = async () => {
+// Auto convert intraday (MIS) positions to carry forward (NRML) at market close
+// Instead of square-off, we convert to carry forward with leverage adjustment
+const runIntradayToCarryForward = async () => {
   try {
     const now = new Date();
     const istTime = now.toLocaleTimeString('en-IN', { 
@@ -134,7 +135,7 @@ const runIntradayAutoSquareOff = async () => {
       hour12: false 
     });
     
-    // Get market state to check square-off times
+    // Get market state to check conversion times (using intradaySquareOffTime)
     const marketState = await MarketState.getState();
     
     const segments = ['EQUITY', 'FNO', 'MCX'];
@@ -143,11 +144,11 @@ const runIntradayAutoSquareOff = async () => {
       const segmentState = marketState.segments[segment];
       if (!segmentState || !segmentState.isOpen) continue;
       
-      const squareOffTime = segmentState.intradaySquareOffTime || '15:15';
+      const conversionTime = segmentState.intradaySquareOffTime || '15:15';
       
-      // Check if current time matches square-off time (within 1 minute window)
-      if (istTime === squareOffTime || istTime === squareOffTime.replace(':', '')) {
-        console.log(`Running intraday square-off for ${segment} at ${istTime}`);
+      // Check if current time matches conversion time (within 1 minute window)
+      if (istTime === conversionTime || istTime === conversionTime.replace(':', '')) {
+        console.log(`Running intraday to carry forward conversion for ${segment} at ${istTime}`);
         
         // Find all open MIS trades for this segment
         const openMISTrades = await Trade.find({
@@ -160,30 +161,43 @@ const runIntradayAutoSquareOff = async () => {
           ]
         }).populate('user');
         
+        let convertedCount = 0;
+        let partialCount = 0;
         let closedCount = 0;
+        
         for (const trade of openMISTrades) {
           try {
-            const exitPrice = trade.currentPrice || trade.entryPrice;
-            await TradingService.squareOffPosition(trade._id, 'INTRADAY_SQUAREOFF', exitPrice);
-            closedCount++;
-            console.log(`Auto squared-off: ${trade.symbol} for user ${trade.user?.userId || trade.user}`);
+            // Import TradeService for conversion
+            const TradeService = (await import('./services/tradeService.js')).default;
+            const result = await TradeService.convertIntradayToCarryForward(trade);
+            
+            if (result.fullyConverted) {
+              convertedCount++;
+              console.log(`Converted to carry forward: ${trade.symbol} for user ${trade.user?.userId || trade.user}`);
+            } else if (result.action === 'PARTIAL_CONVERSION') {
+              partialCount++;
+              console.log(`Partially converted: ${trade.symbol} - ${result.keptLots} lots kept, ${result.closedLots} lots closed`);
+            } else if (result.action === 'CLOSED') {
+              closedCount++;
+              console.log(`Closed (insufficient margin): ${trade.symbol} for user ${trade.user?.userId || trade.user}`);
+            }
           } catch (err) {
-            console.error(`Error squaring off trade ${trade._id}:`, err.message);
+            console.error(`Error converting trade ${trade._id}:`, err.message);
           }
         }
         
-        if (closedCount > 0) {
-          console.log(`Intraday square-off completed for ${segment}: ${closedCount} trades closed`);
+        if (convertedCount > 0 || partialCount > 0 || closedCount > 0) {
+          console.log(`Intraday conversion completed for ${segment}: ${convertedCount} fully converted, ${partialCount} partially converted, ${closedCount} closed`);
         }
       }
     }
   } catch (error) {
-    console.error('Error in intraday auto square-off:', error);
+    console.error('Error in intraday to carry forward conversion:', error);
   }
 };
 
-// Run intraday square-off check every minute
-setInterval(runIntradayAutoSquareOff, 60 * 1000);
+// Run intraday conversion check every minute
+setInterval(runIntradayToCarryForward, 60 * 1000);
 
 // Cleanup expired demo accounts - runs every hour
 const cleanupExpiredDemoAccounts = async () => {

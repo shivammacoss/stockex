@@ -129,9 +129,10 @@ const UserDashboard = () => {
   const navigate = useNavigate();
   const location = useLocation();
   
-  // Check if we're in crypto-only mode from URL query param
+  // Check if we're in crypto-only or mcx-only mode from URL query param
   const searchParams = new URLSearchParams(location.search);
   const cryptoOnly = searchParams.get('mode') === 'crypto';
+  const mcxOnly = searchParams.get('mode') === 'mcx';
   
   const [selectedInstrument, setSelectedInstrument] = useState(null);
   const [walletData, setWalletData] = useState(null);
@@ -411,6 +412,12 @@ const UserDashboard = () => {
               <span className="text-orange-400 font-medium">₿ Crypto Trading</span>
             </div>
           )}
+          {/* MCX Mode Label */}
+          {mcxOnly && (
+            <div className="hidden lg:flex items-center gap-2 text-sm">
+              <span className="text-yellow-400 font-medium">💎 MCX Commodity Trading</span>
+            </div>
+          )}
         </div>
 
         {/* Search - Functional search with dropdown */}
@@ -481,11 +488,13 @@ const UserDashboard = () => {
           <div className="flex items-center gap-2 bg-dark-700 px-3 py-1.5 rounded-lg font-mono">
             <span className="text-blue-400 font-medium text-sm">{formatTime(currentTime)}</span>
           </div>
-          {/* Trading Account Balance Display - Shows USD when in Crypto mode */}
+          {/* Trading Account Balance Display - Shows USD when in Crypto mode, MCX balance when in MCX mode */}
           <div className="flex items-center gap-2 bg-dark-700 px-3 py-1.5 rounded-lg">
-            <Wallet size={18} className={cryptoOnly ? "text-orange-400" : "text-green-400"} />
+            <Wallet size={18} className={cryptoOnly ? "text-orange-400" : mcxOnly ? "text-yellow-400" : "text-green-400"} />
             {cryptoOnly ? (
               <span className="text-orange-400 font-medium">${(walletData?.cryptoWallet?.balance || 0).toFixed(2)}</span>
+            ) : mcxOnly ? (
+              <span className="text-yellow-400 font-medium">₹{(walletData?.mcxWallet?.balance || 0).toLocaleString()}</span>
             ) : (
               <span className="text-green-400 font-medium">₹{(walletData?.tradingBalance || walletData?.wallet?.tradingBalance || 0).toLocaleString()}</span>
             )}
@@ -570,6 +579,7 @@ const UserDashboard = () => {
           <InstrumentsPanel 
             selectedInstrument={selectedInstrument}
             cryptoOnly={cryptoOnly}
+            mcxOnly={mcxOnly}
             refreshKey={watchlistRefreshKey}
             onSelectInstrument={(inst) => {
               setSelectedInstrument(inst);
@@ -604,6 +614,7 @@ const UserDashboard = () => {
             selectedInstrument={selectedInstrument}
             onRefreshPositions={refreshPositions}
             cryptoOnly={cryptoOnly}
+            mcxOnly={mcxOnly}
           />
         </div>
 
@@ -633,6 +644,7 @@ const UserDashboard = () => {
           <MobileInstrumentsPanel 
             selectedInstrument={selectedInstrument}
             cryptoOnly={cryptoOnly}
+            mcxOnly={mcxOnly}
             onSelectInstrument={(inst) => {
               setSelectedInstrument(inst);
               setMobileView('chart');
@@ -652,10 +664,10 @@ const UserDashboard = () => {
           />
         )}
         {mobileView === 'positions' && (
-          <MobilePositionsPanel activeTab="positions" user={user} marketData={marketData} cryptoOnly={cryptoOnly} walletData={walletData} />
+          <MobilePositionsPanel activeTab="positions" user={user} marketData={marketData} cryptoOnly={cryptoOnly} mcxOnly={mcxOnly} walletData={walletData} />
         )}
         {mobileView === 'history' && (
-          <MobilePositionsPanel activeTab="history" user={user} marketData={marketData} cryptoOnly={cryptoOnly} walletData={walletData} />
+          <MobilePositionsPanel activeTab="history" user={user} marketData={marketData} cryptoOnly={cryptoOnly} mcxOnly={mcxOnly} walletData={walletData} />
         )}
         {mobileView === 'profile' && (
           <MobileProfilePanel user={user} walletData={walletData} onLogout={handleLogout} />
@@ -745,7 +757,7 @@ const UserDashboard = () => {
   );
 };
 
-const InstrumentsPanel = ({ selectedInstrument, onSelectInstrument, onBuySell, user, marketData = {}, onSegmentChange, cryptoOnly = false, refreshKey = 0 }) => {
+const InstrumentsPanel = ({ selectedInstrument, onSelectInstrument, onBuySell, user, marketData = {}, onSegmentChange, cryptoOnly = false, mcxOnly = false, refreshKey = 0 }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [activeSegment, setActiveSegment] = useState(() => localStorage.getItem('ntrader_active_segment') || 'FAVORITES');
@@ -871,7 +883,7 @@ const InstrumentsPanel = ({ selectedInstrument, onSelectInstrument, onBuySell, u
     }
   }, [watchlistBySegment]);
   
-  // Set default segment tabs - filter based on cryptoOnly mode
+  // Set default segment tabs - filter based on cryptoOnly or mcxOnly mode
   useEffect(() => {
     if (cryptoOnly) {
       // Crypto-only mode: show only CRYPTO segment
@@ -880,21 +892,28 @@ const InstrumentsPanel = ({ selectedInstrument, onSelectInstrument, onBuySell, u
       ];
       setSegmentTabs(cryptoTabs);
       setActiveSegment('CRYPTO');
+    } else if (mcxOnly) {
+      // MCX-only mode: show Favorites and MCX segments
+      const mcxTabs = [
+        { id: 'FAVORITES', label: '★ Favorites' },
+        { id: 'MCXFUT', label: 'MCX Futures' },
+        { id: 'MCXOPT', label: 'MCX Options' }
+      ];
+      setSegmentTabs(mcxTabs);
+      setActiveSegment('FAVORITES');
     } else {
-      // Regular trading mode: show Indian market segments
+      // Regular trading mode: show Indian market segments (excluding MCX - MCX has separate account)
       const allTabs = [
         { id: 'FAVORITES', label: '★ Favorites' },
         { id: 'NSEFUT', label: 'NSEFUT' },
         { id: 'NSEOPT', label: 'NSEOPT' },
-        { id: 'MCXFUT', label: 'MCXFUT' },
-        { id: 'MCXOPT', label: 'MCXOPT' },
         { id: 'NSE-EQ', label: 'NSE-EQ' },
         { id: 'BSE-FUT', label: 'BSE-FUT' },
         { id: 'BSE-OPT', label: 'BSE-OPT' }
       ];
       setSegmentTabs(allTabs);
     }
-  }, [cryptoOnly]);
+  }, [cryptoOnly, mcxOnly]);
   
   // Market status derived from marketData
   const marketStatus = {
@@ -1078,19 +1097,47 @@ const InstrumentsPanel = ({ selectedInstrument, onSelectInstrument, onBuySell, u
     );
   };
 
-  // Get watchlist for current segment
+  // Helper to check if instrument is MCX
+  const isInstrumentMcx = (inst) => {
+    const exchange = inst?.exchange?.toUpperCase() || '';
+    const segment = inst?.segment?.toUpperCase() || '';
+    return exchange === 'MCX' || segment === 'MCX' || segment === 'MCXFUT' || segment === 'MCXOPT';
+  };
+
+  // Get watchlist for current segment - filter favorites by mode
   const getWatchlistForSegment = () => {
     if (cryptoOnly || activeSegment === 'CRYPTO') {
       // Crypto mode: return crypto watchlist
       const list = watchlistBySegment['CRYPTO'] || [];
       return list;
     }
+    
+    // For FAVORITES segment, filter based on mode
+    if (activeSegment === 'FAVORITES') {
+      const allFavorites = watchlistBySegment['FAVORITES'] || [];
+      if (mcxOnly) {
+        // MCX mode: only show MCX instruments in favorites
+        return allFavorites.filter(inst => isInstrumentMcx(inst));
+      } else {
+        // Regular mode: only show non-MCX instruments in favorites
+        return allFavorites.filter(inst => !isInstrumentMcx(inst));
+      }
+    }
+    
     const list = watchlistBySegment[activeSegment] || [];
     return list;
   };
 
-  // Get count for segment tab
+  // Get count for segment tab - filter favorites count by mode
   const getSegmentCount = (segmentId) => {
+    if (segmentId === 'FAVORITES') {
+      const allFavorites = watchlistBySegment['FAVORITES'] || [];
+      if (mcxOnly) {
+        return allFavorites.filter(inst => isInstrumentMcx(inst)).length;
+      } else {
+        return allFavorites.filter(inst => !isInstrumentMcx(inst)).length;
+      }
+    }
     return (watchlistBySegment[segmentId] || []).length;
   };
 
@@ -1779,7 +1826,7 @@ const ChartPanel = ({ selectedInstrument, marketData, sidebarOpen }) => {
   );
 };
 
-const PositionsPanel = ({ activeTab, setActiveTab, walletData, user, marketData, refreshKey, selectedInstrument, onRefreshPositions, cryptoOnly = false }) => {
+const PositionsPanel = ({ activeTab, setActiveTab, walletData, user, marketData, refreshKey, selectedInstrument, onRefreshPositions, cryptoOnly = false, mcxOnly = false }) => {
   const [positions, setPositions] = useState([]);
   const [pendingOrders, setPendingOrders] = useState([]);
   const [history, setHistory] = useState([]);
@@ -1808,18 +1855,28 @@ const PositionsPanel = ({ activeTab, setActiveTab, walletData, user, marketData,
         axios.get('/api/trading/history', { headers })
       ]);
       
-      // Filter by crypto mode - show only crypto trades in crypto mode, exclude crypto in regular mode
-      const filterByCryptoMode = (items) => {
+      // Helper to check if trade is MCX
+      const isMcxTrade = (item) => {
+        const segment = item?.segment?.toUpperCase() || '';
+        const exchange = item?.exchange?.toUpperCase() || '';
+        return segment === 'MCX' || segment === 'MCXFUT' || segment === 'MCXOPT' || exchange === 'MCX';
+      };
+      
+      // Filter by mode - crypto, mcx, or regular (excluding both crypto and mcx)
+      const filterByMode = (items) => {
         if (cryptoOnly) {
           return (items || []).filter(item => item.isCrypto === true);
+        } else if (mcxOnly) {
+          return (items || []).filter(item => isMcxTrade(item));
         } else {
-          return (items || []).filter(item => item.isCrypto !== true);
+          // Regular mode: exclude both crypto AND MCX trades
+          return (items || []).filter(item => item.isCrypto !== true && !isMcxTrade(item));
         }
       };
       
-      const filteredPositions = filterByCryptoMode(positionsRes.data);
-      const filteredPending = filterByCryptoMode(pendingRes.data);
-      const filteredHistory = filterByCryptoMode(historyRes.data);
+      const filteredPositions = filterByMode(positionsRes.data);
+      const filteredPending = filterByMode(pendingRes.data);
+      const filteredHistory = filterByMode(historyRes.data);
       
       setPositions(filteredPositions);
       setPendingOrders(filteredPending);
@@ -2550,7 +2607,7 @@ const TradingPanel = ({ instrument, orderType, setOrderType, walletData, onClose
   const [target, setTarget] = useState('');
   const [productType, setProductType] = useState('MIS');
   const [orderMode, setOrderMode] = useState('MARKET');
-  const [inputMode, setInputMode] = useState('quantity'); // 'lots' or 'quantity' - default to quantity for FUT/EQ segments
+  const [inputMode, setInputMode] = useState('lots'); // 'lots' or 'quantity' - default to lots, quantity mode only for futures/equity
   const [leverage, setLeverage] = useState(1);
   const [availableLeverages, setAvailableLeverages] = useState([1, 2, 5, 10]);
   const [marginPreview, setMarginPreview] = useState(null);
@@ -2653,8 +2710,33 @@ const TradingPanel = ({ instrument, orderType, setOrderType, walletData, onClose
   const isOptions = instrument?.instrumentType === 'OPTIONS';
   const isCall = instrument?.optionType === 'CE';
   const isPut = instrument?.optionType === 'PE';
-  const isMCX = instrument?.exchange === 'MCX' || instrument?.segment === 'MCX' || instrument?.displaySegment === 'MCX';
+  const isMCX = instrument?.exchange === 'MCX' || instrument?.segment === 'MCX' || instrument?.displaySegment === 'MCX' ||
+                instrument?.segment === 'MCXFUT' || instrument?.segment === 'MCXOPT';
   const isFnO = isFutures || isOptions || isMCX; // MCX is always lot-based
+
+  // Determine which wallet to use based on instrument type
+  const getActiveWallet = () => {
+    if (isCrypto) {
+      return {
+        balance: walletData?.cryptoWallet?.balance || 0,
+        usedMargin: 0,
+        available: walletData?.cryptoWallet?.balance || 0
+      };
+    } else if (isMCX) {
+      return {
+        balance: walletData?.mcxWallet?.balance || 0,
+        usedMargin: walletData?.mcxWallet?.usedMargin || 0,
+        available: (walletData?.mcxWallet?.balance || 0) - (walletData?.mcxWallet?.usedMargin || 0)
+      };
+    } else {
+      return {
+        balance: walletData?.tradingBalance || walletData?.wallet?.tradingBalance || 0,
+        usedMargin: walletData?.usedMargin || walletData?.wallet?.usedMargin || 0,
+        available: walletData?.marginAvailable || ((walletData?.tradingBalance || 0) - (walletData?.usedMargin || 0))
+      };
+    }
+  };
+  const activeWallet = getActiveWallet();
 
   // Check if segment allows quantity mode (NSEFUT, MCXFUT, BSEFUT, NSE-EQ - futures and equity, not options)
   const segment = instrument?.displaySegment || instrument?.segment || '';
@@ -3012,6 +3094,31 @@ const TradingPanel = ({ instrument, orderType, setOrderType, walletData, onClose
           </div>
         </div>
 
+        {/* Leverage Selector - Only for non-crypto */}
+        {!isCrypto && (
+          <div>
+            <label className="block text-xs text-gray-400 mb-2">Leverage</label>
+            <div className="flex gap-1 flex-wrap">
+              {availableLeverages.map(lev => (
+                <button
+                  key={lev}
+                  onClick={() => setLeverage(lev)}
+                  className={`px-3 py-2 rounded text-sm font-medium transition ${
+                    leverage === lev 
+                      ? 'bg-blue-600 text-white' 
+                      : 'bg-dark-700 text-gray-400 hover:bg-dark-600'
+                  }`}
+                >
+                  {lev}x
+                </button>
+              ))}
+            </div>
+            <div className="text-xs text-gray-500 mt-1">
+              Higher leverage = Lower margin required, Higher risk
+            </div>
+          </div>
+        )}
+
         {/* Crypto: Binance-style Amount Input */}
         {isCrypto ? (
           <div>
@@ -3260,24 +3367,30 @@ const TradingPanel = ({ instrument, orderType, setOrderType, walletData, onClose
               )}
             </>
           ) : (
-            /* Indian Trading - Margin based system */
+            /* Indian/MCX Trading - Margin based system */
             <>
               <div className="flex justify-between text-sm">
-                <span className="text-gray-400">Trading Balance</span>
-                <span className="text-green-400">
-                  ₹{(marginPreview?.tradingBalance || walletData?.tradingBalance || 0).toLocaleString()}
+                <span className="text-gray-400">{isMCX ? 'MCX Balance' : 'Trading Balance'}</span>
+                <span className={isMCX ? 'text-yellow-400' : 'text-green-400'}>
+                  ₹{activeWallet.balance.toLocaleString()}
                 </span>
               </div>
               <div className="flex justify-between text-sm">
                 <span className="text-gray-400">Used Margin</span>
                 <span className="text-yellow-400">
-                  ₹{(walletData?.usedMargin || 0).toLocaleString()}
+                  ₹{activeWallet.usedMargin.toLocaleString()}
+                </span>
+              </div>
+              <div className="flex justify-between text-sm">
+                <span className="text-gray-400">Leverage</span>
+                <span className="text-blue-400 font-medium">
+                  {marginPreview?.leverage || leverage || 1}x
                 </span>
               </div>
               <div className="flex justify-between text-sm border-t border-dark-600 pt-2">
                 <span className="text-gray-400">Available</span>
                 <span className="text-green-400 font-medium">
-                  ₹{(marginPreview?.availableBalance || ((walletData?.tradingBalance || 0) - (walletData?.usedMargin || 0))).toLocaleString()}
+                  ₹{activeWallet.available.toLocaleString()}
                 </span>
               </div>
               <div className="flex justify-between text-sm">
@@ -3333,7 +3446,7 @@ const TradingPanel = ({ instrument, orderType, setOrderType, walletData, onClose
 };
 
 // Mobile Components - Uses watchlist like desktop
-const MobileInstrumentsPanel = ({ selectedInstrument, onSelectInstrument, onBuySell, user, marketData = {}, onSegmentChange, cryptoOnly = false }) => {
+const MobileInstrumentsPanel = ({ selectedInstrument, onSelectInstrument, onBuySell, user, marketData = {}, onSegmentChange, cryptoOnly = false, mcxOnly = false }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [searchResults, setSearchResults] = useState([]);
@@ -3357,26 +3470,32 @@ const MobileInstrumentsPanel = ({ selectedInstrument, onSelectInstrument, onBuyS
     'CRYPTO': []
   });
   
-  // Segment tabs - filter based on cryptoOnly mode
+  // Segment tabs - filter based on cryptoOnly or mcxOnly mode
   const segmentTabs = cryptoOnly 
     ? [{ id: 'CRYPTO', label: '₿ Crypto' }]
-    : [
-        { id: 'FAVORITES', label: '★ Favorites' },
-        { id: 'NSEFUT', label: 'NSEFUT' },
-        { id: 'NSEOPT', label: 'NSEOPT' },
-        { id: 'MCXFUT', label: 'MCXFUT' },
-        { id: 'MCXOPT', label: 'MCXOPT' },
-        { id: 'NSE-EQ', label: 'NSE-EQ' },
-        { id: 'BSE-FUT', label: 'BSE-FUT' },
-        { id: 'BSE-OPT', label: 'BSE-OPT' }
-      ];
+    : mcxOnly
+      ? [
+          { id: 'FAVORITES', label: '★ Favorites' },
+          { id: 'MCXFUT', label: 'MCX Futures' },
+          { id: 'MCXOPT', label: 'MCX Options' }
+        ]
+      : [
+          { id: 'FAVORITES', label: '★ Favorites' },
+          { id: 'NSEFUT', label: 'NSEFUT' },
+          { id: 'NSEOPT', label: 'NSEOPT' },
+          { id: 'NSE-EQ', label: 'NSE-EQ' },
+          { id: 'BSE-FUT', label: 'BSE-FUT' },
+          { id: 'BSE-OPT', label: 'BSE-OPT' }
+        ];
   
-  // Set active segment to CRYPTO when in crypto mode
+  // Set active segment based on mode
   useEffect(() => {
     if (cryptoOnly) {
       setActiveSegment('CRYPTO');
+    } else if (mcxOnly) {
+      setActiveSegment('FAVORITES');
     }
-  }, [cryptoOnly]);
+  }, [cryptoOnly, mcxOnly]);
   
   // Load watchlist from server
   useEffect(() => {
@@ -3546,11 +3665,31 @@ const MobileInstrumentsPanel = ({ selectedInstrument, onSelectInstrument, onBuyS
     );
   };
   
-  // Get watchlist for current segment
+  // Helper to check if instrument is MCX
+  const isInstrumentMcx = (inst) => {
+    const exchange = inst?.exchange?.toUpperCase() || '';
+    const segment = inst?.segment?.toUpperCase() || '';
+    return exchange === 'MCX' || segment === 'MCX' || segment === 'MCXFUT' || segment === 'MCXOPT';
+  };
+
+  // Get watchlist for current segment - filter favorites by mode
   const getWatchlist = () => {
     if (cryptoOnly || activeSegment === 'CRYPTO') {
       return watchlistBySegment['CRYPTO'] || [];
     }
+    
+    // For FAVORITES segment, filter based on mode
+    if (activeSegment === 'FAVORITES') {
+      const allFavorites = watchlistBySegment['FAVORITES'] || [];
+      if (mcxOnly) {
+        // MCX mode: only show MCX instruments in favorites
+        return allFavorites.filter(inst => isInstrumentMcx(inst));
+      } else {
+        // Regular mode: only show non-MCX instruments in favorites
+        return allFavorites.filter(inst => !isInstrumentMcx(inst));
+      }
+    }
+    
     return watchlistBySegment[activeSegment] || [];
   };
   
@@ -3586,7 +3725,7 @@ const MobileInstrumentsPanel = ({ selectedInstrument, onSelectInstrument, onBuyS
                 : 'bg-dark-700 text-gray-400 hover:bg-dark-600 hover:text-white'
             }`}
           >
-            {tab.label} ({(watchlistBySegment[tab.id] || []).length})
+            {tab.label} ({tab.id === 'FAVORITES' ? getWatchlist().length : (watchlistBySegment[tab.id] || []).length})
           </button>
         ))}
       </div>
@@ -3991,7 +4130,7 @@ const MobileChartPanel = ({ selectedInstrument, onBuySell, onBack, marketData = 
   );
 };
 
-const MobilePositionsPanel = ({ activeTab, user, marketData, cryptoOnly = false, walletData }) => {
+const MobilePositionsPanel = ({ activeTab, user, marketData, cryptoOnly = false, mcxOnly = false, walletData }) => {
   const [tab, setTab] = useState(activeTab || 'positions');
   const [positions, setPositions] = useState([]);
   const [pendingOrders, setPendingOrders] = useState([]);
@@ -4000,12 +4139,22 @@ const MobilePositionsPanel = ({ activeTab, user, marketData, cryptoOnly = false,
   const [loading, setLoading] = useState(false);
   const [todayPnL, setTodayPnL] = useState({ realized: 0, unrealized: 0 });
 
-  // Filter by crypto mode
-  const filterByCryptoMode = (items) => {
+  // Helper to check if trade is MCX
+  const isMcxTrade = (item) => {
+    const segment = item?.segment?.toUpperCase() || '';
+    const exchange = item?.exchange?.toUpperCase() || '';
+    return segment === 'MCX' || segment === 'MCXFUT' || segment === 'MCXOPT' || exchange === 'MCX';
+  };
+
+  // Filter by mode - crypto, mcx, or regular (excluding both crypto and mcx)
+  const filterByMode = (items) => {
     if (cryptoOnly) {
       return (items || []).filter(item => item.isCrypto === true);
+    } else if (mcxOnly) {
+      return (items || []).filter(item => isMcxTrade(item));
     } else {
-      return (items || []).filter(item => item.isCrypto !== true);
+      // Regular mode: exclude both crypto AND MCX trades
+      return (items || []).filter(item => item.isCrypto !== true && !isMcxTrade(item));
     }
   };
 
@@ -4026,9 +4175,9 @@ const MobilePositionsPanel = ({ activeTab, user, marketData, cryptoOnly = false,
         axios.get('/api/trading/history?limit=100', { headers })
       ]);
       
-      const allPositions = filterByCryptoMode(posRes.data);
-      const allPending = filterByCryptoMode(pendingRes.data);
-      const allHistory = filterByCryptoMode(historyRes.data);
+      const allPositions = filterByMode(posRes.data);
+      const allPending = filterByMode(pendingRes.data);
+      const allHistory = filterByMode(historyRes.data);
       
       setPositions(allPositions);
       setPendingOrders(allPending.filter(o => o.status === 'PENDING'));
@@ -5922,6 +6071,7 @@ const BuySellModal = ({ instrument, orderType, setOrderType, onClose, walletData
   const [limitPrice, setLimitPrice] = useState('');
   const [productType, setProductType] = useState('MIS');
   const [orderPriceType, setOrderPriceType] = useState('MARKET');
+  const [leverage, setLeverage] = useState(1);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
@@ -5938,8 +6088,33 @@ const BuySellModal = ({ instrument, orderType, setOrderType, onClose, walletData
 
   // Determine segment type
   const isFnO = instrument?.segment === 'FNO' || instrument?.instrumentType === 'OPTIONS' || instrument?.instrumentType === 'FUTURES';
-  const isMCX = instrument?.segment === 'MCX' || instrument?.exchange === 'MCX' || instrument?.displaySegment === 'MCX';
+  const isMCX = instrument?.segment === 'MCX' || instrument?.exchange === 'MCX' || instrument?.displaySegment === 'MCX' || 
+                instrument?.segment === 'MCXFUT' || instrument?.segment === 'MCXOPT';
   const isLotBased = isFnO || isMCX;
+
+  // Determine which wallet to use based on instrument type
+  const getWalletData = () => {
+    if (isCrypto) {
+      return {
+        balance: walletData?.cryptoWallet?.balance || 0,
+        usedMargin: 0,
+        available: walletData?.cryptoWallet?.balance || 0
+      };
+    } else if (isMCX) {
+      return {
+        balance: walletData?.mcxWallet?.balance || 0,
+        usedMargin: walletData?.mcxWallet?.usedMargin || 0,
+        available: (walletData?.mcxWallet?.balance || 0) - (walletData?.mcxWallet?.usedMargin || 0)
+      };
+    } else {
+      return {
+        balance: walletData?.tradingBalance || walletData?.wallet?.tradingBalance || 0,
+        usedMargin: walletData?.usedMargin || walletData?.wallet?.usedMargin || 0,
+        available: walletData?.marginAvailable || 0
+      };
+    }
+  };
+  const activeWallet = getWalletData();
 
   // Always use lotSize from DB (no hardcoded fallbacks)
   const lotSize = isCrypto ? 1 : (instrument?.lotSize || 1);
@@ -5970,7 +6145,7 @@ const BuySellModal = ({ instrument, orderType, setOrderType, onClose, walletData
           lots: parseInt(quantity),
           lotSize: lotSize,
           price: parseFloat(ltp),
-          leverage: 1
+          leverage: leverage
         }, {
           headers: { Authorization: `Bearer ${user?.token}` }
         });
@@ -5982,7 +6157,7 @@ const BuySellModal = ({ instrument, orderType, setOrderType, onClose, walletData
 
     const debounce = setTimeout(fetchMarginPreview, 300);
     return () => clearTimeout(debounce);
-  }, [instrument, quantity, ltp, productType, orderType, user, totalQuantity, lotSize]);
+  }, [instrument, quantity, ltp, productType, orderType, user, totalQuantity, lotSize, leverage]);
 
   // Product types based on segment
   const productTypes = isCrypto
@@ -6032,7 +6207,7 @@ const BuySellModal = ({ instrument, orderType, setOrderType, onClose, walletData
         price: ltp,
         bidPrice: liveBid,
         askPrice: liveAsk,
-        leverage: 1
+        leverage: isCrypto ? 1 : leverage // Use selected leverage when placing order in mobile modal
       };
 
       if (orderPriceType === 'LIMIT') {
@@ -6161,6 +6336,28 @@ const BuySellModal = ({ instrument, orderType, setOrderType, onClose, walletData
           </div>
         </div>
 
+        {/* Leverage Selector - Only for non-crypto */}
+        {!isCrypto && (
+          <div className="px-4 pb-3">
+            <label className="block text-sm text-gray-400 mb-2">Leverage</label>
+            <div className="flex gap-2 flex-wrap">
+              {[1, 2, 5, 10, 20].map(lev => (
+                <button
+                  key={lev}
+                  onClick={() => setLeverage(lev)}
+                  className={`px-4 py-2 rounded-lg text-sm font-medium transition ${
+                    leverage === lev 
+                      ? 'bg-blue-600 text-white' 
+                      : 'bg-dark-700 text-gray-400 hover:bg-dark-600'
+                  }`}
+                >
+                  {lev}x
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* Form */}
         <div className="p-4 pt-0 space-y-4">
           {/* Lots/Quantity */}
@@ -6216,14 +6413,14 @@ const BuySellModal = ({ instrument, orderType, setOrderType, onClose, walletData
             </div>
           </div>
 
-          {/* Balance Info - Different for Crypto vs Indian Trading */}
+          {/* Balance Info - Different for Crypto, MCX, and Indian Trading */}
           <div className="bg-dark-700 rounded-lg p-3 space-y-2">
             {isCrypto ? (
               /* Crypto Wallet - No margin system */
               <>
                 <div className="flex justify-between text-sm">
                   <span className="text-gray-400">Crypto Wallet</span>
-                  <span className="text-orange-400 font-medium">${(walletData?.cryptoWallet?.balance || 0).toFixed(2)}</span>
+                  <span className="text-orange-400 font-medium">${activeWallet.balance.toFixed(2)}</span>
                 </div>
                 <div className="flex justify-between text-sm">
                   <span className="text-gray-400">Trade Cost</span>
@@ -6233,15 +6430,27 @@ const BuySellModal = ({ instrument, orderType, setOrderType, onClose, walletData
                 </div>
                 <div className="flex justify-between text-sm border-t border-dark-600 pt-2">
                   <span className="text-gray-400">Available</span>
-                  <span className="text-green-400 font-medium">${(walletData?.cryptoWallet?.balance || 0).toFixed(2)}</span>
+                  <span className="text-green-400 font-medium">${activeWallet.available.toFixed(2)}</span>
                 </div>
               </>
             ) : (
-              /* Indian Trading - Margin based system */
+              /* Indian/MCX Trading - Margin based system */
               <>
                 <div className="flex justify-between text-sm">
-                  <span className="text-gray-400">Available Margin</span>
-                  <span className="text-green-400 font-medium">₹{walletData?.marginAvailable?.toLocaleString() || '0'}</span>
+                  <span className="text-gray-400">{isMCX ? 'MCX Balance' : 'Trading Balance'}</span>
+                  <span className={`font-medium ${isMCX ? 'text-yellow-400' : 'text-green-400'}`}>₹{activeWallet.balance.toLocaleString()}</span>
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-gray-400">Used Margin</span>
+                  <span className="text-yellow-400">₹{activeWallet.usedMargin.toLocaleString()}</span>
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-gray-400">Leverage</span>
+                  <span className="text-blue-400 font-medium">{marginPreview?.leverage || leverage}x</span>
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-gray-400">Available</span>
+                  <span className="text-green-400 font-medium">₹{activeWallet.available.toLocaleString()}</span>
                 </div>
                 <div className="flex justify-between text-sm">
                   <span className="text-gray-400">Required Margin</span>
@@ -6249,6 +6458,12 @@ const BuySellModal = ({ instrument, orderType, setOrderType, onClose, walletData
                     ₹{marginPreview?.marginRequired?.toLocaleString() || '--'}
                   </span>
                 </div>
+                {marginPreview?.canPlace === false && (
+                  <div className="text-xs text-red-400 flex items-center gap-1">
+                    <span>⚠</span>
+                    <span>Insufficient funds. Need ₹{((marginPreview?.marginRequired || 0) - activeWallet.available).toLocaleString()} more</span>
+                  </div>
+                )}
                 <div className="flex justify-between text-sm border-t border-dark-600 pt-2">
                   <span className="text-gray-400">Order Value</span>
                   <span className="font-medium">₹{orderValue.toLocaleString()}</span>

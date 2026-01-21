@@ -156,7 +156,12 @@ router.post('/margin-preview', protect, async (req, res) => {
     
     const price = req.body.price || 0;
     const lotSize = req.body.lotSize || TradingService.getLotSize(symbol, category, req.body.exchange);
-    const tradeValue = price * lotSize * lots;
+    // Use quantity directly if provided (for quantity mode), otherwise calculate from lots * lotSize
+    const quantity = req.body.quantity || (lots * lotSize);
+    const tradeValue = price * quantity;
+    
+    // Calculate effective lots from quantity (for quantity mode support)
+    const effectiveLots = lotSize > 0 ? Math.ceil(quantity / lotSize) : lots;
     
     // Priority 1: Check for fixed margin in script settings
     if (scriptSettings?.fixedMargin) {
@@ -170,7 +175,9 @@ router.post('/margin-preview', protect, async (req, res) => {
       }
       
       if (fixedMarginPerLot > 0) {
-        marginRequired = fixedMarginPerLot * lots;
+        // Use quantity-based calculation: margin per unit * quantity
+        // For fixed margin per lot, calculate proportionally based on quantity
+        marginRequired = (fixedMarginPerLot / lotSize) * quantity;
         usedFixedMargin = true;
         marginSource = 'script_fixed';
       }
@@ -195,6 +202,14 @@ router.post('/margin-preview', protect, async (req, res) => {
     if (marginRequired === 0) {
       marginRequired = marginCalc.marginRequired;
       marginSource = 'default_calculated';
+    }
+    
+    // Apply leverage to margin (divide margin by leverage)
+    // This applies to all margin sources - fixed, exposure, or calculated
+    if (leverage > 1 && marginSource !== 'default_calculated') {
+      // default_calculated already has leverage applied in calculateMargin
+      marginRequired = marginRequired / leverage;
+      console.log('Applied leverage to margin:', { leverage, marginRequired });
     }
     
     // Calculate brokerage from user settings
