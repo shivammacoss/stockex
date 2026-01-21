@@ -274,11 +274,16 @@ router.get('/market-status', async (req, res) => {
   }
 });
 
-// Get available leverages for user
+// Get available leverages for user (separate intraday and carryforward)
 router.get('/leverages', protect, async (req, res) => {
   try {
-    const leverages = await TradingService.getAvailableLeverages(req.user);
-    res.json({ leverages });
+    const result = await TradingService.getAvailableLeverages(req.user);
+    // result contains: { intraday: [...], carryForward: [...], leverages: [...] }
+    res.json({
+      intraday: result.intraday || [1, 2, 5, 10],
+      carryForward: result.carryForward || [1, 2, 5],
+      leverages: result.leverages || result // backward compatibility
+    });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }

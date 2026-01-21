@@ -1810,6 +1810,11 @@ const AdminChargesModal = ({ admin: targetAdmin, token, onClose, onSuccess }) =>
     minWithdrawal: targetAdmin.charges?.minWithdrawal || 100,
     maxWithdrawal: targetAdmin.charges?.maxWithdrawal || 100000
   });
+  const [leverageSettings, setLeverageSettings] = useState({
+    maxLeverageFromParent: targetAdmin.leverageSettings?.maxLeverageFromParent || 10,
+    intradayLeverages: targetAdmin.leverageSettings?.intradayLeverages || [1, 2, 5, 10],
+    carryForwardLeverages: targetAdmin.leverageSettings?.carryForwardLeverages || [1, 2, 5]
+  });
   const [brokerageCaps, setBrokerageCaps] = useState({
     perLot: {
       min: targetAdmin.brokerageCaps?.perLot?.min || 0,
@@ -1840,7 +1845,15 @@ const AdminChargesModal = ({ admin: targetAdmin, token, onClose, onSuccess }) =>
       await axios.put(`/api/admin/manage/admins/${targetAdmin._id}/brokerage-caps`, { brokerageCaps }, {
         headers: { Authorization: `Bearer ${token}` }
       });
-      setMessage({ type: 'success', text: 'Charges & Caps updated successfully' });
+      // Save hierarchical leverage settings (separate intraday and carryforward)
+      await axios.put(`/api/admin/manage/admins/${targetAdmin._id}/leverage`, {
+        maxLeverageFromParent: leverageSettings.maxLeverageFromParent,
+        intradayLeverages: leverageSettings.intradayLeverages.filter(l => l <= leverageSettings.maxLeverageFromParent),
+        carryForwardLeverages: leverageSettings.carryForwardLeverages.filter(l => l <= leverageSettings.maxLeverageFromParent)
+      }, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      setMessage({ type: 'success', text: 'Charges, Caps & Leverage updated successfully' });
       onSuccess();
       setTimeout(onClose, 1500);
     } catch (error) {
@@ -1873,26 +1886,6 @@ const AdminChargesModal = ({ admin: targetAdmin, token, onClose, onSuccess }) =>
               <input type="number" value={charges.brokerage} onChange={e => setCharges({...charges, brokerage: Number(e.target.value)})} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2" />
             </div>
             <div>
-              <label className="block text-xs text-gray-400 mb-1">Intraday Leverage</label>
-              <input type="number" value={charges.intradayLeverage} onChange={e => setCharges({...charges, intradayLeverage: Number(e.target.value)})} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2" />
-            </div>
-            <div>
-              <label className="block text-xs text-gray-400 mb-1">Delivery Leverage</label>
-              <input type="number" value={charges.deliveryLeverage} onChange={e => setCharges({...charges, deliveryLeverage: Number(e.target.value)})} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2" />
-            </div>
-            <div>
-              <label className="block text-xs text-gray-400 mb-1">Option Buy Leverage</label>
-              <input type="number" value={charges.optionBuyLeverage} onChange={e => setCharges({...charges, optionBuyLeverage: Number(e.target.value)})} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2" />
-            </div>
-            <div>
-              <label className="block text-xs text-gray-400 mb-1">Option Sell Leverage</label>
-              <input type="number" value={charges.optionSellLeverage} onChange={e => setCharges({...charges, optionSellLeverage: Number(e.target.value)})} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2" />
-            </div>
-            <div>
-              <label className="block text-xs text-gray-400 mb-1">Futures Leverage</label>
-              <input type="number" value={charges.futuresLeverage} onChange={e => setCharges({...charges, futuresLeverage: Number(e.target.value)})} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2" />
-            </div>
-            <div>
               <label className="block text-xs text-gray-400 mb-1">Withdrawal Fee (₹)</label>
               <input type="number" value={charges.withdrawalFee} onChange={e => setCharges({...charges, withdrawalFee: Number(e.target.value)})} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2" />
             </div>
@@ -1907,6 +1900,107 @@ const AdminChargesModal = ({ admin: targetAdmin, token, onClose, onSuccess }) =>
             <div>
               <label className="block text-xs text-gray-400 mb-1">Max Withdrawal (₹)</label>
               <input type="number" value={charges.maxWithdrawal} onChange={e => setCharges({...charges, maxWithdrawal: Number(e.target.value)})} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2" />
+            </div>
+          </div>
+          
+          {/* Hierarchical Leverage Settings */}
+          <div className="border-t border-dark-600 pt-4 mt-4">
+            <h3 className="text-sm font-semibold text-purple-400 mb-3">Leverage Settings (Hierarchical)</h3>
+            <p className="text-xs text-gray-500 mb-3">Set leverage options for Intraday (MIS) and Carry Forward (NRML) separately</p>
+            
+            {/* Max Leverage From Parent */}
+            <div className="bg-purple-900/20 border border-purple-500/30 rounded p-3 mb-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="text-sm font-medium text-purple-300">Max Leverage Limit</div>
+                  <div className="text-xs text-gray-500">This admin cannot assign leverage higher than this</div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <input 
+                    type="number" 
+                    min="1" 
+                    max="2000"
+                    value={leverageSettings.maxLeverageFromParent} 
+                    onChange={e => setLeverageSettings({...leverageSettings, maxLeverageFromParent: Number(e.target.value) || 10})} 
+                    className="w-24 bg-dark-700 border border-purple-500/50 rounded px-3 py-2 text-right text-purple-300 font-bold" 
+                  />
+                  <span className="text-purple-300 font-bold">x</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Intraday (MIS) Leverage */}
+            <div className="bg-green-900/20 border border-green-500/30 rounded p-3 mb-3">
+              <div className="text-sm font-medium text-green-400 mb-2">Intraday (MIS) Leverage Options</div>
+              <div className="text-xs text-gray-500 mb-2">User can select these leverages for intraday trades</div>
+              <div className="flex flex-wrap gap-2">
+                {[1, 2, 5, 10, 20, 50, 100, 200, 500, 800, 1000, 1500, 2000].map(lev => {
+                  const maxAllowed = leverageSettings.maxLeverageFromParent || 10;
+                  const isDisabled = lev > maxAllowed;
+                  const isEnabled = leverageSettings.intradayLeverages?.includes(lev);
+                  return (
+                    <button
+                      key={lev}
+                      type="button"
+                      disabled={isDisabled}
+                      onClick={() => {
+                        if (isDisabled) return;
+                        const current = leverageSettings.intradayLeverages || [1, 2, 5, 10];
+                        const updated = isEnabled 
+                          ? current.filter(l => l !== lev)
+                          : [...current, lev].sort((a, b) => a - b);
+                        setLeverageSettings({...leverageSettings, intradayLeverages: updated});
+                      }}
+                      className={`px-3 py-1 rounded text-sm font-medium transition ${
+                        isDisabled
+                          ? 'bg-dark-900 text-gray-600 cursor-not-allowed opacity-50'
+                          : isEnabled 
+                            ? 'bg-green-600 text-white' 
+                            : 'bg-dark-700 text-gray-400 hover:bg-dark-600'
+                      }`}
+                    >
+                      {lev}x
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Carry Forward (NRML) Leverage */}
+            <div className="bg-blue-900/20 border border-blue-500/30 rounded p-3">
+              <div className="text-sm font-medium text-blue-400 mb-2">Carry Forward (NRML) Leverage Options</div>
+              <div className="text-xs text-gray-500 mb-2">User can select these leverages for overnight positions</div>
+              <div className="flex flex-wrap gap-2">
+                {[1, 2, 5, 10, 20, 50, 100, 200, 500, 800, 1000, 1500, 2000].map(lev => {
+                  const maxAllowed = leverageSettings.maxLeverageFromParent || 10;
+                  const isDisabled = lev > maxAllowed;
+                  const isEnabled = leverageSettings.carryForwardLeverages?.includes(lev);
+                  return (
+                    <button
+                      key={lev}
+                      type="button"
+                      disabled={isDisabled}
+                      onClick={() => {
+                        if (isDisabled) return;
+                        const current = leverageSettings.carryForwardLeverages || [1, 2, 5];
+                        const updated = isEnabled 
+                          ? current.filter(l => l !== lev)
+                          : [...current, lev].sort((a, b) => a - b);
+                        setLeverageSettings({...leverageSettings, carryForwardLeverages: updated});
+                      }}
+                      className={`px-3 py-1 rounded text-sm font-medium transition ${
+                        isDisabled
+                          ? 'bg-dark-900 text-gray-600 cursor-not-allowed opacity-50'
+                          : isEnabled 
+                            ? 'bg-blue-600 text-white' 
+                            : 'bg-dark-700 text-gray-400 hover:bg-dark-600'
+                      }`}
+                    >
+                      {lev}x
+                    </button>
+                  );
+                })}
+              </div>
             </div>
           </div>
           
@@ -10373,7 +10467,15 @@ const LotManagement = () => {
         headers: { Authorization: `Bearer ${admin.token}` }
       });
       if (data.lotSettings) {
-        setLotSettings(data.lotSettings);
+        setLotSettings(prev => ({ ...prev, ...data.lotSettings }));
+      }
+      // Also fetch leverage settings
+      if (data.leverageSettings) {
+        setLotSettings(prev => ({ 
+          ...prev, 
+          maxLeverageFromParent: data.leverageSettings.maxLeverageFromParent || 10,
+          enabledLeverages: data.leverageSettings.enabledLeverages || [1, 2, 5, 10]
+        }));
       }
     } catch (error) {
       console.error('Error fetching lot settings:', error);
@@ -10384,6 +10486,7 @@ const LotManagement = () => {
     setSaving(true);
     setMessage({ type: '', text: '' });
     try {
+      // Save lot settings
       await axios.put(`/api/admin/manage/admins/${selectedAdmin}/lot-settings`, 
         { 
           lotSettings,
@@ -10393,6 +10496,16 @@ const LotManagement = () => {
         },
         { headers: { Authorization: `Bearer ${admin.token}` } }
       );
+      
+      // Save hierarchical leverage settings separately
+      await axios.put(`/api/admin/manage/admins/${selectedAdmin}/leverage`, 
+        { 
+          maxLeverageFromParent: lotSettings.maxLeverageFromParent || 10,
+          enabledLeverages: (lotSettings.enabledLeverages || [1, 2, 5, 10]).filter(l => l <= (lotSettings.maxLeverageFromParent || 10))
+        },
+        { headers: { Authorization: `Bearer ${admin.token}` } }
+      );
+      
       setMessage({ type: 'success', text: 'All settings saved successfully!' });
     } catch (error) {
       setMessage({ type: 'error', text: error.response?.data?.message || 'Error saving settings' });
@@ -10572,17 +10685,47 @@ const LotManagement = () => {
         </div>
       </div>
 
-      {/* Leverage Settings */}
+      {/* Hierarchical Leverage Settings */}
       <div className="mt-6 bg-dark-800 rounded-lg p-4">
-        <h3 className="text-lg font-semibold mb-4 text-purple-400">Leverage Settings</h3>
-        <p className="text-sm text-gray-400 mb-4">Select which leverage options to enable for users. Higher leverage = higher risk.</p>
+        <h3 className="text-lg font-semibold mb-4 text-purple-400">Leverage Settings (Hierarchical)</h3>
+        
+        {/* Max Leverage From Parent - This admin's maximum allowed leverage */}
+        <div className="mb-6 p-4 bg-dark-700 rounded-lg border border-purple-500/30">
+          <div className="flex items-center justify-between mb-2">
+            <div>
+              <div className="text-sm font-medium text-purple-300">Max Leverage Limit for this Admin</div>
+              <div className="text-xs text-gray-500">Maximum leverage this admin can assign to their brokers/users</div>
+            </div>
+            <div className="flex items-center gap-2">
+              <input
+                type="number"
+                min="1"
+                max="2000"
+                value={lotSettings.maxLeverageFromParent || 10}
+                onChange={(e) => setLotSettings(prev => ({ ...prev, maxLeverageFromParent: parseInt(e.target.value) || 10 }))}
+                className="w-24 bg-dark-600 border border-purple-500/50 rounded px-3 py-2 text-right text-purple-300 font-bold"
+              />
+              <span className="text-purple-300 font-bold">x</span>
+            </div>
+          </div>
+          <div className="text-xs text-yellow-500 mt-2">
+            ⚠️ This admin cannot assign leverage higher than {lotSettings.maxLeverageFromParent || 10}x to their children
+          </div>
+        </div>
+
+        {/* Enabled Leverages - What this admin assigns to users */}
+        <p className="text-sm text-gray-400 mb-4">Select which leverage options this admin can assign to their users. Options above max limit will be disabled.</p>
         <div className="flex flex-wrap gap-3">
           {[1, 2, 5, 10, 20, 50, 100, 200, 500, 800, 1000, 1500, 2000].map(lev => {
+            const maxAllowed = lotSettings.maxLeverageFromParent || 10;
+            const isDisabled = lev > maxAllowed;
             const isEnabled = lotSettings.enabledLeverages?.includes(lev);
             return (
               <button
                 key={lev}
+                disabled={isDisabled}
                 onClick={() => {
+                  if (isDisabled) return;
                   const current = lotSettings.enabledLeverages || [1, 2, 5, 10];
                   const updated = isEnabled 
                     ? current.filter(l => l !== lev)
@@ -10590,9 +10733,11 @@ const LotManagement = () => {
                   setLotSettings(prev => ({ ...prev, enabledLeverages: updated }));
                 }}
                 className={`px-4 py-2 rounded-lg font-medium transition ${
-                  isEnabled 
-                    ? 'bg-purple-600 text-white' 
-                    : 'bg-dark-700 text-gray-400 hover:bg-dark-600'
+                  isDisabled
+                    ? 'bg-dark-900 text-gray-600 cursor-not-allowed opacity-50'
+                    : isEnabled 
+                      ? 'bg-purple-600 text-white' 
+                      : 'bg-dark-700 text-gray-400 hover:bg-dark-600'
                 }`}
               >
                 {lev}x
@@ -10601,7 +10746,7 @@ const LotManagement = () => {
           })}
         </div>
         <div className="mt-4 text-xs text-gray-500">
-          Enabled: {(lotSettings.enabledLeverages || [1, 2, 5, 10]).join('x, ')}x
+          Enabled: {(lotSettings.enabledLeverages || [1, 2, 5, 10]).filter(l => l <= (lotSettings.maxLeverageFromParent || 10)).join('x, ')}x
         </div>
       </div>
 

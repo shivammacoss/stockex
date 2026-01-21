@@ -221,18 +221,103 @@ class TradingService {
   }
 
   // Get admin settings for user
+  // First try createdBy (direct parent), then fall back to adminCode
   static async getAdminSettings(user) {
-    const admin = await Admin.findOne({ adminCode: user.adminCode });
-    return admin || null;
+    // First try to get the direct creator (broker/admin who created this user)
+    if (user.createdBy) {
+      const creator = await Admin.findById(user.createdBy);
+      if (creator) {
+        console.log('[getAdminSettings] Found creator:', creator.username, creator.role);
+        return creator;
+      }
+    }
+    // Fall back to adminCode lookup
+    if (user.adminCode) {
+      const admin = await Admin.findOne({ adminCode: user.adminCode });
+      if (admin) {
+        console.log('[getAdminSettings] Found admin by adminCode:', admin.username, admin.role);
+        return admin;
+      }
+    }
+    console.log('[getAdminSettings] No admin found for user:', user.username);
+    return null;
   }
 
-  // Get available leverages for user
-  static async getAvailableLeverages(user) {
-    const admin = await this.getAdminSettings(user);
-    if (!admin || !admin.leverageSettings) {
-      return [1, 2, 5, 10];
+  // Get available leverages for user (hierarchical system)
+  // Returns separate intraday and carryforward leverages
+  // Priority: User's custom leverageSettings > Parent Admin's leverageSettings > Defaults
+  static async getAvailableLeverages(user, productType = null) {
+    const defaultIntraday = [1, 2, 5, 10];
+    const defaultCarryForward = [1, 2, 5];
+    
+    // Helper to check if array is just the default (not custom set by parent)
+    const isDefaultIntraday = (arr) => arr?.length === 4 && arr.includes(1) && arr.includes(2) && arr.includes(5) && arr.includes(10) && !arr.some(l => l > 10);
+    const isDefaultCarryForward = (arr) => arr?.length === 3 && arr.includes(1) && arr.includes(2) && arr.includes(5) && !arr.some(l => l > 5);
+    
+    let intradayLeverages = defaultIntraday;
+    let carryForwardLeverages = defaultCarryForward;
+    let userHasCustomIntraday = false;
+    let userHasCustomCarryForward = false;
+    
+    // Check if user has CUSTOM leverage settings (not just defaults from schema)
+    if (user.leverageSettings) {
+      if (user.leverageSettings.intradayLeverages?.length > 0 && !isDefaultIntraday(user.leverageSettings.intradayLeverages)) {
+        intradayLeverages = user.leverageSettings.intradayLeverages;
+        userHasCustomIntraday = true;
+      }
+      if (user.leverageSettings.carryForwardLeverages?.length > 0 && !isDefaultCarryForward(user.leverageSettings.carryForwardLeverages)) {
+        carryForwardLeverages = user.leverageSettings.carryForwardLeverages;
+        userHasCustomCarryForward = true;
+      }
     }
-    return admin.leverageSettings.enabledLeverages || [1, 2, 5, 10];
+    
+    // Always get parent admin's settings - use them if user doesn't have custom settings
+    const admin = await this.getAdminSettings(user);
+    console.log('[Leverage] User adminCode:', user.adminCode, 'Found admin:', admin?.username, 'userHasCustomIntraday:', userHasCustomIntraday, 'userHasCustomCarryForward:', userHasCustomCarryForward);
+    
+    if (admin?.leverageSettings) {
+      // Get admin's leverage arrays (with fallback to enabledLeverages for backward compatibility)
+      const adminIntradayLeverages = admin.leverageSettings.intradayLeverages?.length > 0 
+        ? admin.leverageSettings.intradayLeverages 
+        : (admin.leverageSettings.enabledLeverages?.length > 0 ? admin.leverageSettings.enabledLeverages : null);
+      
+      const adminCarryForwardLeverages = admin.leverageSettings.carryForwardLeverages?.length > 0 
+        ? admin.leverageSettings.carryForwardLeverages 
+        : (admin.leverageSettings.enabledLeverages?.length > 0 
+            ? admin.leverageSettings.enabledLeverages.filter(l => l <= 20)
+            : null);
+      
+      console.log('[Leverage] Admin intradayLeverages:', adminIntradayLeverages, 'carryForwardLeverages:', adminCarryForwardLeverages);
+      
+      // Use admin's leverages if user doesn't have custom settings
+      if (!userHasCustomIntraday && adminIntradayLeverages?.length > 0) {
+        intradayLeverages = adminIntradayLeverages;
+      }
+      if (!userHasCustomCarryForward && adminCarryForwardLeverages?.length > 0) {
+        carryForwardLeverages = adminCarryForwardLeverages;
+      }
+    }
+    
+    // Sort both arrays
+    intradayLeverages = [...intradayLeverages].sort((a, b) => a - b);
+    carryForwardLeverages = [...carryForwardLeverages].sort((a, b) => a - b);
+    
+    console.log('[Leverage] Final intraday:', intradayLeverages, 'carryForward:', carryForwardLeverages);
+    
+    // If productType is specified, return only that type's leverages
+    if (productType === 'MIS') {
+      return intradayLeverages;
+    } else if (productType === 'NRML' || productType === 'CNC') {
+      return carryForwardLeverages;
+    }
+    
+    // Return both for the API response
+    return {
+      intraday: intradayLeverages,
+      carryForward: carryForwardLeverages,
+      // Legacy support - combine both
+      leverages: [...new Set([...intradayLeverages, ...carryForwardLeverages])].sort((a, b) => a - b)
+    };
   }
 
   // Calculate margin required with leverage
@@ -373,6 +458,8 @@ class TradingService {
     // For crypto: use fractional quantity directly
     // For others: use quantity from frontend if provided (quantity mode), otherwise lots * lotSize
     const lots = orderData.lots || 1;
+    // Check if frontend sent quantity directly (quantity mode) - quantity won't equal lots * lotSize
+    const isQuantityMode = orderData.quantity && orderData.quantity !== (lots * lotSize);
     const totalQuantity = isCryptoTrade 
       ? (orderData.quantity || orderData.cryptoAmount / orderData.price || 0) // Fractional crypto units
       : (orderData.quantity || lots * lotSize); // Use frontend quantity if provided, else calculate from lots
@@ -384,19 +471,39 @@ class TradingService {
       const maxLots = scriptSettings?.lotSettings?.maxLots || segmentSettings?.maxLots || 50;
       const minLots = scriptSettings?.lotSettings?.minLots || segmentSettings?.minLots || 1;
       
-      console.log('Lot Validation:', {
+      // For quantity mode, calculate effective lots from quantity for validation
+      const effectiveLots = isQuantityMode ? Math.ceil(totalQuantity / lotSize) : lots;
+      
+      console.log('Order Validation:', {
+        isQuantityMode,
         requestedLots: lots,
+        effectiveLots,
+        totalQuantity,
+        lotSize,
         maxLots, minLots,
         fromScript: !!scriptSettings?.lotSettings?.maxLots,
         fromSegment: segmentSettings?.maxLots,
         segment: orderData.segment
       });
       
-      if (lots < minLots) {
-        throw new Error(`Minimum ${minLots} lots required for ${orderData.symbol}`);
-      }
-      if (lots > maxLots) {
-        throw new Error(`Maximum ${maxLots} lots allowed for ${orderData.symbol}. Your limit is ${maxLots} lots.`);
+      // In quantity mode, validate quantity is at least 1 and within reasonable bounds
+      if (isQuantityMode) {
+        if (totalQuantity < 1) {
+          throw new Error(`Minimum quantity is 1 for ${orderData.symbol}`);
+        }
+        // Optional: validate max quantity based on maxLots * lotSize
+        const maxQuantity = maxLots * lotSize;
+        if (totalQuantity > maxQuantity) {
+          throw new Error(`Maximum quantity is ${maxQuantity} for ${orderData.symbol}`);
+        }
+      } else {
+        // Lots mode validation
+        if (lots < minLots) {
+          throw new Error(`Minimum ${minLots} lots required for ${orderData.symbol}`);
+        }
+        if (lots > maxLots) {
+          throw new Error(`Maximum ${maxLots} lots allowed for ${orderData.symbol}. Your limit is ${maxLots} lots.`);
+        }
       }
     } else {
       console.log('Crypto trade:', { quantity: totalQuantity, price: orderData.price, cryptoAmount: orderData.cryptoAmount });
@@ -421,7 +528,8 @@ class TradingService {
     const marginCalc = this.calculateMargin({ ...orderData, quantity: totalQuantity }, user, leverage);
     
     const price = orderData.price || 0;
-    const tradeValue = price * lotSize * lots;
+    // Use totalQuantity for trade value calculation (works for both lots and quantity mode)
+    const tradeValue = price * totalQuantity;
     
     // Priority 1: Check for fixed margin in script settings
     if (scriptSettings?.fixedMargin) {
@@ -435,7 +543,8 @@ class TradingService {
       }
       
       if (fixedMarginPerLot > 0) {
-        marginRequired = fixedMarginPerLot * lots;
+        // Calculate margin based on quantity (margin per unit * quantity)
+        marginRequired = (fixedMarginPerLot / lotSize) * totalQuantity;
         usedFixedMargin = true;
         marginSource = 'script_fixed';
       }
@@ -464,10 +573,14 @@ class TradingService {
     // Determine if crypto trade - check before balance validation
     const isCrypto = orderData.segment === 'CRYPTO' || orderData.isCrypto || orderData.exchange === 'BINANCE';
     
+    // Determine if MCX trade - check before balance validation
+    const isMCXTradeEarly = orderData.exchange === 'MCX' || orderData.segment === 'MCX' || 
+                           orderData.segment === 'MCXFUT' || orderData.segment === 'MCXOPT';
+    
     // For crypto spot trading, calculate trade cost (price × quantity)
     const cryptoTradeCost = isCrypto ? (price * totalQuantity) : 0;
     
-    // Use appropriate wallet based on trade type
+    // Use appropriate wallet based on trade type (triple wallet system)
     let availableBalance;
     if (isCrypto) {
       // Crypto trades use separate crypto wallet (no margin system, spot trading)
@@ -476,6 +589,16 @@ class TradingService {
       const totalCryptoRequired = cryptoTradeCost + totalCommission;
       if (totalCryptoRequired > availableBalance) {
         throw new Error(`Insufficient crypto wallet balance. Required: $${totalCryptoRequired.toFixed(2)}, Available: $${availableBalance.toFixed(2)}`);
+      }
+    } else if (isMCXTradeEarly) {
+      // MCX trades use separate MCX wallet with margin system
+      const mcxBalance = user.mcxWallet?.balance || 0;
+      const mcxUsedMargin = user.mcxWallet?.usedMargin || 0;
+      availableBalance = mcxBalance - mcxUsedMargin;
+      
+      // Check if user has enough in MCX wallet for margin + commission
+      if ((marginRequired + totalCommission) > availableBalance) {
+        throw new Error(`Insufficient MCX wallet balance. Required: ₹${(marginRequired + totalCommission).toLocaleString()}, Available: ₹${availableBalance.toLocaleString()}`);
       }
     } else {
       // Regular trades use trading balance with margin system
@@ -574,9 +697,14 @@ class TradingService {
       trade.marketPrice = orderData.price; // Store original market price
     }
     
-    // Block margin from tradingBalance and deduct commission (dual wallet system)
-    // For crypto trades, use separate cryptoWallet - no margin system
+    // Block margin from appropriate wallet (triple wallet system)
+    // Crypto trades use cryptoWallet, MCX trades use mcxWallet, others use regular wallet
     let newTradingBalance, newUsedMargin, newBlocked, newCryptoBalance;
+    let newMcxBalance, newMcxUsedMargin;
+    
+    // Check if this is an MCX trade
+    const isMCXTrade = orderData.exchange === 'MCX' || orderData.segment === 'MCX' || 
+                       orderData.segment === 'MCXFUT' || orderData.segment === 'MCXOPT';
     
     if (isCrypto) {
       // Crypto trades: Use separate crypto wallet, spot trading (full cost deducted)
@@ -593,21 +721,51 @@ class TradingService {
       newTradingBalance = user.wallet.tradingBalance || 0;
       newUsedMargin = user.wallet.usedMargin || 0;
       newBlocked = user.wallet.blocked || 0;
+      // MCX wallet unchanged
+      newMcxBalance = user.mcxWallet?.balance || 0;
+      newMcxUsedMargin = user.mcxWallet?.usedMargin || 0;
       console.log(`Crypto trade: Deducting $${totalCryptoDeduction.toFixed(2)} from crypto wallet (cost: $${cryptoTradeCost.toFixed(2)}, commission: $${totalCommission.toFixed(2)})`);
       
       // Store the trade cost as marginUsed for crypto (for tracking purposes)
       marginRequired = cryptoTradeCost;
+    } else if (isMCXTrade) {
+      // MCX trades: Block margin in usedMargin, deduct only commission from balance
+      // Available = balance - usedMargin, so we only track margin in usedMargin (not deduct from balance)
+      const mcxBalance = user.mcxWallet?.balance || 0;
+      const mcxUsedMargin = user.mcxWallet?.usedMargin || 0;
+      const mcxAvailable = mcxBalance - mcxUsedMargin;
+      
+      // Check if user has enough in MCX wallet
+      if ((marginRequired + totalCommission) > mcxAvailable) {
+        throw new Error(`Insufficient MCX wallet balance. Required: ₹${(marginRequired + totalCommission).toLocaleString()}, Available: ₹${mcxAvailable.toLocaleString()}`);
+      }
+      
+      // Update MCX wallet - only deduct commission from balance, margin is tracked in usedMargin
+      newMcxBalance = mcxBalance - totalCommission; // Only commission deducted
+      newMcxUsedMargin = mcxUsedMargin + marginRequired; // Block margin (available = balance - usedMargin)
+      
+      // Regular wallet unchanged for MCX trades
+      newTradingBalance = user.wallet.tradingBalance || 0;
+      newUsedMargin = user.wallet.usedMargin || 0;
+      newBlocked = user.wallet.blocked || 0;
+      newCryptoBalance = user.cryptoWallet?.balance || 0;
+      console.log(`MCX trade: Blocking ₹${marginRequired.toLocaleString()} margin, deducting ₹${totalCommission.toLocaleString()} commission. Balance: ₹${newMcxBalance.toLocaleString()}, UsedMargin: ₹${newMcxUsedMargin.toLocaleString()}`);
     } else {
-      // Regular trades: Block margin and deduct commission
-      newTradingBalance = (user.wallet.tradingBalance || 0) - marginRequired - totalCommission;
-      newUsedMargin = (user.wallet.usedMargin || 0) + marginRequired;
+      // Regular trades: Block margin in usedMargin, deduct only commission from balance
+      // Available = tradingBalance - usedMargin, so margin is only tracked in usedMargin
+      newTradingBalance = (user.wallet.tradingBalance || 0) - totalCommission; // Only commission deducted
+      newUsedMargin = (user.wallet.usedMargin || 0) + marginRequired; // Block margin
       newBlocked = (user.wallet.blocked || 0) + marginRequired;
       newCryptoBalance = user.cryptoWallet?.balance || 0; // Unchanged
+      // MCX wallet unchanged
+      newMcxBalance = user.mcxWallet?.balance || 0;
+      newMcxUsedMargin = user.mcxWallet?.usedMargin || 0;
     }
     
     // Prevent negative balances
     newTradingBalance = Math.max(0, newTradingBalance);
     newCryptoBalance = Math.max(0, newCryptoBalance);
+    newMcxBalance = Math.max(0, newMcxBalance);
     
     // Use updateOne to avoid validation issues with segmentPermissions
     const updateFields = { 
@@ -619,6 +777,12 @@ class TradingService {
     // Update crypto wallet if it's a crypto trade
     if (isCrypto) {
       updateFields['cryptoWallet.balance'] = newCryptoBalance;
+    }
+    
+    // Update MCX wallet if it's an MCX trade
+    if (isMCXTrade) {
+      updateFields['mcxWallet.balance'] = newMcxBalance;
+      updateFields['mcxWallet.usedMargin'] = newMcxUsedMargin;
     }
     
     await User.updateOne(
@@ -762,9 +926,14 @@ class TradingService {
 
     await trade.save();
 
-    // Release blocked margin and add/subtract P&L to tradingBalance (dual wallet system)
-    // For crypto trades, use separate cryptoWallet - no margin system
+    // Release blocked margin and add/subtract P&L to appropriate wallet (triple wallet system)
+    // Crypto trades use cryptoWallet, MCX trades use mcxWallet, others use regular wallet
     let newUsedMargin, newBlocked, newTradingBalance, newCryptoBalance, newCryptoRealizedPnL;
+    let newMcxBalance, newMcxUsedMargin, newMcxRealizedPnL;
+    
+    // Check if this is an MCX trade
+    const isMCXTrade = trade.exchange === 'MCX' || trade.segment === 'MCX' || 
+                       trade.segment === 'MCXFUT' || trade.segment === 'MCXOPT';
     
     if (trade.isCrypto) {
       // Crypto trades: Return trade cost (marginUsed) + P&L to crypto wallet
@@ -776,22 +945,48 @@ class TradingService {
       // Return the trade cost + add P&L (can be negative for loss)
       newCryptoBalance = (user.cryptoWallet?.balance || 0) + tradeCostReturned + netPnL;
       newCryptoRealizedPnL = (user.cryptoWallet?.realizedPnL || 0) + netPnL;
+      // MCX wallet unchanged
+      newMcxBalance = user.mcxWallet?.balance || 0;
+      newMcxUsedMargin = user.mcxWallet?.usedMargin || 0;
+      newMcxRealizedPnL = user.mcxWallet?.realizedPnL || 0;
       console.log(`Crypto trade closed: Returning $${tradeCostReturned.toFixed(2)} + P&L $${netPnL.toFixed(2)} to crypto wallet`);
-    } else {
-      // Regular trades: Release margin and add P&L
-      newUsedMargin = Math.max(0, (user.wallet.usedMargin || 0) - trade.marginUsed);
-      newBlocked = Math.max(0, (user.wallet.blocked || 0) - trade.marginUsed);
-      newTradingBalance = (user.wallet.tradingBalance || 0) + trade.marginUsed + netPnL;
+    } else if (isMCXTrade) {
+      // MCX trades: Release margin from usedMargin and apply P&L to balance
+      // Since margin was NOT deducted from balance when opening (only tracked in usedMargin),
+      // we only release usedMargin and apply P&L to balance
+      newUsedMargin = user.wallet.usedMargin || 0; // No change to regular wallet
+      newBlocked = user.wallet.blocked || 0; // No change
+      newTradingBalance = user.wallet.tradingBalance || 0; // No change to regular trading balance
       newCryptoBalance = user.cryptoWallet?.balance || 0; // Unchanged
       newCryptoRealizedPnL = user.cryptoWallet?.realizedPnL || 0; // Unchanged
+      // Update MCX wallet - release margin from usedMargin, apply P&L to balance
+      newMcxUsedMargin = Math.max(0, (user.mcxWallet?.usedMargin || 0) - trade.marginUsed);
+      newMcxBalance = (user.mcxWallet?.balance || 0) + netPnL; // Only P&L added (margin was never deducted)
+      newMcxRealizedPnL = (user.mcxWallet?.realizedPnL || 0) + netPnL;
+      console.log(`MCX trade closed: Releasing ₹${trade.marginUsed} margin, applying P&L ₹${netPnL.toFixed(2)}. New balance: ₹${newMcxBalance.toLocaleString()}, UsedMargin: ₹${newMcxUsedMargin.toLocaleString()}`);
+    } else {
+      // Regular trades: Release margin from usedMargin and apply P&L to balance
+      // Since margin was NOT deducted from balance when opening (only tracked in usedMargin),
+      // we only release usedMargin and apply P&L to balance
+      newUsedMargin = Math.max(0, (user.wallet.usedMargin || 0) - trade.marginUsed);
+      newBlocked = Math.max(0, (user.wallet.blocked || 0) - trade.marginUsed);
+      newTradingBalance = (user.wallet.tradingBalance || 0) + netPnL; // Only P&L added (margin was never deducted)
+      newCryptoBalance = user.cryptoWallet?.balance || 0; // Unchanged
+      newCryptoRealizedPnL = user.cryptoWallet?.realizedPnL || 0; // Unchanged
+      // MCX wallet unchanged
+      newMcxBalance = user.mcxWallet?.balance || 0;
+      newMcxUsedMargin = user.mcxWallet?.usedMargin || 0;
+      newMcxRealizedPnL = user.mcxWallet?.realizedPnL || 0;
     }
     
     // Prevent negative balances
     newTradingBalance = Math.max(0, newTradingBalance);
     newCryptoBalance = Math.max(0, newCryptoBalance);
+    newMcxBalance = Math.max(0, newMcxBalance);
     
-    const newRealizedPnL = trade.isCrypto 
-      ? (user.wallet.realizedPnL || 0) // Don't add crypto P&L to regular wallet
+    // Only add P&L to regular wallet realizedPnL if it's not crypto or MCX
+    const newRealizedPnL = (trade.isCrypto || isMCXTrade)
+      ? (user.wallet.realizedPnL || 0) // Don't add crypto/MCX P&L to regular wallet
       : (user.wallet.realizedPnL || 0) + netPnL;
     
     // Use updateOne to avoid validation issues with segmentPermissions
@@ -806,6 +1001,13 @@ class TradingService {
     if (trade.isCrypto) {
       updateFields['cryptoWallet.balance'] = newCryptoBalance;
       updateFields['cryptoWallet.realizedPnL'] = newCryptoRealizedPnL;
+    }
+    
+    // Update MCX wallet if it's an MCX trade
+    if (isMCXTrade) {
+      updateFields['mcxWallet.balance'] = newMcxBalance;
+      updateFields['mcxWallet.usedMargin'] = newMcxUsedMargin;
+      updateFields['mcxWallet.realizedPnL'] = newMcxRealizedPnL;
     }
     
     await User.updateOne(

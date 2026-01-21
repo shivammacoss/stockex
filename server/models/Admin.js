@@ -166,29 +166,18 @@ const adminSchema = new mongoose.Schema({
     maxDailyTrades: { type: Number, default: 100 }
   },
   
-  // Leverage Settings - Admin can activate specific leverage options for users
+  // Leverage Settings - Hierarchical leverage system
+  // SuperAdmin sets maxLeverageFromParent for Admin, Admin sets for Broker, etc.
   leverageSettings: {
-    enabledLeverages: { type: [Number], default: [1, 2, 5, 10] }, // Available leverage options
-    maxLeverage: { type: Number, default: 10 }, // Maximum leverage allowed
-    leverageOptions: {
-      type: Map,
-      of: Boolean,
-      default: {
-        '1': true,    // 1x (no leverage)
-        '2': true,    // 2x
-        '5': true,    // 5x
-        '10': true,   // 10x
-        '20': false,  // 20x
-        '50': false,  // 50x
-        '100': false, // 100x
-        '200': false, // 200x
-        '500': false, // 500x
-        '800': false, // 800x
-        '1000': false,// 1000x
-        '1500': false,// 1500x
-        '2000': false // 2000x
-      }
-    }
+    // Max leverage this admin can use/assign (set by parent admin)
+    maxLeverageFromParent: { type: Number, default: 2000 }, // For SuperAdmin, this is unlimited (2000)
+    // Intraday (MIS) leverages this admin can assign to children
+    intradayLeverages: { type: [Number], default: [1, 2, 5, 10] },
+    // Carry Forward (NRML) leverages this admin can assign to children
+    carryForwardLeverages: { type: [Number], default: [1, 2, 5] },
+    // Legacy - kept for backward compatibility
+    enabledLeverages: { type: [Number], default: [1, 2, 5, 10] },
+    maxLeverage: { type: Number, default: 10 }
   },
   
   // Trading Settings

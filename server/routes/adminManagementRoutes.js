@@ -339,6 +339,198 @@ router.put('/admins/:id/lot-settings', protectAdmin, superAdminOnly, async (req,
   }
 });
 
+// ============ HIERARCHICAL LEVERAGE MANAGEMENT ============
+
+// Set max leverage for child admin (hierarchical)
+// SuperAdmin can set for Admin, Admin can set for Broker, Broker can set for SubBroker
+router.put('/admins/:id/leverage', protectAdmin, async (req, res) => {
+  try {
+    const { maxLeverageFromParent, intradayLeverages, carryForwardLeverages } = req.body;
+    const parentAdmin = req.admin;
+    
+    const childAdmin = await Admin.findById(req.params.id);
+    if (!childAdmin) return res.status(404).json({ message: 'Admin not found' });
+    
+    // Verify hierarchy - parent must be able to manage child
+    if (!parentAdmin.canManage(childAdmin.role)) {
+      return res.status(403).json({ message: 'You cannot manage this admin level' });
+    }
+    
+    // Verify child belongs to parent (check hierarchyPath or parentId)
+    if (childAdmin.parentId && childAdmin.parentId.toString() !== parentAdmin._id.toString()) {
+      // Check if parent is in hierarchy path
+      const isInHierarchy = childAdmin.hierarchyPath?.some(id => id.toString() === parentAdmin._id.toString());
+      if (!isInHierarchy && parentAdmin.role !== 'SUPER_ADMIN') {
+        return res.status(403).json({ message: 'This admin is not under your management' });
+      }
+    }
+    
+    // Get parent's max leverage limit
+    const parentMaxLeverage = parentAdmin.role === 'SUPER_ADMIN' 
+      ? 2000 // SuperAdmin has unlimited
+      : (parentAdmin.leverageSettings?.maxLeverageFromParent || 10);
+    
+    // Validate maxLeverageFromParent doesn't exceed parent's limit
+    if (maxLeverageFromParent && maxLeverageFromParent > parentMaxLeverage) {
+      return res.status(400).json({ 
+        message: `Cannot set leverage higher than your limit (${parentMaxLeverage}x)` 
+      });
+    }
+    
+    // Initialize leverageSettings if not exists
+    if (!childAdmin.leverageSettings) {
+      childAdmin.leverageSettings = {};
+    }
+    
+    // Update maxLeverageFromParent
+    if (maxLeverageFromParent) {
+      childAdmin.leverageSettings.maxLeverageFromParent = maxLeverageFromParent;
+    }
+    
+    const maxAllowed = childAdmin.leverageSettings.maxLeverageFromParent || parentMaxLeverage;
+    
+    // Update intradayLeverages (filter to only include values <= maxLeverageFromParent)
+    if (intradayLeverages && Array.isArray(intradayLeverages)) {
+      const filteredLeverages = intradayLeverages.filter(lev => lev <= maxAllowed);
+      childAdmin.leverageSettings.intradayLeverages = filteredLeverages.sort((a, b) => a - b);
+    }
+    
+    // Update carryForwardLeverages (filter to only include values <= maxLeverageFromParent)
+    if (carryForwardLeverages && Array.isArray(carryForwardLeverages)) {
+      const filteredLeverages = carryForwardLeverages.filter(lev => lev <= maxAllowed);
+      childAdmin.leverageSettings.carryForwardLeverages = filteredLeverages.sort((a, b) => a - b);
+    }
+    
+    // Update legacy enabledLeverages for backward compatibility (combine both)
+    const allLeverages = [...new Set([
+      ...(childAdmin.leverageSettings.intradayLeverages || []),
+      ...(childAdmin.leverageSettings.carryForwardLeverages || [])
+    ])].sort((a, b) => a - b);
+    childAdmin.leverageSettings.enabledLeverages = allLeverages;
+    childAdmin.leverageSettings.maxLeverage = allLeverages.length > 0 ? Math.max(...allLeverages) : 10;
+    
+    await childAdmin.save();
+    
+    res.json({ 
+      message: 'Leverage settings updated successfully',
+      leverageSettings: childAdmin.leverageSettings,
+      parentMaxLeverage
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Get leverage settings for admin (including parent's limit)
+router.get('/admins/:id/leverage', protectAdmin, async (req, res) => {
+  try {
+    const admin = await Admin.findById(req.params.id);
+    if (!admin) return res.status(404).json({ message: 'Admin not found' });
+    
+    // Get parent's max leverage for context
+    let parentMaxLeverage = 2000; // Default for SuperAdmin
+    if (admin.parentId) {
+      const parentAdmin = await Admin.findById(admin.parentId);
+      if (parentAdmin) {
+        parentMaxLeverage = parentAdmin.role === 'SUPER_ADMIN' 
+          ? 2000 
+          : (parentAdmin.leverageSettings?.maxLeverageFromParent || 10);
+      }
+    }
+    
+    res.json({
+      leverageSettings: admin.leverageSettings || { enabledLeverages: [1, 2, 5, 10], maxLeverage: 10, maxLeverageFromParent: 10 },
+      parentMaxLeverage,
+      role: admin.role
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Set leverage for user (by parent admin/broker)
+router.put('/users/:id/leverage', protectAdmin, async (req, res) => {
+  try {
+    const { enabledLeverages, maxLeverage } = req.body;
+    const parentAdmin = req.admin;
+    
+    const user = await User.findById(req.params.id);
+    if (!user) return res.status(404).json({ message: 'User not found' });
+    
+    // Verify user belongs to this admin (by adminCode or hierarchyPath)
+    const isDirectParent = user.adminCode === parentAdmin.adminCode;
+    const isInHierarchy = user.hierarchyPath?.some(id => id.toString() === parentAdmin._id.toString());
+    
+    if (!isDirectParent && !isInHierarchy && parentAdmin.role !== 'SUPER_ADMIN') {
+      return res.status(403).json({ message: 'This user is not under your management' });
+    }
+    
+    // Get parent's max leverage limit
+    const parentMaxLeverage = parentAdmin.role === 'SUPER_ADMIN' 
+      ? 2000 
+      : (parentAdmin.leverageSettings?.maxLeverageFromParent || 10);
+    
+    // Validate leverages don't exceed parent's limit
+    if (enabledLeverages && Array.isArray(enabledLeverages)) {
+      const invalidLeverages = enabledLeverages.filter(lev => lev > parentMaxLeverage);
+      if (invalidLeverages.length > 0) {
+        return res.status(400).json({ 
+          message: `Cannot set leverage higher than your limit (${parentMaxLeverage}x). Invalid: ${invalidLeverages.join(', ')}x` 
+        });
+      }
+    }
+    
+    // Initialize leverageSettings if not exists
+    if (!user.leverageSettings) {
+      user.leverageSettings = {};
+    }
+    
+    // Update user's leverage settings
+    if (enabledLeverages && Array.isArray(enabledLeverages)) {
+      user.leverageSettings.enabledLeverages = enabledLeverages.sort((a, b) => a - b);
+      user.leverageSettings.maxLeverage = maxLeverage || Math.max(...enabledLeverages);
+    }
+    
+    await user.save();
+    
+    res.json({ 
+      message: 'User leverage settings updated successfully',
+      leverageSettings: user.leverageSettings,
+      parentMaxLeverage
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Get user's leverage settings
+router.get('/users/:id/leverage', protectAdmin, async (req, res) => {
+  try {
+    const user = await User.findById(req.params.id);
+    if (!user) return res.status(404).json({ message: 'User not found' });
+    
+    // Get parent admin's leverage limit
+    let parentMaxLeverage = 10;
+    if (user.admin) {
+      const parentAdmin = await Admin.findById(user.admin);
+      if (parentAdmin) {
+        parentMaxLeverage = parentAdmin.role === 'SUPER_ADMIN' 
+          ? 2000 
+          : (parentAdmin.leverageSettings?.maxLeverageFromParent || 10);
+      }
+    }
+    
+    res.json({
+      leverageSettings: user.leverageSettings || { enabledLeverages: [1, 2, 5, 10], maxLeverage: 10 },
+      parentMaxLeverage
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// ============ END HIERARCHICAL LEVERAGE MANAGEMENT ============
+
 // Create user (Super Admin only) - can assign to any admin
 router.post('/create-user', protectAdmin, superAdminOnly, async (req, res) => {
   try {
@@ -1860,15 +2052,25 @@ router.put('/admins/:id/reset-password', protectAdmin, superAdminOnly, async (re
 
 // ==================== SUPER ADMIN - DETAILED VIEWS ====================
 
-// Get admin with all their users
-router.get('/admins/:id/users', protectAdmin, superAdminOnly, async (req, res) => {
+// Get admin with all their users (hierarchical - parent can view child's users)
+router.get('/admins/:id/users', protectAdmin, async (req, res) => {
   try {
-    const admin = await Admin.findById(req.params.id).select('-password');
-    if (!admin) return res.status(404).json({ message: 'Admin not found' });
+    const targetAdmin = await Admin.findById(req.params.id).select('-password');
+    if (!targetAdmin) return res.status(404).json({ message: 'Admin not found' });
     
-    const users = await User.find({ adminCode: admin.adminCode }).select('-password');
+    // Check permission: Super Admin can view anyone, others can only view their children or themselves
+    const isSuperAdmin = req.admin.role === 'SUPER_ADMIN';
+    const isParent = targetAdmin.parentId?.toString() === req.admin._id.toString();
+    const isSelf = targetAdmin._id.toString() === req.admin._id.toString();
+    const canManage = req.admin.canManage && req.admin.canManage(targetAdmin.role);
     
-    res.json({ admin, users });
+    if (!isSuperAdmin && !isParent && !isSelf && !canManage) {
+      return res.status(403).json({ message: 'You can only view users for your subordinates' });
+    }
+    
+    const users = await User.find({ adminCode: targetAdmin.adminCode }).select('-password');
+    
+    res.json({ admin: targetAdmin, users });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
@@ -1988,17 +2190,26 @@ router.put('/admins/:id/status', protectAdmin, superAdminOnly, async (req, res) 
   }
 });
 
-// Update admin charges (Super Admin only)
-router.put('/admins/:id/charges', protectAdmin, superAdminOnly, async (req, res) => {
+// Update admin charges (hierarchical - parent can update child's charges)
+router.put('/admins/:id/charges', protectAdmin, async (req, res) => {
   try {
-    const admin = await Admin.findById(req.params.id);
-    if (!admin) return res.status(404).json({ message: 'Admin not found' });
+    const targetAdmin = await Admin.findById(req.params.id);
+    if (!targetAdmin) return res.status(404).json({ message: 'Admin not found' });
+    
+    // Check permission: Super Admin can edit anyone, others can only edit their children
+    const isSuperAdmin = req.admin.role === 'SUPER_ADMIN';
+    const isParent = targetAdmin.parentId?.toString() === req.admin._id.toString();
+    const canManage = req.admin.canManage && req.admin.canManage(targetAdmin.role);
+    
+    if (!isSuperAdmin && !isParent && !canManage) {
+      return res.status(403).json({ message: 'You can only update charges for your subordinates' });
+    }
     
     const { charges } = req.body;
-    admin.charges = { ...admin.charges, ...charges };
-    await admin.save();
+    targetAdmin.charges = { ...targetAdmin.charges, ...charges };
+    await targetAdmin.save();
     
-    res.json({ message: 'Charges updated', admin });
+    res.json({ message: 'Charges updated', admin: targetAdmin });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }

@@ -397,9 +397,9 @@ const UserDashboard = () => {
             <span className="text-sm font-medium">Home</span>
           </button>
           
-          {/* Orders Button */}
+          {/* Orders Button - preserve mode */}
           <button 
-            onClick={() => navigate('/user/orders')}
+            onClick={() => navigate(mcxOnly ? '/user/orders?mode=mcx' : cryptoOnly ? '/user/orders?mode=crypto' : '/user/orders')}
             className="flex items-center gap-2 bg-dark-700 hover:bg-dark-600 px-3 py-1.5 rounded-lg transition-colors"
           >
             <ClipboardList size={18} className="text-blue-400" />
@@ -2609,6 +2609,8 @@ const TradingPanel = ({ instrument, orderType, setOrderType, walletData, onClose
   const [orderMode, setOrderMode] = useState('MARKET');
   const [inputMode, setInputMode] = useState('lots'); // 'lots' or 'quantity' - default to lots, quantity mode only for futures/equity
   const [leverage, setLeverage] = useState(1);
+  const [intradayLeverages, setIntradayLeverages] = useState([1, 2, 5, 10]);
+  const [carryForwardLeverages, setCarryForwardLeverages] = useState([1, 2, 5]);
   const [availableLeverages, setAvailableLeverages] = useState([1, 2, 5, 10]);
   const [marginPreview, setMarginPreview] = useState(null);
   const [marketStatus, setMarketStatus] = useState({ open: true });
@@ -2671,14 +2673,20 @@ const TradingPanel = ({ instrument, orderType, setOrderType, walletData, onClose
         // Crypto markets are always open
         if (isCrypto) {
           setMarketStatus({ open: true, reason: 'Crypto markets are 24/7' });
-          const leverageRes = await axios.get('/api/trading/leverages', { headers: { Authorization: `Bearer ${user?.token}` } });
-          setAvailableLeverages(leverageRes.data.leverages || [1, 2, 5, 10]);
+          setAvailableLeverages([1]); // Crypto uses 1x leverage
         } else {
           const [leverageRes, marketRes] = await Promise.all([
             axios.get('/api/trading/leverages', { headers: { Authorization: `Bearer ${user?.token}` } }),
             axios.get('/api/trading/market-status', { params: { exchange: instrument?.exchange || 'NSE' } })
           ]);
-          setAvailableLeverages(leverageRes.data.leverages || [1, 2, 5, 10]);
+          // Store separate intraday and carryforward leverages
+          setIntradayLeverages(leverageRes.data.intraday || [1, 2, 5, 10]);
+          setCarryForwardLeverages(leverageRes.data.carryForward || [1, 2, 5]);
+          // Set initial available leverages based on current productType
+          const currentLeverages = productType === 'MIS' 
+            ? (leverageRes.data.intraday || [1, 2, 5, 10])
+            : (leverageRes.data.carryForward || [1, 2, 5]);
+          setAvailableLeverages(currentLeverages);
           setMarketStatus(marketRes.data);
         }
       } catch (err) {
@@ -2687,6 +2695,18 @@ const TradingPanel = ({ instrument, orderType, setOrderType, walletData, onClose
     };
     if (user?.token) fetchSettings();
   }, [user?.token, instrument?.exchange, isCrypto]);
+
+  // Update available leverages when productType changes
+  useEffect(() => {
+    if (!isCrypto) {
+      const newLeverages = productType === 'MIS' ? intradayLeverages : carryForwardLeverages;
+      setAvailableLeverages(newLeverages);
+      // Reset leverage to 1 if current leverage is not in new list
+      if (!newLeverages.includes(leverage)) {
+        setLeverage(newLeverages[0] || 1);
+      }
+    }
+  }, [productType, intradayLeverages, carryForwardLeverages, isCrypto]);
 
   // Set price from live data when instrument changes
   useEffect(() => {
@@ -2738,10 +2758,14 @@ const TradingPanel = ({ instrument, orderType, setOrderType, walletData, onClose
   };
   const activeWallet = getActiveWallet();
 
-  // Check if segment allows quantity mode (NSEFUT, MCXFUT, BSEFUT, NSE-EQ - futures and equity, not options)
+  // Check if segment allows quantity mode (futures and equity, not options)
   const segment = instrument?.displaySegment || instrument?.segment || '';
-  const allowsQuantityMode = (isFutures && ['NSEFUT', 'MCXFUT', 'BSEFUT', 'NFO'].includes(segment.toUpperCase())) || 
-                              isEquity || segment.toUpperCase() === 'NSE-EQ' || segment.toUpperCase() === 'EQUITY';
+  const segmentUpper = segment.toUpperCase();
+  // Allow quantity mode for all futures segments (NSE, BSE, MCX) and equity
+  const isFuturesSegment = ['NSEFUT', 'MCXFUT', 'BSEFUT', 'NFO', 'BFO', 'BSE-FUT', 'MCX'].includes(segmentUpper) || 
+                           segmentUpper.includes('FUT');
+  const isEquitySegment = segmentUpper === 'NSE-EQ' || segmentUpper === 'EQUITY' || segmentUpper === 'NSE' || segmentUpper === 'BSE';
+  const allowsQuantityMode = ((isFutures || isFuturesSegment) && !isOptions) || isEquity || isEquitySegment;
 
   // Always use lot size from DB (no hardcoded fallbacks)
   const lotSize = isCrypto ? 1 : (instrument?.lotSize || 1);
@@ -6336,12 +6360,12 @@ const BuySellModal = ({ instrument, orderType, setOrderType, onClose, walletData
           </div>
         </div>
 
-        {/* Leverage Selector - Only for non-crypto */}
-        {!isCrypto && (
+        {/* Leverage Selector - Only for non-crypto - Uses availableLeverages from parent */}
+        {!isCrypto && availableLeverages.length > 0 && (
           <div className="px-4 pb-3">
             <label className="block text-sm text-gray-400 mb-2">Leverage</label>
             <div className="flex gap-2 flex-wrap">
-              {[1, 2, 5, 10, 20].map(lev => (
+              {availableLeverages.map(lev => (
                 <button
                   key={lev}
                   onClick={() => setLeverage(lev)}

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import axios from 'axios';
 import { 
   Home, ArrowLeft, RefreshCw, Calendar, Filter, Download,
@@ -17,6 +17,11 @@ import {
 
 const UserOrders = () => {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const mode = searchParams.get('mode'); // 'mcx' or 'crypto' or null (indian)
+  const mcxOnly = mode === 'mcx';
+  const cryptoOnly = mode === 'crypto';
+  
   const [user, setUser] = useState(null);
   const [activeTab, setActiveTab] = useState('positions');
   const [positions, setPositions] = useState([]);
@@ -48,7 +53,7 @@ const UserOrders = () => {
     if (user?.token) {
       fetchAllOrders();
     }
-  }, [user?.token, dateFilter, customDateFrom, customDateTo]);
+  }, [user?.token, dateFilter, customDateFrom, customDateTo, mcxOnly, cryptoOnly]);
 
   const getDateRange = () => {
     const now = new Date();
@@ -105,13 +110,37 @@ const UserOrders = () => {
         });
       };
 
-      setPositions(filterByDate(allPositions));
-      setClosedTrades(filterByDate(allHistory.filter(t => t.status === 'CLOSED')));
-      setCancelledOrders(filterByDate(allHistory.filter(t => t.status === 'CANCELLED')));
-      setPendingOrders(filterByDate(allPending));
+      // Filter by trading mode (MCX, Crypto, or Indian)
+      const filterByMode = (items) => {
+        return items.filter(item => {
+          const exchange = item.exchange?.toUpperCase() || '';
+          const segment = item.segment?.toUpperCase() || '';
+          const isMCXItem = exchange === 'MCX' || segment === 'MCX' || segment === 'MCXFUT' || segment === 'MCXOPT';
+          const isCryptoItem = segment === 'CRYPTO' || exchange === 'BINANCE' || item.isCrypto;
+          
+          if (mcxOnly) {
+            return isMCXItem;
+          } else if (cryptoOnly) {
+            return isCryptoItem;
+          } else {
+            // Indian mode: exclude MCX and Crypto
+            return !isMCXItem && !isCryptoItem;
+          }
+        });
+      };
 
-      // Calculate stats
-      const closed = allHistory.filter(t => t.status === 'CLOSED');
+      // Apply both filters
+      const filteredPositions = filterByMode(filterByDate(allPositions));
+      const filteredHistory = filterByMode(filterByDate(allHistory));
+      const filteredPending = filterByMode(filterByDate(allPending));
+
+      setPositions(filteredPositions);
+      setClosedTrades(filteredHistory.filter(t => t.status === 'CLOSED'));
+      setCancelledOrders(filteredHistory.filter(t => t.status === 'CANCELLED'));
+      setPendingOrders(filteredPending);
+
+      // Calculate stats from filtered data
+      const closed = filteredHistory.filter(t => t.status === 'CLOSED');
       const getPnL = (t) => t.realizedPnL ?? t.netPnL ?? t.pnl ?? t.unrealizedPnL ?? 0;
       const totalPnL = closed.reduce((sum, t) => sum + getPnL(t), 0);
       const wins = closed.filter(t => getPnL(t) > 0).length;
@@ -288,13 +317,18 @@ const UserOrders = () => {
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
             <button
-              onClick={() => navigate('/user/trader-room')}
+              onClick={() => navigate(mcxOnly ? '/user/trader-room?mode=mcx' : cryptoOnly ? '/user/trader-room?mode=crypto' : '/user/trader-room')}
               className="flex items-center gap-2 text-blue-500 hover:text-blue-400 transition-colors active:scale-95"
             >
               <ArrowLeft size={20} />
               <span className="text-base font-medium hidden sm:inline">Back</span>
             </button>
-            <h1 className="text-lg font-semibold">Orders & History</h1>
+            <h1 className="text-lg font-semibold">
+              Orders & History
+              {mcxOnly && <span className="ml-2 text-xs bg-yellow-600 px-2 py-0.5 rounded">MCX</span>}
+              {cryptoOnly && <span className="ml-2 text-xs bg-orange-600 px-2 py-0.5 rounded">Crypto</span>}
+              {!mcxOnly && !cryptoOnly && <span className="ml-2 text-xs bg-blue-600 px-2 py-0.5 rounded">NSE/BSE</span>}
+            </h1>
           </div>
           <div className="flex items-center gap-2">
             <button

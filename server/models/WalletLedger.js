@@ -45,6 +45,7 @@ const walletLedgerSchema = new mongoose.Schema({
       'BONUS',              // Bonus credit
       'PENALTY',            // Penalty debit
       'CRYPTO_TRANSFER',    // Transfer between main wallet and crypto wallet
+      'MCX_TRANSFER',       // Transfer between main wallet and MCX wallet
       'INTERNAL_TRANSFER'   // Internal transfer between wallets
     ],
     required: true

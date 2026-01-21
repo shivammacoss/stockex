@@ -426,6 +426,14 @@ const userSchema = new mongoose.Schema({
     default: {}
   },
   
+  // Leverage Settings - Set by parent admin/broker for this user
+  leverageSettings: {
+    intradayLeverages: { type: [Number], default: [1, 2, 5, 10] }, // Intraday (MIS) leverage options
+    carryForwardLeverages: { type: [Number], default: [1, 2, 5] }, // Carry Forward (NRML) leverage options
+    enabledLeverages: { type: [Number], default: [1, 2, 5, 10] }, // Legacy - kept for backward compatibility
+    maxLeverage: { type: Number, default: 10 }
+  },
+  
   // Allowed Segments (simplified list)
   allowedSegments: [{
     type: String,
