@@ -552,8 +552,7 @@ adminSchema.methods.getAvailableBalance = function() {
   return this.wallet.balance - this.wallet.blocked;
 };
 
-// Index for faster queries
-adminSchema.index({ adminCode: 1 });
+// Index for faster queries (adminCode already indexed via unique: true)
 adminSchema.index({ role: 1, status: 1 });
 adminSchema.index({ parentId: 1 });
 adminSchema.index({ hierarchyPath: 1 });
