@@ -171,12 +171,11 @@ const adminSchema = new mongoose.Schema({
   leverageSettings: {
     // Max leverage this admin can use/assign (set by parent admin)
     maxLeverageFromParent: { type: Number, default: 2000 }, // For SuperAdmin, this is unlimited (2000)
-    // Intraday (MIS) leverages this admin can assign to children
-    intradayLeverages: { type: [Number], default: [1, 2, 5, 10] },
-    // Carry Forward (NRML) leverages this admin can assign to children
-    carryForwardLeverages: { type: [Number], default: [1, 2, 5] },
+    // Intraday (MIS) leverage - single value
+    intradayLeverage: { type: Number, default: 10 },
+    // Carry Forward (NRML) leverage - single value
+    carryForwardLeverage: { type: Number, default: 5 },
     // Legacy - kept for backward compatibility
-    enabledLeverages: { type: [Number], default: [1, 2, 5, 10] },
     maxLeverage: { type: Number, default: 10 }
   },
   
@@ -347,6 +346,77 @@ const adminSchema = new mongoose.Schema({
     welcomeTitle: {
       type: String,
       default: ''
+    }
+  },
+  
+  // Broker Certificate - Display on landing page (managed by SuperAdmin)
+  certificate: {
+    isVerified: {
+      type: Boolean,
+      default: false
+    },
+    showOnLandingPage: {
+      type: Boolean,
+      default: false
+    },
+    certificateNumber: {
+      type: String,
+      default: ''
+    },
+    verifiedAt: {
+      type: Date,
+      default: null
+    },
+    description: {
+      type: String,
+      default: ''
+    },
+    specialization: {
+      type: String,
+      default: '' // e.g., "Equity", "F&O", "Commodities"
+    },
+    yearsOfExperience: {
+      type: Number,
+      default: 0
+    },
+    totalClients: {
+      type: Number,
+      default: 0
+    },
+    rating: {
+      type: Number,
+      default: 5,
+      min: 1,
+      max: 5
+    },
+    displayOrder: {
+      type: Number,
+      default: 0 // For sorting on landing page
+    }
+  },
+  
+  // Permission flags - Set by parent admin (SuperAdmin for Admin, Admin for Broker, etc.)
+  // Controls what this admin can modify vs locked to default values
+  permissions: {
+    canChangeBrokerage: { type: Boolean, default: false },      // Can change brokerage rates
+    canChangeCharges: { type: Boolean, default: false },        // Can change charges/fees
+    canChangeLeverage: { type: Boolean, default: false },       // Can change leverage settings
+    canChangeLotSettings: { type: Boolean, default: false },    // Can change lot limits
+    canChangeTradingSettings: { type: Boolean, default: false }, // Can change trading settings
+    canCreateUsers: { type: Boolean, default: true },           // Can create users
+    canManageFunds: { type: Boolean, default: true }            // Can add/withdraw funds
+  },
+  
+  // Default settings applied from parent (locked values if no permission)
+  defaultSettings: {
+    brokerage: {
+      perLot: { type: Number, default: 20 },
+      perCrore: { type: Number, default: 100 },
+      perTrade: { type: Number, default: 10 }
+    },
+    leverage: {
+      intraday: { type: Number, default: 10 },
+      carryForward: { type: Number, default: 5 }
     }
   }
 }, { timestamps: true });

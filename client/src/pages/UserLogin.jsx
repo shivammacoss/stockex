@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, Link, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { Eye, EyeOff, BarChart2, Wallet, Zap, LineChart, Search, X, Users } from 'lucide-react';
+import { Eye, EyeOff, BarChart2, Wallet, Zap, LineChart, Search, X, Users, Shield, Award, Lock } from 'lucide-react';
 import axios from 'axios';
 
 const UserLogin = () => {
@@ -21,25 +21,33 @@ const UserLogin = () => {
   // Branding state
   const [branding, setBranding] = useState({ brandName: '', logoUrl: '', welcomeTitle: '' });
   
+  // Broker info state (for referral code)
+  const [brokerInfo, setBrokerInfo] = useState(null);
+  
   // Broker selection state
   const [allBrokers, setAllBrokers] = useState([]);
   const [selectedBroker, setSelectedBroker] = useState(null);
   const [showBrokerModal, setShowBrokerModal] = useState(false);
   const [brokerSearch, setBrokerSearch] = useState('');
   
-  // Fetch admin branding if referral code exists
+  // Fetch admin branding and broker info if referral code exists
   useEffect(() => {
-    const fetchBranding = async () => {
+    const fetchBrandingAndBrokerInfo = async () => {
       if (refCode) {
         try {
-          const { data } = await axios.get(`/api/admin/branding/${refCode}`);
-          setBranding(data);
+          // Fetch branding
+          const { data: brandingData } = await axios.get(`/api/admin/branding/${refCode}`);
+          setBranding(brandingData);
+          
+          // Fetch broker info including certificate
+          const { data: brokerData } = await axios.get(`/api/user/broker-info/${refCode}`);
+          setBrokerInfo(brokerData);
         } catch (err) {
-          console.error('Failed to fetch branding:', err);
+          console.error('Failed to fetch branding/broker info:', err);
         }
       }
     };
-    fetchBranding();
+    fetchBrandingAndBrokerInfo();
   }, [refCode]);
   
   // Fetch brokers list when modal opens
@@ -274,7 +282,43 @@ const UserLogin = () => {
                 </div>
               </div>
 
-              {/* Show selected broker if any */}
+              {/* Show broker info when registering with referral code */}
+              {isRegister && refCode && brokerInfo && (
+                <div className="mb-4 p-4 bg-gradient-to-r from-green-500/10 to-emerald-500/10 border border-green-500/30 rounded-xl">
+                  <div className="flex items-center gap-2 mb-3">
+                    <Shield className="w-5 h-5 text-green-400" />
+                    <span className="font-semibold text-green-400">Registering with Verified Broker</span>
+                  </div>
+                  
+                  <div className="space-y-3">
+                    {/* Broker Name */}
+                    <div className="flex items-center justify-between">
+                      <span className="text-gray-400 text-sm">Broker</span>
+                      <span className="text-white font-medium">{brokerInfo.name || brokerInfo.username}</span>
+                    </div>
+                    
+                    {/* Certificate Code (Referral Code) - Read Only */}
+                    <div>
+                      <label className="block text-xs text-gray-400 mb-1">Certificate Code</label>
+                      <div className="flex items-center gap-2 bg-dark-700 border border-dark-600 rounded-lg px-3 py-2">
+                        <Award className="w-4 h-4 text-yellow-500" />
+                        <Lock className="w-4 h-4 text-gray-500" />
+                        <span className="text-yellow-400 font-mono font-medium flex-1">{refCode}</span>
+                      </div>
+                    </div>
+                    
+                    {/* Specialization */}
+                    {brokerInfo.specialization && (
+                      <div className="flex items-center justify-between text-sm">
+                        <span className="text-gray-400">Specialization</span>
+                        <span className="text-white">{brokerInfo.specialization}</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Show selected broker if any (when no ref code) */}
               {isRegister && selectedBroker && !refCode && (
                 <div className="mb-4 p-3 bg-green-500/10 border border-green-500/30 rounded-lg flex items-center justify-between">
                   <div>

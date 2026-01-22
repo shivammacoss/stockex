@@ -7,6 +7,11 @@ import FundRequest from '../models/FundRequest.js';
 import WalletLedger from '../models/WalletLedger.js';
 import AdminFundRequest from '../models/AdminFundRequest.js';
 import BrokerChangeRequest from '../models/BrokerChangeRequest.js';
+import Trade from '../models/Trade.js';
+import Position from '../models/Position.js';
+import SystemSettings from '../models/SystemSettings.js';
+import PattiSharing from '../models/PattiSharing.js';
+import GameSettings from '../models/GameSettings.js';
 import jwt from 'jsonwebtoken';
 
 const router = express.Router();
@@ -345,7 +350,7 @@ router.put('/admins/:id/lot-settings', protectAdmin, superAdminOnly, async (req,
 // SuperAdmin can set for Admin, Admin can set for Broker, Broker can set for SubBroker
 router.put('/admins/:id/leverage', protectAdmin, async (req, res) => {
   try {
-    const { maxLeverageFromParent, intradayLeverages, carryForwardLeverages } = req.body;
+    const { maxLeverageFromParent, intradayLeverage, carryForwardLeverage } = req.body;
     const parentAdmin = req.admin;
     
     const childAdmin = await Admin.findById(req.params.id);
@@ -389,25 +394,21 @@ router.put('/admins/:id/leverage', protectAdmin, async (req, res) => {
     
     const maxAllowed = childAdmin.leverageSettings.maxLeverageFromParent || parentMaxLeverage;
     
-    // Update intradayLeverages (filter to only include values <= maxLeverageFromParent)
-    if (intradayLeverages && Array.isArray(intradayLeverages)) {
-      const filteredLeverages = intradayLeverages.filter(lev => lev <= maxAllowed);
-      childAdmin.leverageSettings.intradayLeverages = filteredLeverages.sort((a, b) => a - b);
+    // Update intradayLeverage (single value, capped at maxAllowed)
+    if (intradayLeverage !== undefined) {
+      childAdmin.leverageSettings.intradayLeverage = Math.min(intradayLeverage, maxAllowed);
     }
     
-    // Update carryForwardLeverages (filter to only include values <= maxLeverageFromParent)
-    if (carryForwardLeverages && Array.isArray(carryForwardLeverages)) {
-      const filteredLeverages = carryForwardLeverages.filter(lev => lev <= maxAllowed);
-      childAdmin.leverageSettings.carryForwardLeverages = filteredLeverages.sort((a, b) => a - b);
+    // Update carryForwardLeverage (single value, capped at maxAllowed)
+    if (carryForwardLeverage !== undefined) {
+      childAdmin.leverageSettings.carryForwardLeverage = Math.min(carryForwardLeverage, maxAllowed);
     }
     
-    // Update legacy enabledLeverages for backward compatibility (combine both)
-    const allLeverages = [...new Set([
-      ...(childAdmin.leverageSettings.intradayLeverages || []),
-      ...(childAdmin.leverageSettings.carryForwardLeverages || [])
-    ])].sort((a, b) => a - b);
-    childAdmin.leverageSettings.enabledLeverages = allLeverages;
-    childAdmin.leverageSettings.maxLeverage = allLeverages.length > 0 ? Math.max(...allLeverages) : 10;
+    // Update legacy fields for backward compatibility
+    childAdmin.leverageSettings.maxLeverage = Math.max(
+      childAdmin.leverageSettings.intradayLeverage || 10,
+      childAdmin.leverageSettings.carryForwardLeverage || 5
+    );
     
     await childAdmin.save();
     
@@ -530,6 +531,131 @@ router.get('/users/:id/leverage', protectAdmin, async (req, res) => {
 });
 
 // ============ END HIERARCHICAL LEVERAGE MANAGEMENT ============
+
+// ============ PERMISSION & DEFAULT SETTINGS MANAGEMENT ============
+
+// Update admin permissions (parent admin can set permissions for child admin)
+router.put('/admins/:id/permissions', protectAdmin, async (req, res) => {
+  try {
+    const { permissions } = req.body;
+    const parentAdmin = req.admin;
+    
+    const childAdmin = await Admin.findById(req.params.id);
+    if (!childAdmin) return res.status(404).json({ message: 'Admin not found' });
+    
+    // Verify hierarchy - parent must be able to manage child
+    if (!parentAdmin.canManage(childAdmin.role)) {
+      return res.status(403).json({ message: 'You cannot manage this admin level' });
+    }
+    
+    // Verify child belongs to parent
+    if (childAdmin.parentId && childAdmin.parentId.toString() !== parentAdmin._id.toString()) {
+      const isInHierarchy = childAdmin.hierarchyPath?.some(id => id.toString() === parentAdmin._id.toString());
+      if (!isInHierarchy && parentAdmin.role !== 'SUPER_ADMIN') {
+        return res.status(403).json({ message: 'This admin is not under your management' });
+      }
+    }
+    
+    // Update permissions
+    if (!childAdmin.permissions) {
+      childAdmin.permissions = {};
+    }
+    
+    Object.keys(permissions).forEach(key => {
+      if (typeof permissions[key] === 'boolean') {
+        childAdmin.permissions[key] = permissions[key];
+      }
+    });
+    
+    await childAdmin.save();
+    
+    res.json({ 
+      message: 'Permissions updated successfully',
+      permissions: childAdmin.permissions
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Update default settings for admin (parent sets defaults for child)
+router.put('/admins/:id/default-settings', protectAdmin, async (req, res) => {
+  try {
+    const { defaultSettings } = req.body;
+    const parentAdmin = req.admin;
+    
+    const childAdmin = await Admin.findById(req.params.id);
+    if (!childAdmin) return res.status(404).json({ message: 'Admin not found' });
+    
+    // Verify hierarchy
+    if (!parentAdmin.canManage(childAdmin.role)) {
+      return res.status(403).json({ message: 'You cannot manage this admin level' });
+    }
+    
+    if (childAdmin.parentId && childAdmin.parentId.toString() !== parentAdmin._id.toString()) {
+      const isInHierarchy = childAdmin.hierarchyPath?.some(id => id.toString() === parentAdmin._id.toString());
+      if (!isInHierarchy && parentAdmin.role !== 'SUPER_ADMIN') {
+        return res.status(403).json({ message: 'This admin is not under your management' });
+      }
+    }
+    
+    // Update default settings
+    if (!childAdmin.defaultSettings) {
+      childAdmin.defaultSettings = {};
+    }
+    
+    if (defaultSettings.brokerage) {
+      childAdmin.defaultSettings.brokerage = {
+        ...childAdmin.defaultSettings.brokerage,
+        ...defaultSettings.brokerage
+      };
+    }
+    
+    if (defaultSettings.leverage) {
+      childAdmin.defaultSettings.leverage = {
+        ...childAdmin.defaultSettings.leverage,
+        ...defaultSettings.leverage
+      };
+    }
+    
+    await childAdmin.save();
+    
+    res.json({ 
+      message: 'Default settings updated successfully',
+      defaultSettings: childAdmin.defaultSettings
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Get admin permissions and default settings
+router.get('/admins/:id/permissions', protectAdmin, async (req, res) => {
+  try {
+    const admin = await Admin.findById(req.params.id);
+    if (!admin) return res.status(404).json({ message: 'Admin not found' });
+    
+    res.json({
+      permissions: admin.permissions || {
+        canChangeBrokerage: false,
+        canChangeCharges: false,
+        canChangeLeverage: false,
+        canChangeLotSettings: false,
+        canChangeTradingSettings: false,
+        canCreateUsers: true,
+        canManageFunds: true
+      },
+      defaultSettings: admin.defaultSettings || {
+        brokerage: { perLot: 20, perCrore: 100, perTrade: 10 },
+        leverage: { intraday: 10, carryForward: 5 }
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// ============ END PERMISSION & DEFAULT SETTINGS MANAGEMENT ============
 
 // Create user (Super Admin only) - can assign to any admin
 router.post('/create-user', protectAdmin, superAdminOnly, async (req, res) => {
@@ -713,7 +839,40 @@ router.get('/all-users', protectAdmin, superAdminOnly, async (req, res) => {
       .populate('admin', 'name adminCode')
       .sort({ createdAt: -1 });
     
-    res.json(users);
+    // Get net positions (M2M) for all users with open trades
+    const userPositions = await Trade.aggregate([
+      { $match: { status: 'OPEN' } },
+      { $group: { 
+        _id: '$user',
+        netPosition: { $sum: '$unrealizedPnL' },
+        openTrades: { $sum: 1 },
+        totalValue: { $sum: { $multiply: ['$quantity', '$lotSize', '$entryPrice'] } }
+      }}
+    ]);
+    
+    // Create a map for quick lookup
+    const positionMap = {};
+    userPositions.forEach(p => {
+      positionMap[p._id.toString()] = {
+        netPosition: p.netPosition || 0,
+        openTrades: p.openTrades || 0,
+        totalValue: p.totalValue || 0
+      };
+    });
+    
+    // Merge position data with users
+    const usersWithPositions = users.map(user => {
+      const userObj = user.toObject();
+      const position = positionMap[user._id.toString()] || { netPosition: 0, openTrades: 0, totalValue: 0 };
+      return {
+        ...userObj,
+        netPosition: position.netPosition,
+        openTrades: position.openTrades,
+        totalValue: position.totalValue
+      };
+    });
+    
+    res.json(usersWithPositions);
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
@@ -883,15 +1042,58 @@ router.get('/dashboard-stats', protectAdmin, async (req, res) => {
       ? await User.countDocuments({ admin: req.admin._id })
       : totalUsers;
     
-    // Aggregate wallet balances
-    const adminWallets = await Admin.aggregate([
-      { $match: { ...adminQuery, role: { $in: ['ADMIN', 'BROKER', 'SUB_BROKER'] } } },
+    // Aggregate wallet balances by role
+    const adminWalletBalance = await Admin.aggregate([
+      { $match: { ...adminQuery, role: 'ADMIN' } },
+      { $group: { _id: null, totalBalance: { $sum: '$wallet.balance' } } }
+    ]);
+    
+    const brokerWalletBalance = await Admin.aggregate([
+      { $match: { ...adminQuery, role: 'BROKER' } },
+      { $group: { _id: null, totalBalance: { $sum: '$wallet.balance' } } }
+    ]);
+    
+    const subBrokerWalletBalance = await Admin.aggregate([
+      { $match: { ...adminQuery, role: 'SUB_BROKER' } },
       { $group: { _id: null, totalBalance: { $sum: '$wallet.balance' } } }
     ]);
     
     const userWallets = await User.aggregate([
       { $match: userQuery },
       { $group: { _id: null, totalBalance: { $sum: '$wallet.cashBalance' } } }
+    ]);
+    
+    const totalAdminBalance = (adminWalletBalance[0]?.totalBalance || 0) + 
+                              (brokerWalletBalance[0]?.totalBalance || 0) + 
+                              (subBrokerWalletBalance[0]?.totalBalance || 0);
+    
+    // Aggregate M2M (Mark-to-Market) from open trades
+    const openTradesM2M = await Trade.aggregate([
+      { $match: { status: 'OPEN' } },
+      { $group: { 
+        _id: null, 
+        totalM2M: { $sum: '$unrealizedPnL' },
+        totalOpenTrades: { $sum: 1 },
+        totalOpenValue: { $sum: { $multiply: ['$quantity', '$lotSize', '$entryPrice'] } }
+      }}
+    ]);
+    
+    // Get M2M by segment
+    const m2mBySegment = await Trade.aggregate([
+      { $match: { status: 'OPEN' } },
+      { $group: { 
+        _id: '$segment', 
+        m2m: { $sum: '$unrealizedPnL' },
+        openTrades: { $sum: 1 }
+      }}
+    ]);
+    
+    // Get today's realized P&L
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const todayRealizedPnL = await Trade.aggregate([
+      { $match: { status: 'CLOSED', closedAt: { $gte: today } } },
+      { $group: { _id: null, totalPnL: { $sum: '$realizedPnL' }, trades: { $sum: 1 } } }
     ]);
     
     res.json({
@@ -908,9 +1110,22 @@ router.get('/dashboard-stats', protectAdmin, async (req, res) => {
       totalUsers,
       activeUsers,
       directUsers,
-      // Balances
-      totalAdminBalance: adminWallets[0]?.totalBalance || 0,
+      // Balances by role
+      adminWalletBalance: adminWalletBalance[0]?.totalBalance || 0,
+      brokerWalletBalance: brokerWalletBalance[0]?.totalBalance || 0,
+      subBrokerWalletBalance: subBrokerWalletBalance[0]?.totalBalance || 0,
+      totalAdminBalance,
       totalUserBalance: userWallets[0]?.totalBalance || 0,
+      // M2M (Mark-to-Market) Data
+      totalM2M: openTradesM2M[0]?.totalM2M || 0,
+      totalOpenTrades: openTradesM2M[0]?.totalOpenTrades || 0,
+      totalOpenValue: openTradesM2M[0]?.totalOpenValue || 0,
+      m2mBySegment: m2mBySegment.reduce((acc, item) => {
+        acc[item._id] = { m2m: item.m2m, openTrades: item.openTrades };
+        return acc;
+      }, {}),
+      todayRealizedPnL: todayRealizedPnL[0]?.totalPnL || 0,
+      todayClosedTrades: todayRealizedPnL[0]?.trades || 0,
       // Current admin info
       myRole: req.admin.role,
       myBalance: req.admin.wallet?.balance || 0
@@ -2504,9 +2719,31 @@ router.get('/admin-fund-requests', protectAdmin, async (req, res) => {
       // Sub Broker cannot approve any fund requests
       return res.json([]);
     } else {
-      // Admin and Broker see requests targeted to them
-      query = { targetAdmin: req.admin._id };
-      if (status) query.status = status;
+      // Admin and Broker see requests targeted to them OR from their subordinates
+      // First get all subordinate admin IDs
+      const subordinates = await Admin.find({
+        $or: [
+          { createdBy: req.admin._id },
+          { hierarchyPath: req.admin._id }
+        ]
+      }).select('_id');
+      
+      const subordinateIds = subordinates.map(s => s._id);
+      
+      // Show requests targeted to this admin OR requests from subordinates
+      const orCondition = {
+        $or: [
+          { targetAdmin: req.admin._id },
+          { admin: { $in: subordinateIds } }
+        ]
+      };
+      
+      // Combine with status filter if provided
+      if (status) {
+        query = { $and: [orCondition, { status }] };
+      } else {
+        query = orCondition;
+      }
     }
     
     const requests = await AdminFundRequest.find(query)
@@ -3124,13 +3361,25 @@ router.post('/users/reset-segment-permissions', protectAdmin, superAdminOnly, as
   }
 });
 
-// ==================== BROKER CHANGE REQUEST ROUTES (Super Admin Only) ====================
+// ==================== BROKER CHANGE REQUEST ROUTES (Admin and Super Admin Only) ====================
 
-// Get all broker change requests
-router.get('/broker-change-requests', protectAdmin, superAdminOnly, async (req, res) => {
+// Get all broker change requests - SUPER_ADMIN sees all, ADMIN sees requests under their hierarchy
+router.get('/broker-change-requests', protectAdmin, async (req, res) => {
   try {
+    // Only ADMIN and SUPER_ADMIN can view broker change requests
+    if (req.admin.role !== 'SUPER_ADMIN' && req.admin.role !== 'ADMIN') {
+      return res.status(403).json({ message: 'Only Admin and Super Admin can view broker change requests' });
+    }
+    
     const { status } = req.query;
     let query = {};
+    
+    // SUPER_ADMIN sees all requests
+    // ADMIN sees only requests where they are the parentAdmin
+    if (req.admin.role === 'ADMIN') {
+      query.parentAdmin = req.admin._id;
+    }
+    
     if (status && status !== 'ALL') query.status = status;
     
     const requests = await BrokerChangeRequest.find(query)
@@ -3138,10 +3387,12 @@ router.get('/broker-change-requests', protectAdmin, superAdminOnly, async (req, 
       .populate('currentAdmin', 'name username adminCode role')
       .populate('requestedAdmin', 'name username adminCode role')
       .populate('processedBy', 'name username')
+      .populate('parentAdmin', 'name username adminCode')
       .sort({ createdAt: -1 });
     
-    // Calculate stats
-    const allRequests = await BrokerChangeRequest.find({});
+    // Calculate stats based on same filter
+    const statsQuery = req.admin.role === 'ADMIN' ? { parentAdmin: req.admin._id } : {};
+    const allRequests = await BrokerChangeRequest.find(statsQuery);
     const stats = {
       total: allRequests.length,
       pending: allRequests.filter(r => r.status === 'PENDING').length,
@@ -3155,13 +3406,23 @@ router.get('/broker-change-requests', protectAdmin, superAdminOnly, async (req, 
   }
 });
 
-// Approve broker change request
-router.post('/broker-change-requests/:id/approve', protectAdmin, superAdminOnly, async (req, res) => {
+// Approve broker change request - ADMIN and SUPER_ADMIN only
+router.post('/broker-change-requests/:id/approve', protectAdmin, async (req, res) => {
   try {
-    const request = await BrokerChangeRequest.findOne({ 
-      _id: req.params.id, 
-      status: 'PENDING' 
-    }).populate('requestedAdmin').populate('currentAdmin');
+    // Only ADMIN and SUPER_ADMIN can approve
+    if (req.admin.role !== 'SUPER_ADMIN' && req.admin.role !== 'ADMIN') {
+      return res.status(403).json({ message: 'Only Admin and Super Admin can approve broker change requests' });
+    }
+    
+    let findQuery = { _id: req.params.id, status: 'PENDING' };
+    
+    // ADMIN can only approve requests where they are the parentAdmin
+    if (req.admin.role === 'ADMIN') {
+      findQuery.parentAdmin = req.admin._id;
+    }
+    
+    const request = await BrokerChangeRequest.findOne(findQuery)
+      .populate('requestedAdmin').populate('currentAdmin');
     
     if (!request) {
       return res.status(404).json({ message: 'Request not found or already processed' });
@@ -3273,13 +3534,22 @@ router.post('/broker-change-requests/:id/approve', protectAdmin, superAdminOnly,
   }
 });
 
-// Reject broker change request
-router.post('/broker-change-requests/:id/reject', protectAdmin, superAdminOnly, async (req, res) => {
+// Reject broker change request - ADMIN and SUPER_ADMIN only
+router.post('/broker-change-requests/:id/reject', protectAdmin, async (req, res) => {
   try {
-    const request = await BrokerChangeRequest.findOne({ 
-      _id: req.params.id, 
-      status: 'PENDING' 
-    });
+    // Only ADMIN and SUPER_ADMIN can reject
+    if (req.admin.role !== 'SUPER_ADMIN' && req.admin.role !== 'ADMIN') {
+      return res.status(403).json({ message: 'Only Admin and Super Admin can reject broker change requests' });
+    }
+    
+    let findQuery = { _id: req.params.id, status: 'PENDING' };
+    
+    // ADMIN can only reject requests where they are the parentAdmin
+    if (req.admin.role === 'ADMIN') {
+      findQuery.parentAdmin = req.admin._id;
+    }
+    
+    const request = await BrokerChangeRequest.findOne(findQuery);
     
     if (!request) {
       return res.status(404).json({ message: 'Request not found or already processed' });
@@ -3292,6 +3562,785 @@ router.post('/broker-change-requests/:id/reject', protectAdmin, superAdminOnly, 
     await request.save();
     
     res.json({ message: 'Request rejected', request });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// ==================== NET POSITIONS ====================
+
+// Get net positions aggregated by symbol
+// SuperAdmin sees all, Admin/Broker/SubBroker sees their hierarchy
+router.get('/net-positions', protectAdmin, async (req, res) => {
+  try {
+    let userFilter = {};
+    
+    // Build user filter based on admin role
+    if (req.admin.role === 'SUPER_ADMIN') {
+      // SuperAdmin sees all positions
+      userFilter = {};
+    } else {
+      // Get all users under this admin's hierarchy
+      const users = await User.find({
+        $or: [
+          { createdBy: req.admin._id },
+          { hierarchyPath: req.admin._id }
+        ]
+      }).select('_id');
+      
+      const userIds = users.map(u => u._id);
+      userFilter = { user: { $in: userIds } };
+    }
+    
+    // Aggregate open positions by symbol
+    const netPositions = await Position.aggregate([
+      { 
+        $match: { 
+          status: 'OPEN',
+          ...userFilter 
+        } 
+      },
+      {
+        $group: {
+          _id: {
+            symbol: '$symbol',
+            exchange: '$exchange',
+            segment: '$segment',
+            optionType: '$optionType',
+            strikePrice: '$strikePrice',
+            expiry: '$expiry',
+            productType: '$productType'
+          },
+          buyQty: {
+            $sum: {
+              $cond: [{ $eq: ['$side', 'BUY'] }, { $multiply: ['$quantity', '$lotSize'] }, 0]
+            }
+          },
+          sellQty: {
+            $sum: {
+              $cond: [{ $eq: ['$side', 'SELL'] }, { $multiply: ['$quantity', '$lotSize'] }, 0]
+            }
+          },
+          avgBuyPrice: {
+            $avg: {
+              $cond: [{ $eq: ['$side', 'BUY'] }, '$entryPrice', null]
+            }
+          },
+          avgSellPrice: {
+            $avg: {
+              $cond: [{ $eq: ['$side', 'SELL'] }, '$entryPrice', null]
+            }
+          },
+          totalUnrealizedPnL: { $sum: '$unrealizedPnL' },
+          userCount: { $addToSet: '$user' },
+          positionCount: { $sum: 1 }
+        }
+      },
+      {
+        $project: {
+          _id: 0,
+          symbol: '$_id.symbol',
+          exchange: '$_id.exchange',
+          segment: '$_id.segment',
+          optionType: '$_id.optionType',
+          strikePrice: '$_id.strikePrice',
+          expiry: '$_id.expiry',
+          productType: '$_id.productType',
+          buyQty: 1,
+          sellQty: 1,
+          netQty: { $subtract: ['$buyQty', '$sellQty'] },
+          avgBuyPrice: { $round: ['$avgBuyPrice', 2] },
+          avgSellPrice: { $round: ['$avgSellPrice', 2] },
+          totalUnrealizedPnL: { $round: ['$totalUnrealizedPnL', 2] },
+          userCount: { $size: '$userCount' },
+          positionCount: 1
+        }
+      },
+      { $sort: { symbol: 1 } }
+    ]);
+    
+    // Calculate summary stats
+    const summary = {
+      totalSymbols: netPositions.length,
+      totalBuyQty: netPositions.reduce((sum, p) => sum + p.buyQty, 0),
+      totalSellQty: netPositions.reduce((sum, p) => sum + p.sellQty, 0),
+      totalNetQty: netPositions.reduce((sum, p) => sum + p.netQty, 0),
+      totalUnrealizedPnL: netPositions.reduce((sum, p) => sum + p.totalUnrealizedPnL, 0),
+      totalPositions: netPositions.reduce((sum, p) => sum + p.positionCount, 0)
+    };
+    
+    res.json({ positions: netPositions, summary });
+  } catch (error) {
+    console.error('Error fetching net positions:', error);
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Get net positions breakdown by user for a specific symbol
+router.get('/net-positions/:symbol/users', protectAdmin, async (req, res) => {
+  try {
+    const { symbol } = req.params;
+    let userFilter = {};
+    
+    if (req.admin.role !== 'SUPER_ADMIN') {
+      const users = await User.find({
+        $or: [
+          { createdBy: req.admin._id },
+          { hierarchyPath: req.admin._id }
+        ]
+      }).select('_id');
+      
+      const userIds = users.map(u => u._id);
+      userFilter = { user: { $in: userIds } };
+    }
+    
+    const positions = await Position.find({
+      symbol: symbol,
+      status: 'OPEN',
+      ...userFilter
+    }).populate('user', 'username name clientCode');
+    
+    // Group by user
+    const userPositions = {};
+    positions.forEach(pos => {
+      const userId = pos.user._id.toString();
+      if (!userPositions[userId]) {
+        userPositions[userId] = {
+          user: pos.user,
+          buyQty: 0,
+          sellQty: 0,
+          netQty: 0,
+          unrealizedPnL: 0,
+          positions: []
+        };
+      }
+      const qty = pos.quantity * pos.lotSize;
+      if (pos.side === 'BUY') {
+        userPositions[userId].buyQty += qty;
+      } else {
+        userPositions[userId].sellQty += qty;
+      }
+      userPositions[userId].netQty = userPositions[userId].buyQty - userPositions[userId].sellQty;
+      userPositions[userId].unrealizedPnL += pos.unrealizedPnL;
+      userPositions[userId].positions.push(pos);
+    });
+    
+    res.json(Object.values(userPositions));
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// ==================== SYSTEM SETTINGS (Super Admin Only) ====================
+
+// Get system-wide default settings
+router.get('/system-settings', protectAdmin, superAdminOnly, async (req, res) => {
+  try {
+    const settings = await SystemSettings.getSettings();
+    res.json(settings);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Update system-wide default settings
+router.put('/system-settings', protectAdmin, superAdminOnly, async (req, res) => {
+  try {
+    const { adminDefaults, brokerDefaults, subBrokerDefaults, userDefaults, segmentDefaults, instrumentDefaults } = req.body;
+    
+    let settings = await SystemSettings.getSettings();
+    
+    // Update Admin defaults
+    if (adminDefaults) {
+      if (adminDefaults.brokerage) {
+        settings.adminDefaults.brokerage = { ...settings.adminDefaults.brokerage, ...adminDefaults.brokerage };
+      }
+      if (adminDefaults.leverage) {
+        settings.adminDefaults.leverage = { ...settings.adminDefaults.leverage, ...adminDefaults.leverage };
+      }
+      if (adminDefaults.charges) {
+        settings.adminDefaults.charges = { ...settings.adminDefaults.charges, ...adminDefaults.charges };
+      }
+      if (adminDefaults.lotSettings) {
+        settings.adminDefaults.lotSettings = { ...settings.adminDefaults.lotSettings, ...adminDefaults.lotSettings };
+      }
+      if (adminDefaults.permissions) {
+        settings.adminDefaults.permissions = { ...settings.adminDefaults.permissions, ...adminDefaults.permissions };
+      }
+    }
+    
+    // Update Broker defaults
+    if (brokerDefaults) {
+      if (brokerDefaults.brokerage) {
+        settings.brokerDefaults.brokerage = { ...settings.brokerDefaults.brokerage, ...brokerDefaults.brokerage };
+      }
+      if (brokerDefaults.leverage) {
+        settings.brokerDefaults.leverage = { ...settings.brokerDefaults.leverage, ...brokerDefaults.leverage };
+      }
+      if (brokerDefaults.charges) {
+        settings.brokerDefaults.charges = { ...settings.brokerDefaults.charges, ...brokerDefaults.charges };
+      }
+      if (brokerDefaults.lotSettings) {
+        settings.brokerDefaults.lotSettings = { ...settings.brokerDefaults.lotSettings, ...brokerDefaults.lotSettings };
+      }
+      if (brokerDefaults.permissions) {
+        settings.brokerDefaults.permissions = { ...settings.brokerDefaults.permissions, ...brokerDefaults.permissions };
+      }
+    }
+    
+    // Update SubBroker defaults
+    if (subBrokerDefaults) {
+      if (subBrokerDefaults.brokerage) {
+        settings.subBrokerDefaults.brokerage = { ...settings.subBrokerDefaults.brokerage, ...subBrokerDefaults.brokerage };
+      }
+      if (subBrokerDefaults.leverage) {
+        settings.subBrokerDefaults.leverage = { ...settings.subBrokerDefaults.leverage, ...subBrokerDefaults.leverage };
+      }
+      if (subBrokerDefaults.charges) {
+        settings.subBrokerDefaults.charges = { ...settings.subBrokerDefaults.charges, ...subBrokerDefaults.charges };
+      }
+      if (subBrokerDefaults.lotSettings) {
+        settings.subBrokerDefaults.lotSettings = { ...settings.subBrokerDefaults.lotSettings, ...subBrokerDefaults.lotSettings };
+      }
+      if (subBrokerDefaults.permissions) {
+        settings.subBrokerDefaults.permissions = { ...settings.subBrokerDefaults.permissions, ...subBrokerDefaults.permissions };
+      }
+    }
+    
+    // Update User defaults
+    if (userDefaults) {
+      if (userDefaults.brokerage) {
+        settings.userDefaults.brokerage = { ...settings.userDefaults.brokerage, ...userDefaults.brokerage };
+      }
+      if (userDefaults.leverage) {
+        settings.userDefaults.leverage = { ...settings.userDefaults.leverage, ...userDefaults.leverage };
+      }
+      if (userDefaults.charges) {
+        settings.userDefaults.charges = { ...settings.userDefaults.charges, ...userDefaults.charges };
+      }
+      if (userDefaults.lotSettings) {
+        settings.userDefaults.lotSettings = { ...settings.userDefaults.lotSettings, ...userDefaults.lotSettings };
+      }
+    }
+    
+    // Update Segment defaults
+    if (segmentDefaults) {
+      const segments = ['EQUITY', 'FNO', 'MCX', 'CRYPTO', 'CURRENCY'];
+      segments.forEach(seg => {
+        if (segmentDefaults[seg]) {
+          if (!settings.segmentDefaults) settings.segmentDefaults = {};
+          if (!settings.segmentDefaults[seg]) settings.segmentDefaults[seg] = {};
+          settings.segmentDefaults[seg] = { ...settings.segmentDefaults[seg], ...segmentDefaults[seg] };
+        }
+      });
+    }
+    
+    // Update Instrument defaults
+    if (instrumentDefaults) {
+      const instruments = ['NIFTY', 'BANKNIFTY', 'FINNIFTY', 'MIDCPNIFTY', 'SENSEX', 'CRUDEOIL', 'GOLD', 'SILVER', 'NATURALGAS'];
+      instruments.forEach(inst => {
+        if (instrumentDefaults[inst]) {
+          if (!settings.instrumentDefaults) settings.instrumentDefaults = {};
+          if (!settings.instrumentDefaults[inst]) settings.instrumentDefaults[inst] = {};
+          settings.instrumentDefaults[inst] = { ...settings.instrumentDefaults[inst], ...instrumentDefaults[inst] };
+        }
+      });
+    }
+    
+    // Update Notification settings
+    if (req.body.notificationSettings) {
+      if (!settings.notificationSettings) settings.notificationSettings = {};
+      settings.notificationSettings = { ...settings.notificationSettings, ...req.body.notificationSettings };
+    }
+    
+    settings.updatedBy = req.admin._id;
+    settings.markModified('segmentDefaults');
+    settings.markModified('instrumentDefaults');
+    settings.markModified('notificationSettings');
+    await settings.save();
+    
+    res.json({ message: 'System settings updated successfully', settings });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Apply system defaults to all existing admins of a role
+router.post('/system-settings/apply/:role', protectAdmin, superAdminOnly, async (req, res) => {
+  try {
+    const { role } = req.params;
+    const validRoles = ['ADMIN', 'BROKER', 'SUB_BROKER'];
+    
+    if (!validRoles.includes(role)) {
+      return res.status(400).json({ message: 'Invalid role. Must be ADMIN, BROKER, or SUB_BROKER' });
+    }
+    
+    const settings = await SystemSettings.getSettings();
+    let roleDefaults;
+    
+    switch (role) {
+      case 'ADMIN':
+        roleDefaults = settings.adminDefaults;
+        break;
+      case 'BROKER':
+        roleDefaults = settings.brokerDefaults;
+        break;
+      case 'SUB_BROKER':
+        roleDefaults = settings.subBrokerDefaults;
+        break;
+    }
+    
+    // Update all admins of this role with the system defaults
+    const result = await Admin.updateMany(
+      { role },
+      {
+        $set: {
+          'defaultSettings.brokerage': roleDefaults.brokerage,
+          'defaultSettings.leverage': roleDefaults.leverage,
+          'permissions.canChangeBrokerage': roleDefaults.permissions.canChangeBrokerage,
+          'permissions.canChangeCharges': roleDefaults.permissions.canChangeCharges,
+          'permissions.canChangeLeverage': roleDefaults.permissions.canChangeLeverage,
+          'permissions.canChangeLotSettings': roleDefaults.permissions.canChangeLotSettings,
+          'permissions.canChangeTradingSettings': roleDefaults.permissions.canChangeTradingSettings
+        }
+      }
+    );
+    
+    res.json({ 
+      message: `Applied system defaults to ${result.modifiedCount} ${role} accounts`,
+      modifiedCount: result.modifiedCount
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// ==================== BROKER CERTIFICATE MANAGEMENT (SuperAdmin Only) ====================
+
+// Get all brokers with certificate info
+router.get('/broker-certificates', protectAdmin, superAdminOnly, async (req, res) => {
+  try {
+    const brokers = await Admin.find({ role: 'BROKER' })
+      .select('name username email phone status branding certificate adminCode referralCode stats.totalUsers createdAt')
+      .sort({ 'certificate.displayOrder': 1, createdAt: -1 })
+      .lean();
+
+    res.json({ brokers });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Update broker certificate (verify, show on landing page, etc.)
+router.put('/broker-certificates/:brokerId', protectAdmin, superAdminOnly, async (req, res) => {
+  try {
+    const { brokerId } = req.params;
+    const { 
+      isVerified, 
+      showOnLandingPage, 
+      certificateNumber, 
+      description, 
+      specialization, 
+      yearsOfExperience,
+      totalClients,
+      rating,
+      displayOrder 
+    } = req.body;
+
+    const broker = await Admin.findOne({ _id: brokerId, role: 'BROKER' });
+    
+    if (!broker) {
+      return res.status(404).json({ message: 'Broker not found' });
+    }
+
+    // Initialize certificate object if not exists
+    if (!broker.certificate) {
+      broker.certificate = {};
+    }
+
+    // Update certificate fields
+    if (typeof isVerified === 'boolean') {
+      broker.certificate.isVerified = isVerified;
+      if (isVerified && !broker.certificate.verifiedAt) {
+        broker.certificate.verifiedAt = new Date();
+      }
+    }
+    if (typeof showOnLandingPage === 'boolean') {
+      broker.certificate.showOnLandingPage = showOnLandingPage;
+    }
+    if (certificateNumber !== undefined) {
+      broker.certificate.certificateNumber = certificateNumber;
+    }
+    if (description !== undefined) {
+      broker.certificate.description = description;
+    }
+    if (specialization !== undefined) {
+      broker.certificate.specialization = specialization;
+    }
+    if (yearsOfExperience !== undefined) {
+      broker.certificate.yearsOfExperience = yearsOfExperience;
+    }
+    if (totalClients !== undefined) {
+      broker.certificate.totalClients = totalClients;
+    }
+    if (rating !== undefined) {
+      broker.certificate.rating = Math.min(5, Math.max(1, rating));
+    }
+    if (displayOrder !== undefined) {
+      broker.certificate.displayOrder = displayOrder;
+    }
+
+    await broker.save();
+
+    res.json({ 
+      message: 'Broker certificate updated successfully',
+      broker: {
+        id: broker._id,
+        name: broker.name,
+        username: broker.username,
+        certificate: broker.certificate
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Bulk update display order for brokers on landing page
+router.put('/broker-certificates/reorder', protectAdmin, superAdminOnly, async (req, res) => {
+  try {
+    const { brokerOrders } = req.body; // Array of { brokerId, displayOrder }
+    
+    if (!Array.isArray(brokerOrders)) {
+      return res.status(400).json({ message: 'brokerOrders must be an array' });
+    }
+
+    const bulkOps = brokerOrders.map(item => ({
+      updateOne: {
+        filter: { _id: item.brokerId, role: 'BROKER' },
+        update: { $set: { 'certificate.displayOrder': item.displayOrder } }
+      }
+    }));
+
+    await Admin.bulkWrite(bulkOps);
+
+    res.json({ message: 'Broker display order updated successfully' });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Remove broker from landing page (hide certificate)
+router.delete('/broker-certificates/:brokerId/landing-page', protectAdmin, superAdminOnly, async (req, res) => {
+  try {
+    const { brokerId } = req.params;
+
+    const broker = await Admin.findOneAndUpdate(
+      { _id: brokerId, role: 'BROKER' },
+      { 
+        $set: { 
+          'certificate.showOnLandingPage': false 
+        } 
+      },
+      { new: true }
+    );
+
+    if (!broker) {
+      return res.status(404).json({ message: 'Broker not found' });
+    }
+
+    res.json({ message: 'Broker removed from landing page' });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// ==================== PATTI SHARING ROUTES ====================
+
+// Get all patti sharing configurations
+router.get('/patti-sharing', protectAdmin, superAdminOnly, async (req, res) => {
+  try {
+    const pattiSharings = await PattiSharing.find()
+      .populate('broker', 'name email clientId')
+      .populate('specificClients', 'name email clientId')
+      .populate('createdBy', 'name email')
+      .sort({ createdAt: -1 });
+
+    res.json(pattiSharings);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Get patti sharing for a specific broker
+router.get('/patti-sharing/broker/:brokerId', protectAdmin, superAdminOnly, async (req, res) => {
+  try {
+    const { brokerId } = req.params;
+    
+    const pattiSharing = await PattiSharing.findOne({ broker: brokerId })
+      .populate('broker', 'name email clientId')
+      .populate('specificClients', 'name email clientId');
+
+    if (!pattiSharing) {
+      return res.status(404).json({ message: 'Patti sharing not found for this broker' });
+    }
+
+    res.json(pattiSharing);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Get all brokers for patti sharing dropdown
+router.get('/patti-sharing/brokers', protectAdmin, superAdminOnly, async (req, res) => {
+  try {
+    const brokers = await Admin.find({ role: 'BROKER', status: 'ACTIVE' })
+      .select('name email clientId')
+      .sort({ name: 1 });
+
+    // Get existing patti sharing broker IDs
+    const existingPattiSharings = await PattiSharing.find().select('broker');
+    const existingBrokerIds = existingPattiSharings.map(ps => ps.broker.toString());
+
+    // Mark which brokers already have patti sharing
+    const brokersWithStatus = brokers.map(broker => ({
+      ...broker.toObject(),
+      hasPattiSharing: existingBrokerIds.includes(broker._id.toString())
+    }));
+
+    res.json(brokersWithStatus);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Create new patti sharing configuration
+router.post('/patti-sharing', protectAdmin, superAdminOnly, async (req, res) => {
+  try {
+    const { broker, brokerPercentage, appliedTo, specificClients, segments, notes } = req.body;
+
+    // Check if broker already has patti sharing
+    const existing = await PattiSharing.findOne({ broker });
+    if (existing) {
+      return res.status(400).json({ message: 'Patti sharing already exists for this broker. Please update instead.' });
+    }
+
+    // Validate broker exists
+    const brokerExists = await Admin.findOne({ _id: broker, role: 'BROKER' });
+    if (!brokerExists) {
+      return res.status(404).json({ message: 'Broker not found' });
+    }
+
+    const pattiSharing = new PattiSharing({
+      broker,
+      brokerPercentage: brokerPercentage || 50,
+      superAdminPercentage: 100 - (brokerPercentage || 50),
+      appliedTo: appliedTo || 'ALL_CLIENTS',
+      specificClients: specificClients || [],
+      segments: segments || {},
+      notes: notes || '',
+      createdBy: req.admin._id
+    });
+
+    await pattiSharing.save();
+
+    const populated = await PattiSharing.findById(pattiSharing._id)
+      .populate('broker', 'name email clientId')
+      .populate('specificClients', 'name email clientId')
+      .populate('createdBy', 'name email');
+
+    res.status(201).json(populated);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Update patti sharing configuration
+router.put('/patti-sharing/:id', protectAdmin, superAdminOnly, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { brokerPercentage, isActive, appliedTo, specificClients, segments, notes } = req.body;
+
+    const pattiSharing = await PattiSharing.findById(id);
+    if (!pattiSharing) {
+      return res.status(404).json({ message: 'Patti sharing not found' });
+    }
+
+    if (brokerPercentage !== undefined) {
+      pattiSharing.brokerPercentage = brokerPercentage;
+      pattiSharing.superAdminPercentage = 100 - brokerPercentage;
+    }
+    if (isActive !== undefined) pattiSharing.isActive = isActive;
+    if (appliedTo !== undefined) pattiSharing.appliedTo = appliedTo;
+    if (specificClients !== undefined) pattiSharing.specificClients = specificClients;
+    if (segments !== undefined) pattiSharing.segments = segments;
+    if (notes !== undefined) pattiSharing.notes = notes;
+
+    await pattiSharing.save();
+
+    const populated = await PattiSharing.findById(id)
+      .populate('broker', 'name email clientId')
+      .populate('specificClients', 'name email clientId')
+      .populate('createdBy', 'name email');
+
+    res.json(populated);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Delete patti sharing configuration
+router.delete('/patti-sharing/:id', protectAdmin, superAdminOnly, async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const pattiSharing = await PattiSharing.findByIdAndDelete(id);
+    if (!pattiSharing) {
+      return res.status(404).json({ message: 'Patti sharing not found' });
+    }
+
+    res.json({ message: 'Patti sharing deleted successfully' });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Toggle patti sharing active status
+router.patch('/patti-sharing/:id/toggle', protectAdmin, superAdminOnly, async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const pattiSharing = await PattiSharing.findById(id);
+    if (!pattiSharing) {
+      return res.status(404).json({ message: 'Patti sharing not found' });
+    }
+
+    pattiSharing.isActive = !pattiSharing.isActive;
+    await pattiSharing.save();
+
+    res.json({ 
+      message: `Patti sharing ${pattiSharing.isActive ? 'activated' : 'deactivated'} successfully`,
+      isActive: pattiSharing.isActive
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Get clients for a broker (for specific client selection)
+router.get('/patti-sharing/broker/:brokerId/clients', protectAdmin, superAdminOnly, async (req, res) => {
+  try {
+    const { brokerId } = req.params;
+
+    const clients = await User.find({ broker: brokerId, status: 'ACTIVE' })
+      .select('name email clientId walletBalance')
+      .sort({ name: 1 });
+
+    res.json(clients);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// ==================== GAME SETTINGS ROUTES ====================
+
+// Get game settings
+router.get('/game-settings', protectAdmin, superAdminOnly, async (req, res) => {
+  try {
+    const settings = await GameSettings.getSettings();
+    res.json(settings);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Update game settings
+router.put('/game-settings', protectAdmin, superAdminOnly, async (req, res) => {
+  try {
+    let settings = await GameSettings.findOne();
+    if (!settings) {
+      settings = new GameSettings(req.body);
+    } else {
+      Object.assign(settings, req.body);
+    }
+    await settings.save();
+    res.json(settings);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Update individual game settings
+router.put('/game-settings/game/:gameId', protectAdmin, superAdminOnly, async (req, res) => {
+  try {
+    const { gameId } = req.params;
+    const gameData = req.body;
+
+    let settings = await GameSettings.getSettings();
+    
+    if (settings.games && settings.games[gameId]) {
+      Object.assign(settings.games[gameId], gameData);
+      await settings.save();
+      res.json(settings);
+    } else {
+      res.status(404).json({ message: 'Game not found' });
+    }
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Toggle game enabled/disabled
+router.patch('/game-settings/game/:gameId/toggle', protectAdmin, superAdminOnly, async (req, res) => {
+  try {
+    const { gameId } = req.params;
+    
+    let settings = await GameSettings.getSettings();
+    
+    if (settings.games && settings.games[gameId]) {
+      settings.games[gameId].enabled = !settings.games[gameId].enabled;
+      await settings.save();
+      res.json({ 
+        message: `${gameId} ${settings.games[gameId].enabled ? 'enabled' : 'disabled'}`,
+        enabled: settings.games[gameId].enabled
+      });
+    } else {
+      res.status(404).json({ message: 'Game not found' });
+    }
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Toggle global games enabled/disabled
+router.patch('/game-settings/toggle-all', protectAdmin, superAdminOnly, async (req, res) => {
+  try {
+    let settings = await GameSettings.getSettings();
+    settings.gamesEnabled = !settings.gamesEnabled;
+    await settings.save();
+    res.json({ 
+      message: `All games ${settings.gamesEnabled ? 'enabled' : 'disabled'}`,
+      gamesEnabled: settings.gamesEnabled
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Toggle maintenance mode
+router.patch('/game-settings/maintenance', protectAdmin, superAdminOnly, async (req, res) => {
+  try {
+    const { enabled, message } = req.body;
+    
+    let settings = await GameSettings.getSettings();
+    settings.maintenanceMode = enabled;
+    if (message) settings.maintenanceMessage = message;
+    await settings.save();
+    
+    res.json({ 
+      message: `Maintenance mode ${settings.maintenanceMode ? 'enabled' : 'disabled'}`,
+      maintenanceMode: settings.maintenanceMode
+    });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }

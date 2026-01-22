@@ -10,6 +10,74 @@ import { protectUser, generateToken, generateSessionToken } from '../middleware/
 
 const router = express.Router();
 
+// PUBLIC: Get Broker Info by Referral Code (for signup page)
+router.get('/broker-info/:referralCode', async (req, res) => {
+  try {
+    const { referralCode } = req.params;
+    
+    const broker = await Admin.findOne({ 
+      referralCode: referralCode.toUpperCase(),
+      status: 'ACTIVE'
+    })
+    .select('name username branding certificate adminCode referralCode')
+    .lean();
+
+    if (!broker) {
+      return res.status(404).json({ message: 'Broker not found' });
+    }
+
+    res.json({
+      name: broker.name || broker.branding?.brandName || broker.username,
+      username: broker.username,
+      adminCode: broker.adminCode,
+      referralCode: broker.referralCode,
+      certificateNumber: broker.certificate?.certificateNumber || '',
+      specialization: broker.certificate?.specialization || '',
+      isVerified: broker.certificate?.isVerified || false,
+      brandName: broker.branding?.brandName || '',
+      logoUrl: broker.branding?.logoUrl || ''
+    });
+  } catch (error) {
+    console.error('Error fetching broker info:', error);
+    res.status(500).json({ message: 'Failed to fetch broker info' });
+  }
+});
+
+// PUBLIC: Get Certified Brokers for Landing Page (No Auth Required)
+router.get('/certified-brokers', async (req, res) => {
+  try {
+    const brokers = await Admin.find({
+      role: 'BROKER',
+      status: 'ACTIVE',
+      'certificate.showOnLandingPage': true,
+      'certificate.isVerified': true
+    })
+    .select('name username branding certificate referralCode adminCode stats.totalUsers')
+    .sort({ 'certificate.displayOrder': 1, 'certificate.rating': -1 })
+    .lean();
+
+    const formattedBrokers = brokers.map(broker => ({
+      id: broker._id,
+      name: broker.name || broker.branding?.brandName || broker.username,
+      brandName: broker.branding?.brandName || '',
+      logoUrl: broker.branding?.logoUrl || '',
+      certificateNumber: broker.certificate?.certificateNumber || '',
+      description: broker.certificate?.description || '',
+      specialization: broker.certificate?.specialization || '',
+      yearsOfExperience: broker.certificate?.yearsOfExperience || 0,
+      totalClients: broker.certificate?.totalClients || broker.stats?.totalUsers || 0,
+      rating: broker.certificate?.rating || 5,
+      referralCode: broker.referralCode,
+      adminCode: broker.adminCode
+    }));
+
+    res.json({ brokers: formattedBrokers });
+  } catch (error) {
+    console.error('Error fetching certified brokers:', error);
+    res.status(500).json({ message: 'Failed to fetch brokers' });
+  }
+});
+
 // User Registration
 router.post('/register', async (req, res) => {
   try {
@@ -106,8 +174,8 @@ router.post('/demo-register', async (req, res) => {
       admin: null,
       hierarchyPath: [],
       wallet: {
-        balance: 100000,
-        cashBalance: 100000,
+        balance: 1000000,
+        cashBalance: 1000000,
         tradingBalance: 0,
         usedMargin: 0,
         collateralValue: 0,
@@ -133,7 +201,7 @@ router.post('/demo-register', async (req, res) => {
       demoExpiresAt: user.demoExpiresAt,
       wallet: user.wallet,
       token: generateToken(user._id),
-      message: 'Demo account created! Valid for 7 days with ₹1,00,000 demo balance.'
+      message: 'Demo account created! Valid for 7 days with ₹10,00,000 demo balance.'
     });
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -674,18 +742,50 @@ router.put('/notifications/read-all', protectUser, async (req, res) => {
 // ==================== BROKER CHANGE REQUEST ROUTES ====================
 
 // Get available brokers/admins for transfer request
+// Only returns brokers under the same parent ADMIN
 router.get('/available-brokers', protectUser, async (req, res) => {
   try {
     const currentAdminCode = req.user.adminCode;
     
-    // Get all active admins except the user's current admin
-    const admins = await Admin.find({
+    // Get current admin
+    const currentAdmin = await Admin.findOne({ adminCode: currentAdminCode });
+    if (!currentAdmin) {
+      return res.status(400).json({ message: 'Current admin not found' });
+    }
+    
+    // Find the parent ADMIN of current admin
+    let parentAdminId = null;
+    if (currentAdmin.role === 'ADMIN') {
+      parentAdminId = currentAdmin._id;
+    } else if (currentAdmin.role === 'SUPER_ADMIN') {
+      // If under SuperAdmin, show all admins
+      parentAdminId = null;
+    } else {
+      // Find ADMIN in hierarchy path
+      const parentAdmin = await Admin.findOne({
+        _id: { $in: currentAdmin.hierarchyPath || [] },
+        role: 'ADMIN'
+      });
+      parentAdminId = parentAdmin?._id;
+    }
+    
+    let query = {
       status: 'ACTIVE',
       role: { $in: ['ADMIN', 'BROKER', 'SUB_BROKER'] },
       adminCode: { $ne: currentAdminCode }
-    })
-    .select('name username adminCode role')
-    .sort({ role: 1, name: 1 });
+    };
+    
+    // If there's a parent ADMIN, only show brokers under that admin
+    if (parentAdminId) {
+      query.$or = [
+        { _id: parentAdminId }, // The parent admin itself
+        { hierarchyPath: parentAdminId } // All admins under the parent
+      ];
+    }
+    
+    const admins = await Admin.find(query)
+      .select('name username adminCode role')
+      .sort({ role: 1, name: 1 });
     
     res.json(admins);
   } catch (error) {
@@ -729,6 +829,9 @@ router.post('/broker-change-request', protectUser, async (req, res) => {
     
     // Get current admin
     const currentAdmin = await Admin.findOne({ adminCode: req.user.adminCode });
+    if (!currentAdmin) {
+      return res.status(400).json({ message: 'Current admin not found' });
+    }
     
     // Get requested admin
     const requestedAdmin = await Admin.findOne({ 
@@ -744,15 +847,52 @@ router.post('/broker-change-request', protectUser, async (req, res) => {
       return res.status(400).json({ message: 'You are already under this broker/admin' });
     }
     
-    // Create the request
+    // Find the parent admin (ADMIN role) of current admin
+    // If current admin is ADMIN, they are the parent
+    // If current admin is BROKER or SUB_BROKER, find their parent ADMIN
+    let parentAdminId = null;
+    if (currentAdmin.role === 'ADMIN') {
+      parentAdminId = currentAdmin._id;
+    } else {
+      // Find ADMIN in hierarchy path
+      const parentAdmin = await Admin.findOne({
+        _id: { $in: currentAdmin.hierarchyPath || [] },
+        role: 'ADMIN'
+      });
+      parentAdminId = parentAdmin?._id;
+    }
+    
+    // Check if requested admin is under the same parent ADMIN
+    let requestedParentAdminId = null;
+    if (requestedAdmin.role === 'ADMIN') {
+      requestedParentAdminId = requestedAdmin._id;
+    } else {
+      const requestedParentAdmin = await Admin.findOne({
+        _id: { $in: requestedAdmin.hierarchyPath || [] },
+        role: 'ADMIN'
+      });
+      requestedParentAdminId = requestedParentAdmin?._id;
+    }
+    
+    // Validate: both must be under the same parent ADMIN (or both are ADMINs under SuperAdmin)
+    if (parentAdminId && requestedParentAdminId) {
+      if (parentAdminId.toString() !== requestedParentAdminId.toString()) {
+        return res.status(400).json({ 
+          message: 'You can only change to a broker under the same parent admin' 
+        });
+      }
+    }
+    
+    // Create the request - will be reviewed by parent ADMIN or SUPER_ADMIN
     const request = await BrokerChangeRequest.create({
       user: req.user._id,
       userId: req.user.userId,
       currentAdminCode: req.user.adminCode,
-      currentAdmin: currentAdmin?._id,
+      currentAdmin: currentAdmin._id,
       requestedAdminCode: requestedAdmin.adminCode,
       requestedAdmin: requestedAdmin._id,
-      reason: reason || ''
+      reason: reason || '',
+      parentAdmin: parentAdminId // Track which admin should approve
     });
     
     await request.populate([
@@ -761,7 +901,7 @@ router.post('/broker-change-request', protectUser, async (req, res) => {
     ]);
     
     res.status(201).json({
-      message: 'Broker change request submitted successfully',
+      message: 'Broker change request submitted successfully. It will be reviewed by your admin.',
       request
     });
   } catch (error) {

@@ -46,6 +46,12 @@ const brokerChangeRequestSchema = new mongoose.Schema({
     default: 'PENDING'
   },
   
+  // Parent admin who should approve (ADMIN role or SUPER_ADMIN)
+  parentAdmin: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Admin'
+  },
+  
   // Processing details
   processedBy: {
     type: mongoose.Schema.Types.ObjectId,

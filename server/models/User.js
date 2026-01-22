@@ -241,6 +241,40 @@ const userSchema = new mongoose.Schema({
       default: 0
     }
   },
+  
+  // Separate Games Wallet - For fantasy trading/games
+  gamesWallet: {
+    // Games Balance in INR
+    balance: {
+      type: Number,
+      default: 0
+    },
+    // Used Margin - Currently in play
+    usedMargin: {
+      type: Number,
+      default: 0
+    },
+    // Realized P&L from games
+    realizedPnL: {
+      type: Number,
+      default: 0
+    },
+    // Unrealized P&L from active games
+    unrealizedPnL: {
+      type: Number,
+      default: 0
+    },
+    // Today's Realized P&L
+    todayRealizedPnL: {
+      type: Number,
+      default: 0
+    },
+    // Today's Unrealized P&L
+    todayUnrealizedPnL: {
+      type: Number,
+      default: 0
+    }
+  },
   // Margin Settings
   marginSettings: {
     // Equity Intraday Leverage (e.g., 5 means 5x)
@@ -428,10 +462,9 @@ const userSchema = new mongoose.Schema({
   
   // Leverage Settings - Set by parent admin/broker for this user
   leverageSettings: {
-    intradayLeverages: { type: [Number], default: [1, 2, 5, 10] }, // Intraday (MIS) leverage options
-    carryForwardLeverages: { type: [Number], default: [1, 2, 5] }, // Carry Forward (NRML) leverage options
-    enabledLeverages: { type: [Number], default: [1, 2, 5, 10] }, // Legacy - kept for backward compatibility
-    maxLeverage: { type: Number, default: 10 }
+    intradayLeverage: { type: Number, default: 10 }, // Intraday (MIS) leverage - single value
+    carryForwardLeverage: { type: Number, default: 5 }, // Carry Forward (NRML) leverage - single value
+    maxLeverage: { type: Number, default: 10 } // Legacy - kept for backward compatibility
   },
   
   // Allowed Segments (simplified list)
@@ -536,6 +569,10 @@ userSchema.pre('save', async function(next) {
   if (this.mcxWallet) {
     if (this.mcxWallet.balance < 0) this.mcxWallet.balance = 0;
     if (this.mcxWallet.usedMargin < 0) this.mcxWallet.usedMargin = 0;
+  }
+  if (this.gamesWallet) {
+    if (this.gamesWallet.balance < 0) this.gamesWallet.balance = 0;
+    if (this.gamesWallet.usedMargin < 0) this.gamesWallet.usedMargin = 0;
   }
   
   next();

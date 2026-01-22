@@ -283,15 +283,11 @@ router.post('/internal-transfer', protectUser, async (req, res) => {
       
     } else {
       // Transfer from Trading Account to Main Wallet
-      // Block withdrawal if any margin is in use (open positions)
-      if (usedMargin > 0) {
+      // Allow withdrawal of free margin only (trading balance - used margin)
+      if (amount > availableTradingBalance) {
         return res.status(400).json({ 
-          message: `Cannot withdraw while margin is in use. Close all positions first. Used margin: ₹${usedMargin.toLocaleString()}` 
+          message: `Insufficient free margin. Available for withdrawal: ₹${availableTradingBalance.toLocaleString()}. Used margin: ₹${usedMargin.toLocaleString()}` 
         });
-      }
-      
-      if (amount > tradingBalance) {
-        return res.status(400).json({ message: `Insufficient balance in Trading Account. Available: ₹${tradingBalance.toLocaleString()}` });
       }
       
       newTradingBalance = tradingBalance - amount;
@@ -470,6 +466,7 @@ router.post('/mcx-transfer', protectUser, async (req, res) => {
     }
     const mcxBalance = user.mcxWallet?.balance || 0;
     const mcxUsedMargin = user.mcxWallet?.usedMargin || 0;
+    const availableMcxBalance = mcxBalance - mcxUsedMargin;
     
     let newCashBalance, newMcxBalance;
     
@@ -484,15 +481,11 @@ router.post('/mcx-transfer', protectUser, async (req, res) => {
       
     } else {
       // Transfer from MCX Account to Main Wallet
-      // Block withdrawal if any margin is in use (open positions)
-      if (mcxUsedMargin > 0) {
+      // Allow withdrawal of free margin only
+      if (amount > availableMcxBalance) {
         return res.status(400).json({ 
-          message: `Cannot withdraw while margin is in use. Close all MCX positions first. Used margin: ₹${mcxUsedMargin.toLocaleString()}` 
+          message: `Insufficient free margin. Available for withdrawal: ₹${availableMcxBalance.toLocaleString()}. Used margin: ₹${mcxUsedMargin.toLocaleString()}` 
         });
-      }
-      
-      if (amount > mcxBalance) {
-        return res.status(400).json({ message: `Insufficient balance in MCX Account. Available: ₹${mcxBalance.toLocaleString()}` });
       }
       
       newMcxBalance = mcxBalance - amount;
@@ -538,6 +531,101 @@ router.post('/mcx-transfer', protectUser, async (req, res) => {
     });
   } catch (error) {
     console.error('MCX transfer error:', error);
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Games transfer between main wallet and Games account
+router.post('/games-transfer', protectUser, async (req, res) => {
+  try {
+    const { amount, direction } = req.body;
+    
+    if (!amount || amount <= 0) {
+      return res.status(400).json({ message: 'Invalid amount' });
+    }
+    
+    if (!['toGames', 'fromGames'].includes(direction)) {
+      return res.status(400).json({ message: 'Invalid transfer direction' });
+    }
+    
+    const user = await User.findById(req.user._id);
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+    
+    // Get current balances
+    let mainWalletBalance = user.wallet?.cashBalance || 0;
+    if (mainWalletBalance === 0 && user.wallet?.balance > 0) {
+      mainWalletBalance = user.wallet.balance;
+      user.wallet.cashBalance = mainWalletBalance;
+    }
+    const gamesBalance = user.gamesWallet?.balance || 0;
+    const gamesUsedMargin = user.gamesWallet?.usedMargin || 0;
+    const availableGamesBalance = gamesBalance - gamesUsedMargin;
+    
+    let newCashBalance, newGamesBalance;
+    
+    if (direction === 'toGames') {
+      // Transfer from Main Wallet to Games Account
+      if (amount > mainWalletBalance) {
+        return res.status(400).json({ message: `Insufficient balance in Main Wallet. Available: ₹${mainWalletBalance.toLocaleString()}` });
+      }
+      
+      newCashBalance = mainWalletBalance - amount;
+      newGamesBalance = gamesBalance + amount;
+      
+    } else {
+      // Transfer from Games Account to Main Wallet
+      // Allow withdrawal of free funds only
+      if (amount > availableGamesBalance) {
+        return res.status(400).json({ 
+          message: `Insufficient free funds. Available for withdrawal: ₹${availableGamesBalance.toLocaleString()}. In play: ₹${gamesUsedMargin.toLocaleString()}` 
+        });
+      }
+      
+      newGamesBalance = gamesBalance - amount;
+      newCashBalance = mainWalletBalance + amount;
+    }
+    
+    // Use updateOne to avoid full document validation issues
+    await User.updateOne(
+      { _id: req.user._id },
+      { 
+        $set: { 
+          'wallet.cashBalance': newCashBalance,
+          'wallet.balance': newCashBalance,
+          'gamesWallet.balance': newGamesBalance
+        }
+      }
+    );
+    
+    // Create ledger entry for the transfer
+    const description = direction === 'toGames' 
+      ? `Games Transfer: Wallet → Games Account (₹${amount.toLocaleString()})`
+      : `Games Transfer: Games Account → Wallet (₹${amount.toLocaleString()})`;
+    
+    await WalletLedger.create({
+      ownerType: 'USER',
+      ownerId: user._id,
+      adminCode: user.adminCode,
+      type: direction === 'toGames' ? 'DEBIT' : 'CREDIT',
+      reason: 'GAMES_TRANSFER',
+      amount: amount,
+      balanceAfter: newCashBalance,
+      description,
+      reference: {
+        type: 'Manual',
+        id: null
+      }
+    });
+    
+    res.json({ 
+      message: 'Transfer successful',
+      mainWalletBalance: newCashBalance,
+      gamesBalance: newGamesBalance
+    });
+  } catch (error) {
+    console.error('Games transfer error:', error);
     res.status(500).json({ message: error.message });
   }
 });

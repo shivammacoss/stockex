@@ -332,6 +332,41 @@ router.post('/admin/bulk', protectAdmin, superAdminOnly, async (req, res) => {
   }
 });
 
+// Bulk toggle instruments (must be before /admin/:id to avoid route conflict)
+router.put('/admin/bulk-toggle', protectAdmin, superAdminOnly, async (req, res) => {
+  try {
+    const { ids, isEnabled } = req.body;
+    
+    await Instrument.updateMany(
+      { _id: { $in: ids } },
+      { isEnabled }
+    );
+    
+    res.json({ message: `${ids.length} instruments updated` });
+  } catch (error) {
+    res.status(400).json({ message: error.message });
+  }
+});
+
+// Toggle ALL instruments at once (must be before /admin/:id)
+router.put('/admin/toggle-all', protectAdmin, superAdminOnly, async (req, res) => {
+  try {
+    const { isEnabled } = req.body;
+    
+    const result = await Instrument.updateMany(
+      {},
+      { isEnabled }
+    );
+    
+    res.json({ 
+      message: `All ${result.modifiedCount} instruments ${isEnabled ? 'enabled' : 'disabled'}`,
+      count: result.modifiedCount
+    });
+  } catch (error) {
+    res.status(400).json({ message: error.message });
+  }
+});
+
 // Update instrument
 router.put('/admin/:id', protectAdmin, async (req, res) => {
   try {
@@ -381,22 +416,6 @@ router.put('/admin/:id/toggle', protectAdmin, superAdminOnly, async (req, res) =
     await instrument.save();
     
     res.json(instrument);
-  } catch (error) {
-    res.status(400).json({ message: error.message });
-  }
-});
-
-// Bulk toggle instruments
-router.put('/admin/bulk-toggle', protectAdmin, superAdminOnly, async (req, res) => {
-  try {
-    const { ids, isEnabled } = req.body;
-    
-    await Instrument.updateMany(
-      { _id: { $in: ids } },
-      { isEnabled }
-    );
-    
-    res.json({ message: `${ids.length} instruments updated` });
   } catch (error) {
     res.status(400).json({ message: error.message });
   }
