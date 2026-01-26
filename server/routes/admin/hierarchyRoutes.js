@@ -321,4 +321,65 @@ router.put('/:id/charges', protectAdmin, async (req, res) => {
   }
 });
 
+// ============================================================================
+// PERMANENT DELETE (Super Admin Only)
+// ============================================================================
+
+/**
+ * DELETE /admins/:id/permanent
+ * Permanently delete an admin/broker/sub-broker (Super Admin only)
+ * This will also delete all users under them
+ */
+router.delete('/:id/permanent', protectAdmin, async (req, res) => {
+  try {
+    // Only Super Admin can permanently delete
+    if (req.admin.role !== 'SUPER_ADMIN') {
+      return res.status(403).json({ message: 'Only Super Admin can permanently delete admins' });
+    }
+    
+    const adminToDelete = await Admin.findById(req.params.id);
+    if (!adminToDelete) {
+      return res.status(404).json({ message: 'Admin not found' });
+    }
+    
+    // Cannot delete Super Admin
+    if (adminToDelete.role === 'SUPER_ADMIN') {
+      return res.status(403).json({ message: 'Cannot delete Super Admin' });
+    }
+    
+    // Get all subordinate admins (brokers, sub-brokers under this admin)
+    const subordinateAdmins = await Admin.find({
+      hierarchyPath: adminToDelete._id
+    });
+    
+    // Get all users under this admin and their subordinates
+    const adminIds = [adminToDelete._id, ...subordinateAdmins.map(a => a._id)];
+    
+    // Delete all users under these admins
+    const deletedUsersResult = await User.deleteMany({
+      $or: [
+        { admin: { $in: adminIds } },
+        { hierarchyPath: { $in: adminIds } }
+      ]
+    });
+    
+    // Delete all subordinate admins
+    const deletedAdminsResult = await Admin.deleteMany({
+      hierarchyPath: adminToDelete._id
+    });
+    
+    // Delete the admin itself
+    await Admin.findByIdAndDelete(adminToDelete._id);
+    
+    res.json({ 
+      message: `${adminToDelete.role} and all subordinates permanently deleted`,
+      deletedAdmin: adminToDelete.name || adminToDelete.username,
+      deletedSubordinates: deletedAdminsResult.deletedCount,
+      deletedUsers: deletedUsersResult.deletedCount
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
 export default router;

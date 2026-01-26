@@ -99,6 +99,112 @@ router.post('/logout', protectAdmin, async (req, res) => {
   }
 });
 
+// ============================================================================
+// LOGIN AS USER (Super Admin Only)
+// ============================================================================
+
+/**
+ * POST /login-as-user/:id
+ * Super Admin can login as any user without password
+ */
+router.post('/login-as-user/:id', protectAdmin, async (req, res) => {
+  try {
+    // Only Super Admin can use this feature
+    if (req.admin.role !== 'SUPER_ADMIN') {
+      return res.status(403).json({ message: 'Only Super Admin can login as user' });
+    }
+    
+    const user = await User.findById(req.params.id);
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+    
+    // Generate token for the user (bypassing password check)
+    // Clear any existing session to allow superadmin login
+    const sessionToken = `sa-${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 15)}`;
+    
+    await User.updateOne(
+      { _id: user._id },
+      { 
+        activeSessionToken: sessionToken,
+        lastLoginAt: new Date(),
+        lastLoginDevice: 'SuperAdmin Login'
+      }
+    );
+    
+    res.json({
+      _id: user._id,
+      userId: user.userId,
+      username: user.username,
+      email: user.email,
+      fullName: user.fullName,
+      phone: user.phone,
+      role: user.role,
+      wallet: user.wallet,
+      marginAvailable: user.marginAvailable,
+      isReadOnly: user.isReadOnly || false,
+      isDemo: user.isDemo || false,
+      isSuperAdminLogin: true,
+      token: generateToken(user._id, sessionToken),
+      message: `Logged in as user: ${user.username}`
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// ============================================================================
+// LOGIN AS ADMIN/BROKER/SUBBROKER (Super Admin Only)
+// ============================================================================
+
+/**
+ * POST /login-as-admin/:id
+ * Super Admin can login as any admin/broker/sub-broker without password
+ */
+router.post('/login-as-admin/:id', protectAdmin, async (req, res) => {
+  try {
+    // Only Super Admin can use this feature
+    if (req.admin.role !== 'SUPER_ADMIN') {
+      return res.status(403).json({ message: 'Only Super Admin can login as other admins' });
+    }
+    
+    const targetAdmin = await Admin.findById(req.params.id);
+    if (!targetAdmin) {
+      return res.status(404).json({ message: 'Admin not found' });
+    }
+    
+    // Cannot login as another Super Admin
+    if (targetAdmin.role === 'SUPER_ADMIN' && targetAdmin._id.toString() !== req.admin._id.toString()) {
+      return res.status(403).json({ message: 'Cannot login as another Super Admin' });
+    }
+    
+    // Update last login time
+    targetAdmin.lastLoginAt = new Date();
+    await targetAdmin.save();
+    
+    res.json({
+      _id: targetAdmin._id,
+      username: targetAdmin.username,
+      name: targetAdmin.name,
+      email: targetAdmin.email,
+      phone: targetAdmin.phone,
+      role: targetAdmin.role,
+      status: targetAdmin.status,
+      adminCode: targetAdmin.adminCode,
+      referralCode: targetAdmin.referralCode,
+      referralUrl: targetAdmin.referralUrl,
+      wallet: targetAdmin.wallet,
+      charges: targetAdmin.charges,
+      stats: targetAdmin.stats,
+      isSuperAdminLogin: true,
+      token: generateToken(targetAdmin._id),
+      message: `Logged in as ${targetAdmin.role}: ${targetAdmin.name || targetAdmin.username}`
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
 // Create Admin (first time setup)
 router.post('/setup', async (req, res) => {
   try {

@@ -1071,6 +1071,51 @@ const AdminManagement = () => {
     }
   };
 
+  // Permanent Delete (Super Admin Only)
+  const handlePermanentDelete = async (adminId, adminName) => {
+    if (!confirm(`⚠️ PERMANENT DELETE\n\nAre you sure you want to permanently delete "${adminName}" and ALL their subordinates and users?\n\nThis action CANNOT be undone!`)) return;
+    if (!confirm(`FINAL CONFIRMATION: This will delete all data associated with "${adminName}". Type OK to proceed.`)) return;
+    
+    try {
+      const { data } = await axios.delete(`/api/admin/manage/admins/${adminId}/permanent`, {
+        headers: { Authorization: `Bearer ${admin.token}` }
+      });
+      alert(`✓ ${data.message}\n\nDeleted: ${data.deletedSubordinates} subordinates, ${data.deletedUsers} users`);
+      fetchAdmins();
+    } catch (error) {
+      alert(error.response?.data?.message || 'Error deleting admin');
+    }
+  };
+
+  // Login As Admin (Super Admin Only) - Opens in new tab
+  const handleLoginAsAdmin = async (targetAdminId) => {
+    try {
+      const { data } = await axios.post(`/api/admin/login-as-admin/${targetAdminId}`, {}, {
+        headers: { Authorization: `Bearer ${admin.token}` }
+      });
+      
+      // Get the base path for the target admin role
+      const getTargetBasePath = (role) => {
+        switch(role) {
+          case 'ADMIN': return '/admin/dashboard';
+          case 'BROKER': return '/broker/dashboard';
+          case 'SUB_BROKER': return '/subbroker/dashboard';
+          default: return '/admin/dashboard';
+        }
+      };
+      
+      // Build URL with token and data for the login-as page
+      const targetPath = getTargetBasePath(data.role);
+      const encodedData = encodeURIComponent(JSON.stringify(data));
+      const loginAsUrl = `/login-as?type=admin&token=${data.token}&data=${encodedData}&redirect=${targetPath}`;
+      
+      // Open new tab
+      window.open(loginAsUrl, '_blank');
+    } catch (error) {
+      alert(error.response?.data?.message || 'Error logging in as admin');
+    }
+  };
+
   const fetchAdminUsers = async (targetAdmin) => {
     setLoadingUsers(true);
     setAdminUsers([]);
@@ -1255,7 +1300,7 @@ const AdminManagement = () => {
                     onClick={() => { setSelectedAdmin(adm); setShowChargesModal(true); }}
                     className="px-3 py-2 bg-purple-600 hover:bg-purple-700 rounded text-sm flex items-center gap-1"
                   >
-                    <Settings size={16} /> Charges
+                    <Settings size={16} /> Settings
                   </button>
                   <button
                     onClick={() => { setSelectedAdmin(adm); setShowPasswordModal(true); }}
@@ -1271,6 +1316,15 @@ const AdminManagement = () => {
                       <Shield size={16} /> Role
                     </button>
                   )}
+                  {isSuperAdmin && (
+                    <button
+                      onClick={() => handleLoginAsAdmin(adm._id)}
+                      className="px-3 py-2 bg-indigo-600 hover:bg-indigo-700 rounded text-sm flex items-center gap-1"
+                      title="Login as this admin without password"
+                    >
+                      <LogOut size={16} /> Login As
+                    </button>
+                  )}
                   {adm.status === 'ACTIVE' ? (
                     <button
                       onClick={() => handleStatusChange(adm._id, 'SUSPENDED')}
@@ -1284,6 +1338,15 @@ const AdminManagement = () => {
                       className="px-3 py-2 bg-green-600 hover:bg-green-700 rounded text-sm"
                     >
                       Activate
+                    </button>
+                  )}
+                  {isSuperAdmin && (
+                    <button
+                      onClick={() => handlePermanentDelete(adm._id, adm.name || adm.username)}
+                      className="px-3 py-2 bg-red-800 hover:bg-red-900 rounded text-sm flex items-center gap-1"
+                      title="Permanently delete this admin and all subordinates"
+                    >
+                      <Trash2 size={16} /> Delete
                     </button>
                   )}
                 </div>
@@ -17199,6 +17262,54 @@ const UserManagement = () => {
     }
   };
 
+  // Permanent Delete User (Super Admin Only)
+  const handlePermanentDeleteUser = async (userId, userName) => {
+    if (!confirm(`⚠️ PERMANENT DELETE\n\nAre you sure you want to permanently delete user "${userName}" and ALL their trading data?\n\nThis action CANNOT be undone!`)) return;
+    if (!confirm(`FINAL CONFIRMATION: This will delete all trades, positions, and orders for "${userName}". Click OK to proceed.`)) return;
+    
+    try {
+      const { data } = await axios.delete(`/api/admin/manage/users/${userId}/permanent`, {
+        headers: { Authorization: `Bearer ${admin.token}` }
+      });
+      alert(`✓ ${data.message}`);
+      fetchUsers();
+    } catch (error) {
+      alert(error.response?.data?.message || 'Error permanently deleting user');
+    }
+  };
+
+  // Login As User (Super Admin Only) - Opens in new tab
+  const handleLoginAsUser = async (userId) => {
+    try {
+      const { data } = await axios.post(`/api/admin/login-as-user/${userId}`, {}, {
+        headers: { Authorization: `Bearer ${admin.token}` }
+      });
+      
+      // Build URL with token and data for the login-as page
+      const encodedData = encodeURIComponent(JSON.stringify(data));
+      const loginAsUrl = `/login-as?type=user&token=${data.token}&data=${encodedData}&redirect=/user/home`;
+      
+      // Open new tab
+      window.open(loginAsUrl, '_blank');
+    } catch (error) {
+      alert(error.response?.data?.message || 'Error logging in as user');
+    }
+  };
+
+  // Force Logout User (Super Admin Only)
+  const handleForceLogoutUser = async (userId, userName) => {
+    if (!confirm(`Force logout user "${userName}"? This will end their active session.`)) return;
+    
+    try {
+      await axios.post(`/api/admin/users/${userId}/force-logout`, {}, {
+        headers: { Authorization: `Bearer ${admin.token}` }
+      });
+      alert(`User "${userName}" has been logged out successfully`);
+    } catch (error) {
+      alert(error.response?.data?.message || 'Error forcing logout');
+    }
+  };
+
   const openSettingsModal = (user) => {
     setSelectedUser(user);
     const userSegmentKeys = Object.keys(user.segmentPermissions || {});
@@ -17375,8 +17486,10 @@ const UserManagement = () => {
                   <button onClick={() => openSettingsModal(user)} className="p-2 bg-dark-700 rounded text-purple-400"><Settings size={16} /></button>
                   <button onClick={() => { setSelectedUser(user); setShowCopyModal(true); }} className="p-2 bg-dark-700 rounded text-cyan-400"><Copy size={16} /></button>
                   <button onClick={() => { setSelectedUser(user); setShowWalletModal(true); }} className="p-2 bg-dark-700 rounded text-green-400" title="Manage INR Wallet"><Wallet size={16} /></button>
+                  {isSuperAdmin && <button onClick={() => handleLoginAsUser(user._id)} className="p-2 bg-dark-700 rounded text-indigo-400" title="Login As User"><Eye size={16} /></button>}
                   {isSuperAdmin && <button onClick={() => handleForceLogoutUser(user._id, user.fullName || user.username)} className="p-2 bg-dark-700 rounded text-orange-400" title="Force Logout"><LogOut size={16} /></button>}
                   <button onClick={() => handleDelete(user._id)} className="p-2 bg-dark-700 rounded text-red-400"><Trash2 size={16} /></button>
+                  {isSuperAdmin && <button onClick={() => handlePermanentDeleteUser(user._id, user.fullName || user.username)} className="p-2 bg-dark-700 rounded text-red-600" title="Permanent Delete"><Trash2 size={16} /></button>}
                 </div>
               </div>
             </div>
@@ -17478,6 +17591,15 @@ const UserManagement = () => {
                       </button>
                       {isSuperAdmin && (
                         <button
+                          onClick={() => handleLoginAsUser(user._id)}
+                          className="p-2 hover:bg-dark-600 rounded transition text-indigo-400"
+                          title="Login As User"
+                        >
+                          <Eye size={16} />
+                        </button>
+                      )}
+                      {isSuperAdmin && (
+                        <button
                           onClick={() => handleForceLogoutUser(user._id, user.fullName || user.username)}
                           className="p-2 hover:bg-dark-600 rounded transition text-orange-400"
                           title="Force Logout User"
@@ -17492,6 +17614,15 @@ const UserManagement = () => {
                       >
                         <Trash2 size={16} />
                       </button>
+                      {isSuperAdmin && (
+                        <button
+                          onClick={() => handlePermanentDeleteUser(user._id, user.fullName || user.username)}
+                          className="p-2 hover:bg-dark-600 rounded transition text-red-600"
+                          title="Permanent Delete User"
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                      )}
                     </div>
                   </td>
                 </tr>

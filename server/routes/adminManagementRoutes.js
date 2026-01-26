@@ -4346,4 +4346,116 @@ router.patch('/game-settings/maintenance', protectAdmin, superAdminOnly, async (
   }
 });
 
+// ============================================================================
+// PERMANENT DELETE ADMIN (Super Admin Only)
+// ============================================================================
+
+/**
+ * DELETE /admins/:id/permanent
+ * Permanently delete an admin/broker/sub-broker and all subordinates (Super Admin only)
+ */
+router.delete('/admins/:id/permanent', protectAdmin, superAdminOnly, async (req, res) => {
+  try {
+    const adminToDelete = await Admin.findById(req.params.id);
+    if (!adminToDelete) {
+      return res.status(404).json({ message: 'Admin not found' });
+    }
+    
+    // Cannot delete Super Admin
+    if (adminToDelete.role === 'SUPER_ADMIN') {
+      return res.status(403).json({ message: 'Cannot delete Super Admin' });
+    }
+    
+    // Get all subordinate admins (brokers, sub-brokers under this admin)
+    const subordinateAdmins = await Admin.find({
+      hierarchyPath: adminToDelete._id
+    });
+    
+    // Get all admin IDs to delete
+    const adminIds = [adminToDelete._id, ...subordinateAdmins.map(a => a._id)];
+    
+    // Delete all users under these admins
+    const deletedUsersResult = await User.deleteMany({
+      $or: [
+        { admin: { $in: adminIds } },
+        { hierarchyPath: { $in: adminIds } }
+      ]
+    });
+    
+    // Delete all trades and positions for these users
+    try {
+      await Trade.deleteMany({ admin: { $in: adminIds } });
+      await Position.deleteMany({ admin: { $in: adminIds } });
+    } catch (err) {
+      console.log('Error deleting trades/positions:', err.message);
+    }
+    
+    // Delete all subordinate admins
+    const deletedAdminsResult = await Admin.deleteMany({
+      hierarchyPath: adminToDelete._id
+    });
+    
+    // Delete the admin itself
+    await Admin.findByIdAndDelete(adminToDelete._id);
+    
+    res.json({ 
+      message: `${adminToDelete.role} and all subordinates permanently deleted`,
+      deletedAdmin: adminToDelete.name || adminToDelete.username,
+      deletedSubordinates: deletedAdminsResult.deletedCount,
+      deletedUsers: deletedUsersResult.deletedCount
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// ============================================================================
+// PERMANENT DELETE USER (Super Admin Only)
+// ============================================================================
+
+/**
+ * DELETE /users/:id/permanent
+ * Permanently delete a user and all their data (Super Admin only)
+ */
+router.delete('/users/:id/permanent', protectAdmin, superAdminOnly, async (req, res) => {
+  try {
+    const user = await User.findById(req.params.id);
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+    
+    // Delete user's trading data
+    try {
+      await Trade.deleteMany({ user: user._id });
+      await Position.deleteMany({ user: user._id });
+    } catch (err) {
+      console.log('Error deleting user trades/positions:', err.message);
+    }
+    
+    // Delete wallet ledger entries
+    try {
+      await WalletLedger.deleteMany({ ownerId: user._id, ownerType: 'USER' });
+    } catch (err) {
+      console.log('Error deleting wallet ledger:', err.message);
+    }
+    
+    // Delete fund requests
+    try {
+      await FundRequest.deleteMany({ user: user._id });
+    } catch (err) {
+      console.log('Error deleting fund requests:', err.message);
+    }
+    
+    // Delete the user
+    await User.findByIdAndDelete(user._id);
+    
+    res.json({ 
+      message: 'User permanently deleted',
+      deletedUser: user.username || user.email
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
 export default router;

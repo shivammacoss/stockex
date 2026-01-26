@@ -418,6 +418,50 @@ router.post('/:id/transfer', protectAdmin, superAdminOnly, async (req, res) => {
   }
 });
 
+// ============================================================================
+// PERMANENT DELETE USER (Super Admin Only)
+// ============================================================================
+
+/**
+ * DELETE /users/:id/permanent
+ * Permanently delete a user (Super Admin only)
+ */
+router.delete('/:id/permanent', protectAdmin, superAdminOnly, async (req, res) => {
+  try {
+    const user = await User.findById(req.params.id);
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+    
+    // Delete user's related data (trades, positions, orders, etc.)
+    // Import models dynamically to avoid circular dependencies
+    try {
+      const Trade = (await import('../../models/Trade.js')).default;
+      const Position = (await import('../../models/Position.js')).default;
+      const Order = (await import('../../models/Order.js')).default;
+      
+      await Trade.deleteMany({ user: user._id });
+      await Position.deleteMany({ user: user._id });
+      await Order.deleteMany({ user: user._id });
+    } catch (err) {
+      console.log('Some related models not found, continuing with user deletion');
+    }
+    
+    // Delete wallet ledger entries
+    await WalletLedger.deleteMany({ ownerId: user._id, ownerType: 'USER' });
+    
+    // Delete the user
+    await User.findByIdAndDelete(user._id);
+    
+    res.json({ 
+      message: 'User permanently deleted',
+      deletedUser: user.username || user.email
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
 // Import Admin model for transfer
 import Admin from '../../models/Admin.js';
 

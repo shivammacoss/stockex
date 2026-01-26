@@ -17,6 +17,7 @@ import UserOrders from './pages/UserOrders';
 import UserTransactions from './pages/UserTransactions';
 import UserGames from './pages/UserGames';
 import LandingPage from './pages/LandingPage';
+import LoginAs from './pages/LoginAs';
 
 class ErrorBoundary extends React.Component {
   constructor(props) {
@@ -70,6 +71,7 @@ function App() {
           <Routes>
             <Route path="/" element={<LandingPage />} />
             <Route path="/login" element={<UserLogin />} />
+            <Route path="/login-as" element={<LoginAs />} />
             
             {/* Separate Login Pages for each role */}
             <Route path="/superadmin/login" element={<SuperAdminLogin />} />
