@@ -52,10 +52,11 @@ const chargesSchema = new mongoose.Schema({
     }
   },
   
-  // Exchange transaction charges (percentage)
+  // Exchange transaction charges (percentage) - varies by segment
+  // NSE Equity: 0.00297%, NSE F&O Futures: 0.0019%, NSE F&O Options: 0.05%, MCX: 0.0026%
   exchangeCharges: {
     type: Number,
-    default: 0.00325 // 0.00325%
+    default: 0.00297 // NSE Equity default
   },
   
   // GST on brokerage (percentage)
@@ -213,8 +214,19 @@ chargesSchema.statics.calculateCharges = async function(trade, adminCode, userId
     };
   }
   
-  // Exchange charges
-  const exchangeCharges = (totalTurnover * (chargesConfig.exchangeCharges || 0.00325)) / 100;
+  // Exchange charges - use segment-appropriate rates if not configured
+  let exchangeRate = chargesConfig.exchangeCharges;
+  if (exchangeRate === undefined || exchangeRate === null) {
+    // Default rates per segment (as per NSE/BSE/MCX)
+    if (trade.instrumentType === 'OPTIONS') {
+      exchangeRate = 0.05; // NSE F&O Options: 0.05% on premium
+    } else if (trade.instrumentType === 'FUTURES') {
+      exchangeRate = isMCX ? 0.0026 : 0.0019; // MCX: 0.0026%, NSE F&O Futures: 0.0019%
+    } else {
+      exchangeRate = 0.00297; // NSE Equity: 0.00297%
+    }
+  }
+  const exchangeCharges = (totalTurnover * exchangeRate) / 100;
   
   // GST on brokerage + exchange charges
   const gst = ((brokerage + exchangeCharges) * (chargesConfig.gst || 18)) / 100;
@@ -238,8 +250,9 @@ chargesSchema.statics.calculateCharges = async function(trade, adminCode, userId
   } else if (trade.instrumentType === 'FUTURES') {
     stt = (exitTurnover * (sttConfig.futures || 0.0125)) / 100;
   } else if (trade.instrumentType === 'OPTIONS') {
-    const premium = trade.entryPrice * trade.quantity * (trade.lotSize || 1);
-    stt = (premium * (sttConfig.options || 0.0625)) / 100;
+    // STT on options: 0.0625% on sell side premium only (as per SEBI/Zerodha)
+    const exitPremium = (trade.exitPrice || trade.entryPrice) * trade.quantity * (trade.lotSize || 1);
+    stt = (exitPremium * (sttConfig.options || 0.0625)) / 100;
   }
   // MCX has no STT
   

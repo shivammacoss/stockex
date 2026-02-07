@@ -3,6 +3,7 @@ import bcrypt from 'bcryptjs';
 import Admin from '../models/Admin.js';
 import User from '../models/User.js';
 import BankSettings from '../models/BankSettings.js';
+import SystemSettings from '../models/SystemSettings.js';
 import { protectAdmin, generateToken } from '../middleware/auth.js';
 
 const router = express.Router();
@@ -306,7 +307,11 @@ router.get('/users/:id', protectAdmin, async (req, res) => {
 // Create user (All roles including SUPER_ADMIN can create users)
 router.post('/users', protectAdmin, async (req, res) => {
   try {
-    const { username, email, password, fullName, phone } = req.body;
+    const { 
+      username, email, password, fullName, phone, initialBalance,
+      marginType, ledgerBalanceClosePercent, profitTradeHoldSeconds, lossTradeHoldSeconds,
+      isActivated, isReadOnly, isDemo, intradaySquare, blockLimitAboveBelowHighLow, blockLimitBetweenHighLow
+    } = req.body;
     
     if (!req.admin.adminCode) {
       return res.status(400).json({ message: 'Admin code missing on your profile. Contact Super Admin.' });
@@ -320,6 +325,42 @@ router.post('/users', protectAdmin, async (req, res) => {
     // Build hierarchy path for the user
     const userHierarchyPath = [...(req.admin.hierarchyPath || []), req.admin._id];
 
+    // Inherit segmentPermissions and scriptSettings from the creating admin
+    // If admin has no settings, fallback to SystemSettings segmentDefaults
+    let inheritedSegmentPermissions = {};
+    let inheritedScriptSettings = {};
+    
+    const adminSegPerms = req.admin.segmentPermissions;
+    if (adminSegPerms && ((adminSegPerms instanceof Map && adminSegPerms.size > 0) || Object.keys(adminSegPerms).length > 0)) {
+      inheritedSegmentPermissions = adminSegPerms instanceof Map 
+        ? Object.fromEntries(adminSegPerms) 
+        : adminSegPerms;
+    } else {
+      // Fallback to SystemSettings adminSegmentDefaults (same structure as Admin.segmentPermissions)
+      try {
+        const sysSettings = await SystemSettings.getSettings();
+        // Use adminSegmentDefaults first (exact same structure), fall back to old segmentDefaults mapping
+        const asd = sysSettings?.adminSegmentDefaults;
+        if (asd && ((asd instanceof Map && asd.size > 0) || Object.keys(asd).length > 0)) {
+          inheritedSegmentPermissions = asd instanceof Map ? Object.fromEntries(asd) : { ...asd };
+        }
+        // Also inherit script defaults
+        const assd = sysSettings?.adminScriptDefaults;
+        if (assd && ((assd instanceof Map && assd.size > 0) || Object.keys(assd).length > 0)) {
+          inheritedScriptSettings = assd instanceof Map ? Object.fromEntries(assd) : { ...assd };
+        }
+      } catch (e) {
+        console.error('Failed to load SystemSettings fallback:', e.message);
+      }
+    }
+    
+    const adminScriptSettings = req.admin.scriptSettings;
+    if (adminScriptSettings && ((adminScriptSettings instanceof Map && adminScriptSettings.size > 0) || Object.keys(adminScriptSettings).length > 0)) {
+      inheritedScriptSettings = adminScriptSettings instanceof Map 
+        ? Object.fromEntries(adminScriptSettings) 
+        : adminScriptSettings;
+    }
+
     const user = await User.create({
       username,
       email,
@@ -330,7 +371,28 @@ router.post('/users', protectAdmin, async (req, res) => {
       adminCode: req.admin.adminCode,
       creatorRole: req.admin.role,
       hierarchyPath: userHierarchyPath,
-      createdBy: req.admin._id
+      createdBy: req.admin._id,
+      wallet: {
+        balance: initialBalance || 0,
+        cashBalance: initialBalance || 0,
+        blocked: 0
+      },
+      isActive: isActivated !== false,
+      settings: {
+        marginType: marginType || 'exposure',
+        ledgerBalanceClosePercent: ledgerBalanceClosePercent || 90,
+        profitTradeHoldSeconds: profitTradeHoldSeconds || 0,
+        lossTradeHoldSeconds: lossTradeHoldSeconds || 0,
+        isActivated: isActivated !== false,
+        isReadOnly: isReadOnly || false,
+        isDemo: isDemo || false,
+        intradaySquare: intradaySquare || false,
+        blockLimitAboveBelowHighLow: blockLimitAboveBelowHighLow || false,
+        blockLimitBetweenHighLow: blockLimitBetweenHighLow || false
+      },
+      // Inherited from admin - no hardcoded defaults
+      segmentPermissions: inheritedSegmentPermissions,
+      scriptSettings: inheritedScriptSettings
     });
 
     res.status(201).json({
@@ -367,6 +429,54 @@ router.put('/users/:id', protectAdmin, async (req, res) => {
 
     await user.save();
     res.json(user);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Save admin's own segment permissions and script settings
+// These settings cascade to all users created under this admin
+router.put('/my-settings', protectAdmin, async (req, res) => {
+  try {
+    const { segmentPermissions, scriptSettings } = req.body;
+    
+    const updateFields = {};
+    if (segmentPermissions) {
+      updateFields.segmentPermissions = segmentPermissions;
+    }
+    if (scriptSettings) {
+      updateFields.scriptSettings = scriptSettings;
+    }
+    
+    if (Object.keys(updateFields).length === 0) {
+      return res.status(400).json({ message: 'No settings provided' });
+    }
+    
+    await Admin.updateOne({ _id: req.admin._id }, { $set: updateFields });
+    
+    const updatedAdmin = await Admin.findById(req.admin._id).select('segmentPermissions scriptSettings');
+    res.json({ message: 'Admin settings saved successfully', settings: updatedAdmin });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Get admin's own segment permissions and script settings
+router.get('/my-settings', protectAdmin, async (req, res) => {
+  try {
+    const admin = await Admin.findById(req.admin._id).select('segmentPermissions scriptSettings');
+    
+    let segmentPermissions = admin.segmentPermissions;
+    if (segmentPermissions && typeof segmentPermissions.toObject === 'function') {
+      segmentPermissions = segmentPermissions.toObject();
+    }
+    
+    let scriptSettings = admin.scriptSettings;
+    if (scriptSettings && typeof scriptSettings.toObject === 'function') {
+      scriptSettings = scriptSettings.toObject();
+    }
+    
+    res.json({ segmentPermissions: segmentPermissions || {}, scriptSettings: scriptSettings || {} });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }

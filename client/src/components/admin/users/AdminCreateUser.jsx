@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { useAuth } from '../../../context/AuthContext';
 import axios from 'axios';
 
@@ -6,36 +6,6 @@ const AdminCreateUser = () => {
   const { admin } = useAuth();
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState({ type: '', text: '' });
-  const [expandedSegment, setExpandedSegment] = useState(null);
-  
-  const defaultSegmentSettings = {
-    enabled: false,
-    fraction: false,
-    maxExchangeLots: 100,
-    commissionType: 'PER_LOT',
-    commissionLot: 0,
-    maxLots: 50,
-    minLots: 1,
-    orderLots: 10,
-    exposureIntraday: 1,
-    exposureCarryForward: 1,
-    optionBuy: {
-      allowed: true,
-      fraction: false,
-      commissionType: 'PER_LOT',
-      commission: 0,
-      strikeSelection: 50,
-      maxExchangeLots: 100
-    },
-    optionSell: {
-      allowed: true,
-      fraction: false,
-      commissionType: 'PER_LOT',
-      commission: 0,
-      strikeSelection: 50,
-      maxExchangeLots: 100
-    }
-  };
   
   const [formData, setFormData] = useState({
     username: '', email: '', password: '', fullName: '', phone: '', initialBalance: 0,
@@ -48,74 +18,8 @@ const AdminCreateUser = () => {
     isDemo: false,
     intradaySquare: false,
     blockLimitAboveBelowHighLow: false,
-    blockLimitBetweenHighLow: false,
-    segmentPermissions: {
-      NSEFUT: { ...defaultSegmentSettings, enabled: true },
-      NSEOPT: { ...defaultSegmentSettings, enabled: true },
-      MCXFUT: { ...defaultSegmentSettings, enabled: true },
-      MCXOPT: { ...defaultSegmentSettings, enabled: true },
-      'NSE-EQ': { ...defaultSegmentSettings, enabled: true },
-      'BSE-FUT': { ...defaultSegmentSettings, enabled: false },
-      'BSE-OPT': { ...defaultSegmentSettings, enabled: false },
-      'CRYPTO': { ...defaultSegmentSettings, enabled: false }
-    },
-    scriptSettings: {},
-    selectedScriptSegment: null,
-    selectedScript: null,
-    scriptSearchTerm: '',
-    segmentSymbols: {}
+    blockLimitBetweenHighLow: false
   });
-
-  useEffect(() => {
-    fetchSegmentSymbols();
-  }, []);
-
-  const fetchSegmentSymbols = async () => {
-    try {
-      const { data } = await axios.get('/api/instruments/settings-data', {
-        headers: { Authorization: `Bearer ${admin.token}` }
-      });
-      
-      const segmentSymbols = {};
-      for (const [segKey, scripts] of Object.entries(data.scripts || {})) {
-        segmentSymbols[segKey] = scripts.map(s => s.baseSymbol);
-      }
-      
-      const newSegmentPermissions = { ...formData.segmentPermissions };
-      for (const seg of data.segments || []) {
-        if (!newSegmentPermissions[seg.id]) {
-          newSegmentPermissions[seg.id] = { ...defaultSegmentSettings, enabled: false };
-        }
-      }
-      
-      setFormData(prev => ({ 
-        ...prev, 
-        segmentSymbols,
-        marketSegments: data.segments || [],
-        marketScripts: data.scripts || {},
-        segmentPermissions: newSegmentPermissions
-      }));
-    } catch (error) {
-      console.error('Error fetching segment symbols:', error);
-    }
-  };
-
-  const handleSegmentClick = (segment) => {
-    setExpandedSegment(expandedSegment === segment ? null : segment);
-  };
-
-  const handleSegmentPermissionChange = (segment, field, value) => {
-    setFormData(prev => ({
-      ...prev,
-      segmentPermissions: {
-        ...prev.segmentPermissions,
-        [segment]: {
-          ...prev.segmentPermissions[segment],
-          [field]: value
-        }
-      }
-    }));
-  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -124,11 +28,10 @@ const AdminCreateUser = () => {
 
     try {
       const {
-        username, email, password, fullName, phone,
+        username, email, password, fullName, phone, initialBalance,
         ledgerBalanceClosePercent, profitTradeHoldSeconds, lossTradeHoldSeconds,
         isActivated, isReadOnly, isDemo, intradaySquare,
-        blockLimitAboveBelowHighLow, blockLimitBetweenHighLow,
-        segmentPermissions, scriptSettings
+        blockLimitAboveBelowHighLow, blockLimitBetweenHighLow
       } = formData;
 
       const payload = {
@@ -137,6 +40,7 @@ const AdminCreateUser = () => {
         password,
         fullName,
         phone,
+        initialBalance,
         ledgerBalanceClosePercent,
         profitTradeHoldSeconds,
         lossTradeHoldSeconds,
@@ -145,9 +49,7 @@ const AdminCreateUser = () => {
         isDemo,
         intradaySquare,
         blockLimitAboveBelowHighLow,
-        blockLimitBetweenHighLow,
-        segmentPermissions,
-        scriptSettings
+        blockLimitBetweenHighLow
       };
 
       const { data } = await axios.post('/api/admin/users', payload, {
@@ -157,14 +59,10 @@ const AdminCreateUser = () => {
       setMessage({ type: 'success', text: `User created successfully! User ID: ${data._id}` });
       setFormData(prev => ({
         ...prev,
-        username: '', email: '', password: '', fullName: '', phone: '',
+        username: '', email: '', password: '', fullName: '', phone: '', initialBalance: 0,
         isActivated: true, isReadOnly: false, isDemo: false, intradaySquare: false,
-        blockLimitAboveBelowHighLow: false, blockLimitBetweenHighLow: false,
-        scriptSettings: {},
-        selectedScriptSegment: null,
-        selectedScript: null
+        blockLimitAboveBelowHighLow: false, blockLimitBetweenHighLow: false
       }));
-      setExpandedSegment(null);
     } catch (error) {
       setMessage({ type: 'error', text: error.response?.data?.message || 'Failed to create user' });
     } finally {
@@ -345,144 +243,16 @@ const AdminCreateUser = () => {
           </div>
         </div>
 
-        {/* Segment Settings - Full Width */}
+        {/* Settings Inheritance Info - Full Width */}
         <div className="lg:col-span-2 bg-dark-800 rounded-lg p-6">
-          <h2 className="text-lg font-semibold text-purple-500 mb-4">Segment Settings</h2>
-          <p className="text-gray-400 text-sm mb-4">Click on a segment to configure its settings. Green = Enabled, Gray = Disabled</p>
-          
-          <div className="flex flex-wrap gap-3 mb-4">
-            {[...(formData.marketSegments?.length > 0 
-              ? formData.marketSegments.map(s => s.id)
-              : ['NSEFUT', 'NSEOPT', 'MCXFUT', 'MCXOPT', 'NSE-EQ', 'BSE-FUT', 'BSE-OPT']
-            ), 'CRYPTO'].filter((v, i, a) => a.indexOf(v) === i).map(segment => (
-              <button
-                key={segment}
-                type="button"
-                onClick={() => handleSegmentClick(segment)}
-                className={`px-4 py-2 rounded-lg font-medium transition-all ${
-                  expandedSegment === segment
-                    ? 'bg-purple-600 text-white ring-2 ring-purple-400'
-                    : formData.segmentPermissions[segment]?.enabled
-                      ? 'bg-green-600 text-white hover:bg-green-700'
-                      : 'bg-dark-700 text-gray-400 hover:bg-dark-600'
-                }`}
-              >
-                {formData.marketSegments?.find(s => s.id === segment)?.name || segment}
-              </button>
-            ))}
+          <div className="p-4 bg-blue-900/20 border border-blue-600/30 rounded-lg">
+            <h3 className="text-sm font-semibold text-blue-400 mb-2">Segment & Script Settings</h3>
+            <p className="text-xs text-gray-400">
+              Segment permissions and script settings are automatically inherited from your admin account settings. 
+              To change these defaults, go to <strong className="text-blue-300">My Settings</strong> in the admin panel. 
+              After creating a user, you can also customize their individual settings from the user management page.
+            </p>
           </div>
-
-          {/* Expanded Segment Settings */}
-          {expandedSegment && formData.segmentPermissions[expandedSegment] && (
-            <div className="bg-dark-700 rounded-lg p-4 border border-dark-600 animate-fadeIn">
-              <div className="flex items-center justify-between mb-4">
-                <h3 className="text-lg font-semibold text-blue-400">{expandedSegment} Settings</h3>
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => handleSegmentPermissionChange(expandedSegment, 'fraction', !formData.segmentPermissions[expandedSegment].fraction)}
-                    className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-colors ${
-                      formData.segmentPermissions[expandedSegment].fraction
-                        ? 'bg-purple-600 text-white'
-                        : 'bg-gray-600 text-white'
-                    }`}
-                  >
-                    {formData.segmentPermissions[expandedSegment].fraction ? 'Fraction On' : 'Fraction Off'}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleSegmentPermissionChange(expandedSegment, 'enabled', !formData.segmentPermissions[expandedSegment].enabled)}
-                    className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-colors ${
-                      formData.segmentPermissions[expandedSegment].enabled
-                        ? 'bg-green-600 text-white'
-                        : 'bg-red-600 text-white'
-                    }`}
-                  >
-                    {formData.segmentPermissions[expandedSegment].enabled ? 'Enabled' : 'Disabled'}
-                  </button>
-                </div>
-              </div>
-              
-              <h4 className="text-sm font-medium text-gray-300 mb-2">General Settings</h4>
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-                <div>
-                  <label className="block text-xs text-gray-400 mb-1">Max Exchange Lots</label>
-                  <input
-                    type="number"
-                    value={formData.segmentPermissions[expandedSegment].maxExchangeLots}
-                    onChange={(e) => handleSegmentPermissionChange(expandedSegment, 'maxExchangeLots', Number(e.target.value))}
-                    className="w-full bg-dark-800 border border-dark-600 rounded px-3 py-2 text-sm"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs text-gray-400 mb-1">Max Lots</label>
-                  <input
-                    type="number"
-                    value={formData.segmentPermissions[expandedSegment].maxLots}
-                    onChange={(e) => handleSegmentPermissionChange(expandedSegment, 'maxLots', Number(e.target.value))}
-                    className="w-full bg-dark-800 border border-dark-600 rounded px-3 py-2 text-sm"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs text-gray-400 mb-1">Commission Type</label>
-                  <select
-                    value={formData.segmentPermissions[expandedSegment].commissionType}
-                    onChange={(e) => handleSegmentPermissionChange(expandedSegment, 'commissionType', e.target.value)}
-                    className="w-full bg-dark-800 border border-dark-600 rounded px-3 py-2 text-sm"
-                  >
-                    <option value="PER_LOT">Per Lot</option>
-                    <option value="PER_TRADE">Per Trade</option>
-                    <option value="PER_CRORE">Per Crore</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-xs text-gray-400 mb-1">Commission (₹)</label>
-                  <input
-                    type="number"
-                    value={formData.segmentPermissions[expandedSegment].commissionLot}
-                    onChange={(e) => handleSegmentPermissionChange(expandedSegment, 'commissionLot', Number(e.target.value))}
-                    className="w-full bg-dark-800 border border-dark-600 rounded px-3 py-2 text-sm"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs text-gray-400 mb-1">Min Lots</label>
-                  <input
-                    type="number"
-                    value={formData.segmentPermissions[expandedSegment].minLots}
-                    onChange={(e) => handleSegmentPermissionChange(expandedSegment, 'minLots', Number(e.target.value))}
-                    className="w-full bg-dark-800 border border-dark-600 rounded px-3 py-2 text-sm"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs text-gray-400 mb-1">Order Lots</label>
-                  <input
-                    type="number"
-                    value={formData.segmentPermissions[expandedSegment].orderLots}
-                    onChange={(e) => handleSegmentPermissionChange(expandedSegment, 'orderLots', Number(e.target.value))}
-                    className="w-full bg-dark-800 border border-dark-600 rounded px-3 py-2 text-sm"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs text-gray-400 mb-1">Exposure Intraday</label>
-                  <input
-                    type="number"
-                    value={formData.segmentPermissions[expandedSegment].exposureIntraday}
-                    onChange={(e) => handleSegmentPermissionChange(expandedSegment, 'exposureIntraday', Number(e.target.value))}
-                    className="w-full bg-dark-800 border border-dark-600 rounded px-3 py-2 text-sm"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs text-gray-400 mb-1">Exposure Carry Forward</label>
-                  <input
-                    type="number"
-                    value={formData.segmentPermissions[expandedSegment].exposureCarryForward}
-                    onChange={(e) => handleSegmentPermissionChange(expandedSegment, 'exposureCarryForward', Number(e.target.value))}
-                    className="w-full bg-dark-800 border border-dark-600 rounded px-3 py-2 text-sm"
-                  />
-                </div>
-              </div>
-            </div>
-          )}
         </div>
 
         {/* Submit Button - Full Width */}

@@ -412,13 +412,7 @@ const userSchema = new mongoose.Schema({
         maxExchangeLots: { type: Number, default: 100 }
       }
     },
-    default: {
-      MCX: { enabled: true, maxExchangeLots: 100, commissionType: 'PER_LOT', commissionLot: 0, maxLots: 50, minLots: 1, orderLots: 10, exposureIntraday: 1, exposureCarryForward: 1, optionBuy: { allowed: true, commissionType: 'PER_LOT', commission: 0, strikeSelection: 50, maxExchangeLots: 100 }, optionSell: { allowed: true, commissionType: 'PER_LOT', commission: 0, strikeSelection: 50, maxExchangeLots: 100 } },
-      NSEINDEX: { enabled: true, maxExchangeLots: 100, commissionType: 'PER_LOT', commissionLot: 0, maxLots: 50, minLots: 1, orderLots: 10, exposureIntraday: 1, exposureCarryForward: 1, optionBuy: { allowed: true, commissionType: 'PER_LOT', commission: 0, strikeSelection: 50, maxExchangeLots: 100 }, optionSell: { allowed: true, commissionType: 'PER_LOT', commission: 0, strikeSelection: 50, maxExchangeLots: 100 } },
-      NSESTOCK: { enabled: true, maxExchangeLots: 100, commissionType: 'PER_LOT', commissionLot: 0, maxLots: 50, minLots: 1, orderLots: 10, exposureIntraday: 1, exposureCarryForward: 1, optionBuy: { allowed: true, commissionType: 'PER_LOT', commission: 0, strikeSelection: 50, maxExchangeLots: 100 }, optionSell: { allowed: true, commissionType: 'PER_LOT', commission: 0, strikeSelection: 50, maxExchangeLots: 100 } },
-      BSE: { enabled: false, maxExchangeLots: 100, commissionType: 'PER_LOT', commissionLot: 0, maxLots: 50, minLots: 1, orderLots: 10, exposureIntraday: 1, exposureCarryForward: 1, optionBuy: { allowed: true, commissionType: 'PER_LOT', commission: 0, strikeSelection: 50, maxExchangeLots: 100 }, optionSell: { allowed: true, commissionType: 'PER_LOT', commission: 0, strikeSelection: 50, maxExchangeLots: 100 } },
-      EQ: { enabled: true, maxExchangeLots: 100, commissionType: 'PER_LOT', commissionLot: 0, maxLots: 50, minLots: 1, orderLots: 10, exposureIntraday: 1, exposureCarryForward: 1, optionBuy: { allowed: true, commissionType: 'PER_LOT', commission: 0, strikeSelection: 50, maxExchangeLots: 100 }, optionSell: { allowed: true, commissionType: 'PER_LOT', commission: 0, strikeSelection: 50, maxExchangeLots: 100 } }
-    }
+    default: {} // Inherited from parent admin at creation time
   },
   
   // Global Script Settings - Override segment settings for specific scripts (applies to all segments)

@@ -100,11 +100,11 @@ const adminSchema = new mongoose.Schema({
   charges: {
     brokerage: {
       type: Number,
-      default: 20 // Per lot/trade
+      default: 0 // Per lot/trade - set by SuperAdmin
     },
     intradayLeverage: {
       type: Number,
-      default: 5
+      default: 1
     },
     deliveryLeverage: {
       type: Number,
@@ -132,11 +132,11 @@ const adminSchema = new mongoose.Schema({
     },
     minWithdrawal: {
       type: Number,
-      default: 100
+      default: 0
     },
     maxWithdrawal: {
       type: Number,
-      default: 100000
+      default: 0
     }
   },
   
@@ -170,13 +170,13 @@ const adminSchema = new mongoose.Schema({
   // SuperAdmin sets maxLeverageFromParent for Admin, Admin sets for Broker, etc.
   leverageSettings: {
     // Max leverage this admin can use/assign (set by parent admin)
-    maxLeverageFromParent: { type: Number, default: 2000 }, // For SuperAdmin, this is unlimited (2000)
+    maxLeverageFromParent: { type: Number, default: 1 }, // Set by SuperAdmin
     // Intraday (MIS) leverage - single value
-    intradayLeverage: { type: Number, default: 10 },
+    intradayLeverage: { type: Number, default: 1 },
     // Carry Forward (NRML) leverage - single value
-    carryForwardLeverage: { type: Number, default: 5 },
+    carryForwardLeverage: { type: Number, default: 1 },
     // Legacy - kept for backward compatibility
-    maxLeverage: { type: Number, default: 10 }
+    maxLeverage: { type: Number, default: 1 }
   },
   
   // Trading Settings
@@ -205,17 +205,17 @@ const adminSchema = new mongoose.Schema({
     // Per Lot caps
     perLot: {
       min: { type: Number, default: 0 },      // Minimum brokerage per lot
-      max: { type: Number, default: 1000 }    // Maximum brokerage per lot
+      max: { type: Number, default: 0 }       // Maximum brokerage per lot - set by SuperAdmin
     },
     // Per Crore caps
     perCrore: {
       min: { type: Number, default: 0 },      // Minimum brokerage per crore
-      max: { type: Number, default: 10000 }   // Maximum brokerage per crore
+      max: { type: Number, default: 0 }       // Maximum brokerage per crore - set by SuperAdmin
     },
     // Per Trade caps
     perTrade: {
       min: { type: Number, default: 0 },      // Minimum brokerage per trade
-      max: { type: Number, default: 500 }     // Maximum brokerage per trade
+      max: { type: Number, default: 0 }       // Maximum brokerage per trade - set by SuperAdmin
     }
   },
   
@@ -410,14 +410,86 @@ const adminSchema = new mongoose.Schema({
   // Default settings applied from parent (locked values if no permission)
   defaultSettings: {
     brokerage: {
-      perLot: { type: Number, default: 20 },
-      perCrore: { type: Number, default: 100 },
-      perTrade: { type: Number, default: 10 }
+      perLot: { type: Number, default: 0 },
+      perCrore: { type: Number, default: 0 },
+      perTrade: { type: Number, default: 0 }
     },
     leverage: {
-      intraday: { type: Number, default: 10 },
-      carryForward: { type: Number, default: 5 }
+      intraday: { type: Number, default: 1 },
+      carryForward: { type: Number, default: 1 }
     }
+  },
+  
+  // Segment Permissions - Admin sets these, they cascade to all users under this admin
+  // SuperAdmin sets defaults, Admin/Broker/SubBroker can override for their users
+  segmentPermissions: {
+    type: Map,
+    of: {
+      enabled: { type: Boolean, default: false },
+      maxExchangeLots: { type: Number, default: 100 },
+      commissionType: { type: String, enum: ['PER_LOT', 'PER_TRADE', 'PER_CRORE'], default: 'PER_LOT' },
+      commissionLot: { type: Number, default: 0 },
+      maxLots: { type: Number, default: 50 },
+      minLots: { type: Number, default: 1 },
+      orderLots: { type: Number, default: 10 },
+      exposureIntraday: { type: Number, default: 1 },
+      exposureCarryForward: { type: Number, default: 1 },
+      optionBuy: {
+        allowed: { type: Boolean, default: true },
+        commissionType: { type: String, enum: ['PER_LOT', 'PER_TRADE', 'PER_CRORE'], default: 'PER_LOT' },
+        commission: { type: Number, default: 0 },
+        strikeSelection: { type: Number, default: 50 },
+        maxExchangeLots: { type: Number, default: 100 }
+      },
+      optionSell: {
+        allowed: { type: Boolean, default: true },
+        commissionType: { type: String, enum: ['PER_LOT', 'PER_TRADE', 'PER_CRORE'], default: 'PER_LOT' },
+        commission: { type: Number, default: 0 },
+        strikeSelection: { type: Number, default: 50 },
+        maxExchangeLots: { type: Number, default: 100 }
+      }
+    },
+    default: {}
+  },
+  
+  // Script Settings - Admin sets these, they cascade to all users under this admin
+  // Override segment settings for specific scripts (e.g., GOLD, NIFTY, etc.)
+  scriptSettings: {
+    type: Map,
+    of: {
+      lotSettings: {
+        maxLots: { type: Number, default: 50 },
+        minLots: { type: Number, default: 1 },
+        perOrderLots: { type: Number, default: 10 }
+      },
+      quantitySettings: {
+        maxQuantity: { type: Number, default: 1000 },
+        minQuantity: { type: Number, default: 1 },
+        perOrderQuantity: { type: Number, default: 100 }
+      },
+      fixedMargin: {
+        intradayFuture: { type: Number, default: 0 },
+        carryFuture: { type: Number, default: 0 },
+        optionBuyIntraday: { type: Number, default: 0 },
+        optionBuyCarry: { type: Number, default: 0 },
+        optionSellIntraday: { type: Number, default: 0 },
+        optionSellCarry: { type: Number, default: 0 }
+      },
+      brokerage: {
+        intradayFuture: { type: Number, default: 0 },
+        carryFuture: { type: Number, default: 0 },
+        optionBuyIntraday: { type: Number, default: 0 },
+        optionBuyCarry: { type: Number, default: 0 },
+        optionSellIntraday: { type: Number, default: 0 },
+        optionSellCarry: { type: Number, default: 0 }
+      },
+      spread: {
+        buy: { type: Number, default: 0 },
+        sell: { type: Number, default: 0 }
+      },
+      blocked: { type: Boolean, default: false }
+    },
+    default: {}
   }
 }, { timestamps: true });
 

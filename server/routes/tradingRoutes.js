@@ -2,25 +2,9 @@ import express from 'express';
 import TradingService from '../services/tradingService.js';
 import User from '../models/User.js';
 import Admin from '../models/Admin.js';
-import jwt from 'jsonwebtoken';
+import { protectUser as protect, protectAdmin } from '../middleware/auth.js';
 
 const router = express.Router();
-
-// Auth middleware
-const protect = async (req, res, next) => {
-  try {
-    const token = req.headers.authorization?.split(' ')[1];
-    if (!token) return res.status(401).json({ message: 'Not authorized' });
-
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    req.user = await User.findById(decoded.id).select('-password');
-    if (!req.user) return res.status(401).json({ message: 'User not found' });
-    
-    next();
-  } catch (error) {
-    res.status(401).json({ message: 'Not authorized' });
-  }
-};
 
 // Place order
 router.post('/order', protect, async (req, res) => {
@@ -204,13 +188,11 @@ router.post('/margin-preview', protect, async (req, res) => {
       marginSource = 'default_calculated';
     }
     
-    // Apply leverage to margin (divide margin by leverage)
-    // This applies to all margin sources - fixed, exposure, or calculated
-    if (leverage > 1 && marginSource !== 'default_calculated') {
-      // default_calculated already has leverage applied in calculateMargin
-      marginRequired = marginRequired / leverage;
-      console.log('Applied leverage to margin:', { leverage, marginRequired });
-    }
+    // NOTE: Do NOT apply leverage again here.
+    // - For 'default_calculated': leverage is already applied inside calculateMargin()
+    // - For 'script_fixed': fixed margin is absolute (admin sets it per lot, no leverage division)
+    // - For 'segment_exposure': exposure IS the leverage (tradeValue / exposure = margin)
+    // Applying leverage again would double-divide and show incorrect margin
     
     // Calculate brokerage from user settings
     const brokerage = TradeService.calculateUserBrokerage(segmentSettings, scriptSettings, req.body, lots);
@@ -218,10 +200,25 @@ router.post('/margin-preview', protect, async (req, res) => {
     // Calculate spread from user settings
     const spread = TradeService.calculateUserSpread(scriptSettings, side);
     
-    // Use tradingBalance for trading (not cashBalance which is main wallet)
-    const tradingBalance = req.user.wallet?.tradingBalance || 0;
-    const blockedMargin = req.user.wallet?.usedMargin || req.user.wallet?.blocked || 0;
-    const availableBalance = tradingBalance - blockedMargin;
+    // Use correct wallet based on trade type (triple wallet system)
+    const isCrypto = segment === 'CRYPTO' || req.body.exchange === 'BINANCE';
+    const isMCX = segment === 'MCX' || segment === 'MCXFUT' || segment === 'MCXOPT' || 
+                  segment === 'COMMODITY' || req.body.exchange === 'MCX';
+    
+    let availableBalance, tradingBalance, usedMarginDisplay;
+    if (isCrypto) {
+      tradingBalance = req.user.cryptoWallet?.balance || 0;
+      usedMarginDisplay = 0;
+      availableBalance = tradingBalance;
+    } else if (isMCX) {
+      tradingBalance = req.user.mcxWallet?.balance || 0;
+      usedMarginDisplay = req.user.mcxWallet?.usedMargin || 0;
+      availableBalance = tradingBalance - usedMarginDisplay;
+    } else {
+      tradingBalance = req.user.wallet?.tradingBalance || req.user.wallet?.cashBalance || 0;
+      usedMarginDisplay = req.user.wallet?.usedMargin || req.user.wallet?.blocked || 0;
+      availableBalance = tradingBalance - usedMarginDisplay;
+    }
     
     // Get lot limits from settings
     const maxLots = scriptSettings?.lotSettings?.maxLots || segmentSettings?.maxLots || 50;
@@ -234,12 +231,14 @@ router.post('/margin-preview', protect, async (req, res) => {
     const commission = segmentSettings?.commissionLot || segmentSettings?.commission || 0;
     const perOrderLots = scriptSettings?.lotSettings?.orderLots || segmentSettings?.orderLots || maxLots;
     
+    const totalRequired = marginRequired + brokerage;
+    
     res.json({
       marginRequired: Math.round(marginRequired * 100) / 100,
       tradeValue: Math.round(tradeValue * 100) / 100,
       effectiveMargin: marginCalc.effectiveMargin,
       leverage: marginCalc.leverage,
-      canPlace: lotsValid && (marginRequired + brokerage) <= availableBalance,
+      canPlace: lotsValid && totalRequired <= availableBalance,
       availableBalance,
       tradingBalance,
       usedFixedMargin,
@@ -252,8 +251,7 @@ router.post('/margin-preview', protect, async (req, res) => {
       perOrderLots,
       lotsValid,
       lotsError: !lotsValid ? `Lots must be between ${minLots} and ${maxLots}` : null,
-      shortfall: (marginRequired + brokerage) > availableBalance ? (marginRequired + brokerage) - availableBalance : 0,
-      // Include segment settings for info display
+      shortfall: totalRequired > availableBalance ? totalRequired - availableBalance : 0,
       exposureIntraday: segmentSettings?.exposureIntraday || null,
       exposureCarryForward: segmentSettings?.exposureCarryForward || null
     });
@@ -398,22 +396,6 @@ router.get('/lot-size/:symbol', (req, res) => {
 });
 
 // ==================== ADMIN CHARGE SETTINGS ====================
-
-// Admin auth middleware
-const protectAdmin = async (req, res, next) => {
-  try {
-    const token = req.headers.authorization?.split(' ')[1];
-    if (!token) return res.status(401).json({ message: 'Not authorized' });
-
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    req.admin = await Admin.findById(decoded.id).select('-password');
-    if (!req.admin) return res.status(401).json({ message: 'Admin not found' });
-    
-    next();
-  } catch (error) {
-    res.status(401).json({ message: 'Not authorized' });
-  }
-};
 
 // Get charge settings
 router.get('/admin/charge-settings', protectAdmin, async (req, res) => {

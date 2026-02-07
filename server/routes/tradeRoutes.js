@@ -3,10 +3,11 @@ import Trade from '../models/Trade.js';
 import MarketState from '../models/MarketState.js';
 import Charges from '../models/Charges.js';
 import TradeService from '../services/tradeService.js';
-import jwt from 'jsonwebtoken';
+import TradingService from '../services/tradingService.js';
 import User from '../models/User.js';
 import Admin from '../models/Admin.js';
 import WalletLedger from '../models/WalletLedger.js';
+import { protectUser, protectAdmin, superAdminOnly } from '../middleware/auth.js';
 
 const router = express.Router();
 
@@ -14,51 +15,6 @@ const router = express.Router();
 let io = null;
 export const setTradeSocketIO = (socketIO) => {
   io = socketIO;
-};
-
-// Auth middleware for users
-const protectUser = async (req, res, next) => {
-  try {
-    const token = req.headers.authorization?.split(' ')[1];
-    if (!token) return res.status(401).json({ message: 'Not authorized' });
-
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    req.user = await User.findById(decoded.id).select('-password');
-    
-    if (!req.user) return res.status(401).json({ message: 'User not found' });
-    if (!req.user.isActive) return res.status(401).json({ message: 'Account is deactivated' });
-    if (req.user.tradingStatus === 'BLOCKED') return res.status(401).json({ message: 'Trading is blocked' });
-    
-    next();
-  } catch (error) {
-    res.status(401).json({ message: 'Not authorized' });
-  }
-};
-
-// Auth middleware for admins
-const protectAdmin = async (req, res, next) => {
-  try {
-    const token = req.headers.authorization?.split(' ')[1];
-    if (!token) return res.status(401).json({ message: 'Not authorized' });
-
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    req.admin = await Admin.findById(decoded.id).select('-password');
-    
-    if (!req.admin) return res.status(401).json({ message: 'Admin not found' });
-    if (req.admin.status !== 'ACTIVE') return res.status(401).json({ message: 'Account suspended' });
-    
-    next();
-  } catch (error) {
-    res.status(401).json({ message: 'Not authorized' });
-  }
-};
-
-// Super Admin only
-const superAdminOnly = (req, res, next) => {
-  if (req.admin.role !== 'SUPER_ADMIN') {
-    return res.status(403).json({ message: 'Super Admin access required' });
-  }
-  next();
 };
 
 // ==================== MARKET STATE ROUTES ====================
@@ -249,25 +205,39 @@ router.get('/history', protectUser, async (req, res) => {
 // Get margin preview
 router.post('/margin-preview', protectUser, async (req, res) => {
   try {
-    const { segment, instrumentType, productType, side, quantity, price, lotSize = 1 } = req.body;
+    const { segment, instrumentType, productType, side, quantity, price, lotSize = 1, exchange } = req.body;
     
     const admin = await Admin.findOne({ adminCode: req.user.adminCode });
     
+    // Option buy = no leverage (full premium required as per SEBI)
+    const isOptionBuy = instrumentType === 'OPTIONS' && side === 'BUY';
     let leverage = 1;
-    if (productType === 'MIS') {
+    if (!isOptionBuy && productType === 'MIS') {
       if (segment === 'EQUITY') {
         leverage = admin?.charges?.intradayLeverage || 5;
       } else if (instrumentType === 'FUTURES') {
         leverage = admin?.charges?.futuresLeverage || 1;
       } else if (instrumentType === 'OPTIONS') {
-        leverage = side === 'BUY' 
-          ? admin?.charges?.optionBuyLeverage || 1
-          : admin?.charges?.optionSellLeverage || 1;
+        leverage = admin?.charges?.optionSellLeverage || 1;
       }
     }
     
     const requiredMargin = TradeService.calculateMargin(price, quantity, lotSize, leverage, productType);
-    const availableMargin = req.user.wallet.cashBalance - req.user.wallet.usedMargin + req.user.wallet.collateralValue;
+    
+    // Use correct wallet based on trade type (triple wallet system)
+    const isCrypto = segment === 'CRYPTO' || exchange === 'BINANCE';
+    const isMCX = segment === 'MCX' || segment === 'MCXFUT' || segment === 'MCXOPT' || 
+                  segment === 'COMMODITY' || exchange === 'MCX';
+    
+    let availableMargin;
+    if (isCrypto) {
+      availableMargin = req.user.cryptoWallet?.balance || 0;
+    } else if (isMCX) {
+      availableMargin = (req.user.mcxWallet?.balance || 0) - (req.user.mcxWallet?.usedMargin || 0);
+    } else {
+      const walletBalance = req.user.wallet?.tradingBalance || req.user.wallet?.cashBalance || 0;
+      availableMargin = walletBalance - (req.user.wallet?.usedMargin || 0) + (req.user.wallet?.collateralValue || 0);
+    }
     
     res.json({
       requiredMargin,
@@ -329,10 +299,10 @@ router.get('/admin/all-trades', protectAdmin, async (req, res) => {
   }
 });
 
-// Admin create trade for a user
+// Admin create trade for a user - uses TradingService.placeOrder for proper validation
 router.post('/admin/create-trade', protectAdmin, async (req, res) => {
   try {
-    const { userId, symbol, instrumentToken, segment, side, productType, quantity, entryPrice, tradeDate, tradeTime } = req.body;
+    const { userId, symbol, instrumentToken, segment, side, productType, quantity, entryPrice, tradeDate, tradeTime, exchange, instrumentType, lotSize, lots, category } = req.body;
     
     // Find the user
     let userQuery = { _id: userId };
@@ -343,97 +313,54 @@ router.post('/admin/create-trade', protectAdmin, async (req, res) => {
     const user = await User.findOne(userQuery);
     if (!user) return res.status(404).json({ message: 'User not found or not under your management' });
     
-    // Get admin charges
-    const adminCharges = req.admin.charges || {};
-    const brokerage = adminCharges.brokerage || 20;
-    
-    // Calculate trade value
-    const tradeValue = quantity * entryPrice;
-    const lotSize = 1; // Default lot size
-    
-    // Create trade timestamp
-    let tradeTimestamp = new Date();
-    if (tradeDate) {
-      const [year, month, day] = tradeDate.split('-');
-      const [hours, minutes] = (tradeTime || '09:15').split(':');
-      tradeTimestamp = new Date(year, month - 1, day, hours, minutes);
-    }
-    
-    // Normalize segment to valid schema enums
-    const allowedSegments = ['EQUITY', 'FNO', 'MCX', 'COMMODITY', 'CRYPTO', 'CURRENCY'];
+    // Normalize segment
+    const allowedSegments = ['EQUITY', 'FNO', 'MCX', 'COMMODITY', 'CRYPTO', 'CURRENCY', 'NSEFUT', 'NSEOPT', 'MCXFUT', 'MCXOPT', 'NSE-EQ', 'BSE-FUT', 'BSE-OPT', 'CDS'];
     const segRaw = (segment || 'EQUITY').toUpperCase();
     const segMap = {
-      'NSE F&O': 'FNO',
-      'NFO': 'FNO',
-      'NSEFO': 'FNO',
-      'NSE_FO': 'FNO',
-      'F&O': 'FNO',
-      'BSE F&O': 'FNO',
-      'BFO': 'FNO',
-      'BSEFO': 'FNO',
-      'BSE_FO': 'FNO',
-      'NSE': 'EQUITY'
+      'NSE F&O': 'FNO', 'NFO': 'FNO', 'NSEFO': 'FNO', 'NSE_FO': 'FNO', 'F&O': 'FNO',
+      'BSE F&O': 'FNO', 'BFO': 'FNO', 'BSEFO': 'FNO', 'BSE_FO': 'FNO', 'NSE': 'EQUITY'
     };
     const segNormalized = segMap[segRaw] || (allowedSegments.includes(segRaw) ? segRaw : 'EQUITY');
-
-    // Determine exchange and instrumentType from normalized segment
-    let exchange = 'NSE';
-    let instrumentType = 'STOCK';
     
-    if (segNormalized === 'EQUITY') {
-      exchange = 'NSE';
-      instrumentType = 'STOCK';
-    } else if (segNormalized === 'FNO') {
-      exchange = 'NFO';
-      instrumentType = 'FUTURES';
-    } else if (segNormalized === 'MCX') {
-      exchange = 'MCX';
-      instrumentType = 'FUTURES';
-    } else if (segNormalized === 'COMMODITY') {
-      exchange = 'MCX';
-      instrumentType = 'FUTURES';
-    } else if (segNormalized === 'CURRENCY') {
-      exchange = 'CDS';
-      instrumentType = 'CURRENCY';
-    } else if (segNormalized === 'CRYPTO') {
-      exchange = 'CRYPTO';
-      instrumentType = 'CRYPTO';
+    // Determine exchange and instrumentType
+    let finalExchange = exchange || 'NSE';
+    let finalInstrumentType = instrumentType || 'STOCK';
+    if (!exchange || !instrumentType) {
+      if (segNormalized === 'FNO' || segNormalized === 'NSEFUT') { finalExchange = 'NFO'; finalInstrumentType = 'FUTURES'; }
+      else if (segNormalized === 'NSEOPT') { finalExchange = 'NFO'; finalInstrumentType = 'OPTIONS'; }
+      else if (segNormalized === 'MCX' || segNormalized === 'COMMODITY' || segNormalized === 'MCXFUT') { finalExchange = 'MCX'; finalInstrumentType = 'FUTURES'; }
+      else if (segNormalized === 'MCXOPT') { finalExchange = 'MCX'; finalInstrumentType = 'OPTIONS'; }
+      else if (segNormalized === 'CURRENCY' || segNormalized === 'CDS') { finalExchange = 'CDS'; finalInstrumentType = 'CURRENCY'; }
+      else if (segNormalized === 'CRYPTO') { finalExchange = 'CRYPTO'; finalInstrumentType = 'CRYPTO'; }
     }
     
-    // Create the trade
-    const trade = await Trade.create({
-      user: user._id,
-      userId: user.userId,
-      adminCode: user.adminCode,
+    // Use TradingService.placeOrder for proper margin, brokerage, and lot validation
+    const result = await TradingService.placeOrder(user._id, {
       symbol,
       token: instrumentToken || symbol,
       segment: segNormalized,
-      exchange,
-      instrumentType,
+      exchange: finalExchange,
+      instrumentType: finalInstrumentType,
       side,
-      productType: productType || 'INTRADAY',
+      productType: productType || 'MIS',
       orderType: 'MARKET',
-      quantity,
-      lotSize,
-      entryPrice,
-      currentPrice: entryPrice,
-      status: 'OPEN',
-      charges: {
-        brokerage,
-        stt: 0,
-        transactionCharges: 0,
-        gst: 0,
-        sebiCharges: 0,
-        stampDuty: 0,
-        total: brokerage
-      },
-      unrealizedPnL: 0,
-      openedAt: tradeTimestamp,
-      createdBy: 'ADMIN',
-      adminCreated: true
+      quantity: quantity || (lots || 1) * (lotSize || 1),
+      price: entryPrice,
+      lotSize: lotSize || undefined,
+      lots: lots || undefined,
+      category: category || undefined,
+      leverage: 1
     });
     
-    res.status(201).json(trade);
+    // Update trade timestamp if custom date provided
+    if (tradeDate && result.trade) {
+      const [year, month, day] = tradeDate.split('-');
+      const [hours, minutes] = (tradeTime || '09:15').split(':');
+      result.trade.openedAt = new Date(year, month - 1, day, hours, minutes);
+      await result.trade.save();
+    }
+    
+    res.status(201).json(result.trade || result);
   } catch (error) {
     res.status(400).json({ message: error.message });
   }

@@ -225,6 +225,62 @@ router.post('/admins', protectAdmin, async (req, res) => {
     // Build hierarchy path based on actual parent
     const hierarchyPath = [...(actualParent.hierarchyPath || []), actualParent._id];
     
+    // Get system default settings for this role
+    const systemSettings = await SystemSettings.getSettings();
+    let roleDefaults = {};
+    
+    switch (roleToCreate) {
+      case 'ADMIN':
+        roleDefaults = systemSettings.adminDefaults || {};
+        break;
+      case 'BROKER':
+        roleDefaults = systemSettings.brokerDefaults || {};
+        break;
+      case 'SUB_BROKER':
+        roleDefaults = systemSettings.subBrokerDefaults || {};
+        break;
+    }
+    
+    // Merge provided charges with system defaults (provided values take precedence)
+    const mergedCharges = {
+      brokerage: charges?.brokerage ?? roleDefaults.brokerage?.perLot ?? 0,
+      intradayLeverage: charges?.intradayLeverage ?? roleDefaults.leverage?.intraday ?? 1,
+      deliveryLeverage: charges?.deliveryLeverage ?? roleDefaults.leverage?.carryForward ?? 1,
+      withdrawalFee: charges?.withdrawalFee ?? roleDefaults.charges?.withdrawalFee ?? 0,
+      ...charges
+    };
+    
+    // Apply default settings from system
+    const defaultSettings = {
+      brokerage: {
+        perLot: roleDefaults.brokerage?.perLot ?? 0,
+        perCrore: roleDefaults.brokerage?.perCrore ?? 0,
+        perTrade: roleDefaults.brokerage?.perTrade ?? 0
+      },
+      leverage: {
+        intraday: roleDefaults.leverage?.intraday ?? 1,
+        carryForward: roleDefaults.leverage?.carryForward ?? 1
+      }
+    };
+    
+    // Apply default permissions from system
+    const defaultPermissions = roleDefaults.permissions || {
+      canChangeBrokerage: false,
+      canChangeCharges: false,
+      canChangeLeverage: false,
+      canChangeLotSettings: false,
+      canChangeTradingSettings: false,
+      canCreateUsers: true,
+      canManageFunds: true
+    };
+    
+    // Apply default leverage settings
+    const leverageSettings = {
+      maxLeverageFromParent: roleDefaults.leverage?.intraday ?? 1,
+      intradayLeverage: roleDefaults.leverage?.intraday ?? 1,
+      carryForwardLeverage: roleDefaults.leverage?.carryForward ?? 1
+    };
+    
     const admin = await Admin.create({
       role: roleToCreate,
       username,
@@ -233,7 +289,10 @@ router.post('/admins', protectAdmin, async (req, res) => {
       phone,
       password,
       pin: normalizedPin,
-      charges: charges || {},
+      charges: mergedCharges,
+      defaultSettings,
+      permissions: defaultPermissions,
+      leverageSettings,
       createdBy: req.admin._id,
       parentId: actualParent._id,
       hierarchyPath,
@@ -629,6 +688,95 @@ router.put('/admins/:id/default-settings', protectAdmin, async (req, res) => {
   }
 });
 
+// Update admin's segment permissions and script settings (parent admin or SuperAdmin)
+router.put('/admins/:id/segment-settings', protectAdmin, async (req, res) => {
+  try {
+    const { segmentPermissions, scriptSettings } = req.body;
+    const parentAdmin = req.admin;
+    
+    const childAdmin = await Admin.findById(req.params.id);
+    if (!childAdmin) return res.status(404).json({ message: 'Admin not found' });
+    
+    // Verify hierarchy - parent must be able to manage child
+    if (parentAdmin.role !== 'SUPER_ADMIN') {
+      if (!parentAdmin.canManage(childAdmin.role)) {
+        return res.status(403).json({ message: 'You cannot manage this admin level' });
+      }
+      if (childAdmin.parentId && childAdmin.parentId.toString() !== parentAdmin._id.toString()) {
+        const isInHierarchy = childAdmin.hierarchyPath?.some(id => id.toString() === parentAdmin._id.toString());
+        if (!isInHierarchy) {
+          return res.status(403).json({ message: 'This admin is not under your management' });
+        }
+      }
+    }
+    
+    const updateFields = {};
+    if (segmentPermissions && typeof segmentPermissions === 'object') {
+      updateFields.segmentPermissions = segmentPermissions;
+    }
+    if (scriptSettings && typeof scriptSettings === 'object') {
+      updateFields.scriptSettings = scriptSettings;
+    }
+    
+    if (Object.keys(updateFields).length === 0) {
+      return res.status(400).json({ message: 'No settings provided to update' });
+    }
+    
+    await Admin.updateOne({ _id: childAdmin._id }, { $set: updateFields });
+    
+    const updatedAdmin = await Admin.findById(childAdmin._id).select('-password');
+    res.json({ 
+      message: 'Admin segment/script settings updated successfully',
+      admin: {
+        _id: updatedAdmin._id,
+        name: updatedAdmin.name,
+        adminCode: updatedAdmin.adminCode,
+        segmentPermissions: updatedAdmin.segmentPermissions,
+        scriptSettings: updatedAdmin.scriptSettings
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Get admin's segment permissions and script settings
+router.get('/admins/:id/segment-settings', protectAdmin, async (req, res) => {
+  try {
+    const targetAdmin = await Admin.findById(req.params.id).select('segmentPermissions scriptSettings name adminCode role');
+    if (!targetAdmin) return res.status(404).json({ message: 'Admin not found' });
+    
+    // Verify access - SuperAdmin can see all, others only their children
+    if (req.admin.role !== 'SUPER_ADMIN') {
+      const isInHierarchy = targetAdmin.hierarchyPath?.some(id => id.toString() === req.admin._id.toString());
+      if (targetAdmin.parentId?.toString() !== req.admin._id.toString() && !isInHierarchy) {
+        return res.status(403).json({ message: 'Access denied' });
+      }
+    }
+    
+    // Convert Maps to plain objects
+    const segmentPermissions = targetAdmin.segmentPermissions instanceof Map
+      ? Object.fromEntries(targetAdmin.segmentPermissions)
+      : (targetAdmin.segmentPermissions || {});
+    const scriptSettings = targetAdmin.scriptSettings instanceof Map
+      ? Object.fromEntries(targetAdmin.scriptSettings)
+      : (targetAdmin.scriptSettings || {});
+    
+    res.json({
+      admin: {
+        _id: targetAdmin._id,
+        name: targetAdmin.name,
+        adminCode: targetAdmin.adminCode,
+        role: targetAdmin.role
+      },
+      segmentPermissions,
+      scriptSettings
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
 // Get admin permissions and default settings
 router.get('/admins/:id/permissions', protectAdmin, async (req, res) => {
   try {
@@ -665,9 +813,7 @@ router.post('/create-user', protectAdmin, superAdminOnly, async (req, res) => {
       // New settings
       marginType, ledgerBalanceClosePercent, profitTradeHoldSeconds, lossTradeHoldSeconds,
       // Toggle settings
-      isActivated, isReadOnly, isDemo, intradaySquare, blockLimitAboveBelowHighLow, blockLimitBetweenHighLow,
-      // Segment permissions
-      allowedSegments, segmentPermissions, scriptSettings
+      isActivated, isReadOnly, isDemo, intradaySquare, blockLimitAboveBelowHighLow, blockLimitBetweenHighLow
     } = req.body;
     
     if (!username || !email || !password) {
@@ -691,7 +837,48 @@ router.post('/create-user', protectAdmin, superAdminOnly, async (req, res) => {
       }
     }
     
-    // Create user with all settings
+    // Inherit segmentPermissions and scriptSettings from the target admin
+    // Settings cascade: SuperAdmin defaults → Admin → Broker → SubBroker → User
+    // If admin has no settings, fallback to SystemSettings segmentDefaults
+    let inheritedSegmentPermissions = {};
+    let inheritedScriptSettings = {};
+    
+    if (targetAdmin) {
+      // Get admin's segment permissions (convert Map to plain object)
+      const adminSegPerms = targetAdmin.segmentPermissions;
+      if (adminSegPerms && ((adminSegPerms instanceof Map && adminSegPerms.size > 0) || Object.keys(adminSegPerms).length > 0)) {
+        inheritedSegmentPermissions = adminSegPerms instanceof Map 
+          ? Object.fromEntries(adminSegPerms) 
+          : adminSegPerms;
+      }
+      
+      // Get admin's script settings
+      const adminScriptSettings = targetAdmin.scriptSettings;
+      if (adminScriptSettings && ((adminScriptSettings instanceof Map && adminScriptSettings.size > 0) || Object.keys(adminScriptSettings).length > 0)) {
+        inheritedScriptSettings = adminScriptSettings instanceof Map 
+          ? Object.fromEntries(adminScriptSettings) 
+          : adminScriptSettings;
+      }
+    }
+    
+    // Fallback to SystemSettings adminSegmentDefaults if no segment permissions inherited
+    if (Object.keys(inheritedSegmentPermissions).length === 0) {
+      try {
+        const sysSettings = await SystemSettings.getSettings();
+        const asd = sysSettings?.adminSegmentDefaults;
+        if (asd && ((asd instanceof Map && asd.size > 0) || Object.keys(asd).length > 0)) {
+          inheritedSegmentPermissions = asd instanceof Map ? Object.fromEntries(asd) : { ...asd };
+        }
+        const assd = sysSettings?.adminScriptDefaults;
+        if (assd && ((assd instanceof Map && assd.size > 0) || Object.keys(assd).length > 0)) {
+          inheritedScriptSettings = assd instanceof Map ? Object.fromEntries(assd) : { ...assd };
+        }
+      } catch (e) {
+        console.error('Failed to load SystemSettings fallback:', e.message);
+      }
+    }
+    
+    // Create user - segment/script settings inherited from admin (not set in create form)
     const user = await User.create({
       username,
       email,
@@ -706,7 +893,6 @@ router.post('/create-user', protectAdmin, superAdminOnly, async (req, res) => {
         blocked: 0
       },
       isActive: isActivated !== false,
-      // New settings
       settings: {
         marginType: marginType || 'exposure',
         ledgerBalanceClosePercent: ledgerBalanceClosePercent || 90,
@@ -719,16 +905,9 @@ router.post('/create-user', protectAdmin, superAdminOnly, async (req, res) => {
         blockLimitAboveBelowHighLow: blockLimitAboveBelowHighLow || false,
         blockLimitBetweenHighLow: blockLimitBetweenHighLow || false
       },
-      // Segment permissions with detailed settings
-      segmentPermissions: segmentPermissions || {
-        MCX: { enabled: true, maxExchangeLots: 100, commissionType: 'PER_LOT', commissionLot: 0, maxLots: 50, minLots: 1, orderLots: 10, exposureIntraday: 1, exposureCarryForward: 1, optionBuy: { allowed: true, commissionType: 'PER_LOT', commission: 0, strikeSelection: 50, maxExchangeLots: 100 }, optionSell: { allowed: true, commissionType: 'PER_LOT', commission: 0, strikeSelection: 50, maxExchangeLots: 100 } },
-        NSEINDEX: { enabled: true, maxExchangeLots: 100, commissionType: 'PER_LOT', commissionLot: 0, maxLots: 50, minLots: 1, orderLots: 10, exposureIntraday: 1, exposureCarryForward: 1, optionBuy: { allowed: true, commissionType: 'PER_LOT', commission: 0, strikeSelection: 50, maxExchangeLots: 100 }, optionSell: { allowed: true, commissionType: 'PER_LOT', commission: 0, strikeSelection: 50, maxExchangeLots: 100 } },
-        NSESTOCK: { enabled: true, maxExchangeLots: 100, commissionType: 'PER_LOT', commissionLot: 0, maxLots: 50, minLots: 1, orderLots: 10, exposureIntraday: 1, exposureCarryForward: 1, optionBuy: { allowed: true, commissionType: 'PER_LOT', commission: 0, strikeSelection: 50, maxExchangeLots: 100 }, optionSell: { allowed: true, commissionType: 'PER_LOT', commission: 0, strikeSelection: 50, maxExchangeLots: 100 } },
-        BSE: { enabled: false, maxExchangeLots: 100, commissionType: 'PER_LOT', commissionLot: 0, maxLots: 50, minLots: 1, orderLots: 10, exposureIntraday: 1, exposureCarryForward: 1, optionBuy: { allowed: true, commissionType: 'PER_LOT', commission: 0, strikeSelection: 50, maxExchangeLots: 100 }, optionSell: { allowed: true, commissionType: 'PER_LOT', commission: 0, strikeSelection: 50, maxExchangeLots: 100 } },
-        EQ: { enabled: true, maxExchangeLots: 100, commissionType: 'PER_LOT', commissionLot: 0, maxLots: 50, minLots: 1, orderLots: 10, exposureIntraday: 1, exposureCarryForward: 1, optionBuy: { allowed: true, commissionType: 'PER_LOT', commission: 0, strikeSelection: 50, maxExchangeLots: 100 }, optionSell: { allowed: true, commissionType: 'PER_LOT', commission: 0, strikeSelection: 50, maxExchangeLots: 100 } }
-      },
-      // Global Script Settings - applies to all segments
-      scriptSettings: scriptSettings || {}
+      // Inherited from admin - no hardcoded defaults
+      segmentPermissions: inheritedSegmentPermissions,
+      scriptSettings: inheritedScriptSettings
     });
     
     // Update admin stats if assigned to an admin
@@ -1175,7 +1354,11 @@ router.get('/users', protectAdmin, async (req, res) => {
 // Create user (All roles can create users under them)
 router.post('/users', protectAdmin, async (req, res) => {
   try {
-    const { username, email, password, fullName, phone } = req.body;
+    const { 
+      username, email, password, fullName, phone, initialBalance,
+      marginType, ledgerBalanceClosePercent, profitTradeHoldSeconds, lossTradeHoldSeconds,
+      isActivated, isReadOnly, isDemo, intradaySquare, blockLimitAboveBelowHighLow, blockLimitBetweenHighLow
+    } = req.body;
     
     // Check if user exists
     const exists = await User.findOne({ $or: [{ email }, { username }] });
@@ -1185,6 +1368,43 @@ router.post('/users', protectAdmin, async (req, res) => {
     
     // Build hierarchy path for the user (includes all ancestors + creator)
     const userHierarchyPath = [...(req.admin.hierarchyPath || []), req.admin._id];
+    
+    // Inherit segmentPermissions and scriptSettings from the creating admin
+    // Settings cascade: SuperAdmin → Admin → Broker → SubBroker → User
+    // If admin has no settings, fallback to SystemSettings segmentDefaults
+    let inheritedSegmentPermissions = {};
+    let inheritedScriptSettings = {};
+    
+    const adminSegPerms = req.admin.segmentPermissions;
+    if (adminSegPerms && ((adminSegPerms instanceof Map && adminSegPerms.size > 0) || Object.keys(adminSegPerms).length > 0)) {
+      inheritedSegmentPermissions = adminSegPerms instanceof Map 
+        ? Object.fromEntries(adminSegPerms) 
+        : adminSegPerms;
+    }
+    
+    const adminScriptSettings = req.admin.scriptSettings;
+    if (adminScriptSettings && ((adminScriptSettings instanceof Map && adminScriptSettings.size > 0) || Object.keys(adminScriptSettings).length > 0)) {
+      inheritedScriptSettings = adminScriptSettings instanceof Map 
+        ? Object.fromEntries(adminScriptSettings) 
+        : adminScriptSettings;
+    }
+    
+    // Fallback to SystemSettings adminSegmentDefaults if no segment permissions inherited
+    if (Object.keys(inheritedSegmentPermissions).length === 0) {
+      try {
+        const sysSettings = await SystemSettings.getSettings();
+        const asd = sysSettings?.adminSegmentDefaults;
+        if (asd && ((asd instanceof Map && asd.size > 0) || Object.keys(asd).length > 0)) {
+          inheritedSegmentPermissions = asd instanceof Map ? Object.fromEntries(asd) : { ...asd };
+        }
+        const assd = sysSettings?.adminScriptDefaults;
+        if (assd && ((assd instanceof Map && assd.size > 0) || Object.keys(assd).length > 0)) {
+          inheritedScriptSettings = assd instanceof Map ? Object.fromEntries(assd) : { ...assd };
+        }
+      } catch (e) {
+        console.error('Failed to load SystemSettings fallback:', e.message);
+      }
+    }
     
     const user = await User.create({
       adminCode: req.admin.adminCode,
@@ -1196,7 +1416,28 @@ router.post('/users', protectAdmin, async (req, res) => {
       password,
       fullName,
       phone,
-      createdBy: req.admin._id
+      createdBy: req.admin._id,
+      wallet: {
+        balance: initialBalance || 0,
+        cashBalance: initialBalance || 0,
+        blocked: 0
+      },
+      isActive: isActivated !== false,
+      settings: {
+        marginType: marginType || 'exposure',
+        ledgerBalanceClosePercent: ledgerBalanceClosePercent || 90,
+        profitTradeHoldSeconds: profitTradeHoldSeconds || 0,
+        lossTradeHoldSeconds: lossTradeHoldSeconds || 0,
+        isActivated: isActivated !== false,
+        isReadOnly: isReadOnly || false,
+        isDemo: isDemo || false,
+        intradaySquare: intradaySquare || false,
+        blockLimitAboveBelowHighLow: blockLimitAboveBelowHighLow || false,
+        blockLimitBetweenHighLow: blockLimitBetweenHighLow || false
+      },
+      // Inherited from admin - no hardcoded defaults
+      segmentPermissions: inheritedSegmentPermissions,
+      scriptSettings: inheritedScriptSettings
     });
     
     // Update admin stats
@@ -3853,10 +4094,32 @@ router.put('/system-settings', protectAdmin, superAdminOnly, async (req, res) =>
       settings.notificationSettings = { ...settings.notificationSettings, ...req.body.notificationSettings };
     }
     
+    // Update Brokerage Sharing (MLM-style)
+    if (req.body.brokerageSharing) {
+      if (!settings.brokerageSharing) settings.brokerageSharing = {};
+      settings.brokerageSharing = { ...settings.brokerageSharing, ...req.body.brokerageSharing };
+    }
+    
+    // Note: Profit/Loss sharing goes only to direct parent admin
+    // For P&L sharing between admin levels, use Patti Sharing feature
+    
+    // Update Admin Segment Defaults (same structure as Admin.segmentPermissions)
+    if (req.body.adminSegmentDefaults && typeof req.body.adminSegmentDefaults === 'object') {
+      settings.adminSegmentDefaults = req.body.adminSegmentDefaults;
+    }
+    
+    // Update Admin Script Defaults (same structure as Admin.scriptSettings)
+    if (req.body.adminScriptDefaults && typeof req.body.adminScriptDefaults === 'object') {
+      settings.adminScriptDefaults = req.body.adminScriptDefaults;
+    }
+    
     settings.updatedBy = req.admin._id;
     settings.markModified('segmentDefaults');
     settings.markModified('instrumentDefaults');
     settings.markModified('notificationSettings');
+    settings.markModified('brokerageSharing');
+    settings.markModified('adminSegmentDefaults');
+    settings.markModified('adminScriptDefaults');
     await settings.save();
     
     res.json({ message: 'System settings updated successfully', settings });

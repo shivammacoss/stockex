@@ -5,6 +5,9 @@ import TradeService from './tradeService.js';
 import Instrument from '../models/Instrument.js';
 import MarketState from '../models/MarketState.js';
 import Notification from '../models/Notification.js';
+import Charges from '../models/Charges.js';
+import WalletLedger from '../models/WalletLedger.js';
+import SystemSettings from '../models/SystemSettings.js';
 
 // Lot sizes for different instruments
 const LOT_SIZES = {
@@ -524,7 +527,8 @@ class TradingService {
     let marginRequired = 0;
     let usedFixedMargin = false;
     let marginSource = 'calculated';
-    const leverage = orderData.leverage || 1;
+    // Option buy requires full premium (no leverage) as per Indian market rules (SEBI/Zerodha)
+    const leverage = isOptionBuy ? 1 : (orderData.leverage || 1);
     const marginCalc = this.calculateMargin({ ...orderData, quantity: totalQuantity }, user, leverage);
     
     const price = orderData.price || 0;
@@ -890,6 +894,8 @@ class TradingService {
 
     const user = await User.findById(trade.user);
     if (!user) throw new Error('User not found');
+    
+    const admin = await Admin.findOne({ adminCode: trade.adminCode });
 
     // Apply spread to exit price (opposite of entry)
     const spreadPoints = trade.spread || 0;
@@ -897,24 +903,29 @@ class TradingService {
     
     if (spreadPoints > 0) {
       if (trade.side === 'BUY') {
-        // When closing a BUY, we SELL - so we get lower price
         effectiveExitPrice = exitPrice - spreadPoints;
       } else {
-        // When closing a SELL, we BUY - so we pay higher price
         effectiveExitPrice = exitPrice + spreadPoints;
       }
     }
 
-    // Calculate P&L based on entry price (which already has spread applied) and effective exit price
+    // Calculate charges using Charges model (Indian trading charges: STT, GST, SEBI, stamp duty)
+    trade.exitPrice = effectiveExitPrice;
+    const charges = await Charges.calculateCharges(trade, trade.adminCode, trade.user);
+    trade.charges = charges;
+
+    // Calculate P&L - MUST include lotSize multiplier for F&O/MCX
     const multiplier = trade.side === 'BUY' ? 1 : -1;
     const priceDiff = (effectiveExitPrice - trade.entryPrice) * multiplier;
-    const grossPnL = priceDiff * trade.quantity;
+    const grossPnL = priceDiff * trade.quantity * (trade.lotSize || 1);
     
-    // Net P&L is gross P&L (commission was already deducted at entry)
-    const netPnL = grossPnL;
+    // Net P&L = gross P&L minus closing charges (entry commission was already deducted from balance)
+    // Only deduct exchange charges, GST, STT, SEBI, stamp duty at close (not brokerage again)
+    const closingCharges = (charges.exchange || 0) + (charges.gst || 0) + (charges.stt || 0) + (charges.sebi || 0) + (charges.stamp || 0);
+    const netPnL = grossPnL - closingCharges;
 
-    trade.exitPrice = exitPrice; // Store actual market exit price
-    trade.effectiveExitPrice = effectiveExitPrice; // Store effective exit price after spread
+    trade.exitPrice = exitPrice;
+    trade.effectiveExitPrice = effectiveExitPrice;
     trade.status = 'CLOSED';
     trade.closeReason = reason;
     trade.closedAt = new Date();
@@ -922,74 +933,79 @@ class TradingService {
     trade.pnl = grossPnL;
     trade.unrealizedPnL = 0;
     trade.netPnL = netPnL;
-    trade.adminPnL = -grossPnL; // Admin's P&L is opposite (B-book)
+    
+    // Admin P&L (opposite in B_BOOK)
+    if (trade.bookType === 'B_BOOK') {
+      trade.adminPnL = -netPnL;
+    } else {
+      trade.adminPnL = 0;
+    }
 
     await trade.save();
-
-    // Release blocked margin and add/subtract P&L to appropriate wallet (triple wallet system)
-    // Crypto trades use cryptoWallet, MCX trades use mcxWallet, others use regular wallet
-    let newUsedMargin, newBlocked, newTradingBalance, newCryptoBalance, newCryptoRealizedPnL;
-    let newMcxBalance, newMcxUsedMargin, newMcxRealizedPnL;
     
-    // Check if this is an MCX trade
+    // Create ledger entry for user P&L
     const isMCXTrade = trade.exchange === 'MCX' || trade.segment === 'MCX' || 
                        trade.segment === 'MCXFUT' || trade.segment === 'MCXOPT';
     
+    const walletField = trade.isCrypto ? 'cryptoWallet' : (isMCXTrade ? 'mcxWallet' : 'wallet');
+    const balanceAfter = trade.isCrypto 
+      ? (user.cryptoWallet?.balance || 0) 
+      : (isMCXTrade ? (user.mcxWallet?.balance || 0) : (user.wallet?.tradingBalance || user.wallet?.cashBalance || 0));
+    
+    await WalletLedger.create({
+      ownerType: 'USER',
+      ownerId: user._id,
+      adminCode: user.adminCode,
+      type: netPnL >= 0 ? 'CREDIT' : 'DEBIT',
+      reason: 'TRADE_PNL',
+      amount: Math.abs(netPnL),
+      balanceAfter: balanceAfter + netPnL,
+      reference: { type: 'Trade', id: trade._id },
+      description: `${trade.symbol} ${trade.side} P&L${trade.isCrypto ? ' (Crypto)' : (isMCXTrade ? ' (MCX)' : '')}`
+    });
+
+    // Release blocked margin and add/subtract P&L to appropriate wallet
+    let newUsedMargin, newBlocked, newTradingBalance, newCryptoBalance, newCryptoRealizedPnL;
+    let newMcxBalance, newMcxUsedMargin, newMcxRealizedPnL;
+    
     if (trade.isCrypto) {
-      // Crypto trades: Return trade cost (marginUsed) + P&L to crypto wallet
-      // marginUsed stores the original trade cost for crypto trades
       const tradeCostReturned = trade.marginUsed || 0;
-      newUsedMargin = user.wallet.usedMargin || 0; // No change to regular wallet
-      newBlocked = user.wallet.blocked || 0; // No change
-      newTradingBalance = user.wallet.tradingBalance || 0; // No change to regular trading balance
-      // Return the trade cost + add P&L (can be negative for loss)
+      newUsedMargin = user.wallet.usedMargin || 0;
+      newBlocked = user.wallet.blocked || 0;
+      newTradingBalance = user.wallet.tradingBalance || 0;
       newCryptoBalance = (user.cryptoWallet?.balance || 0) + tradeCostReturned + netPnL;
       newCryptoRealizedPnL = (user.cryptoWallet?.realizedPnL || 0) + netPnL;
-      // MCX wallet unchanged
       newMcxBalance = user.mcxWallet?.balance || 0;
       newMcxUsedMargin = user.mcxWallet?.usedMargin || 0;
       newMcxRealizedPnL = user.mcxWallet?.realizedPnL || 0;
-      console.log(`Crypto trade closed: Returning $${tradeCostReturned.toFixed(2)} + P&L $${netPnL.toFixed(2)} to crypto wallet`);
     } else if (isMCXTrade) {
-      // MCX trades: Release margin from usedMargin and apply P&L to balance
-      // Since margin was NOT deducted from balance when opening (only tracked in usedMargin),
-      // we only release usedMargin and apply P&L to balance
-      newUsedMargin = user.wallet.usedMargin || 0; // No change to regular wallet
-      newBlocked = user.wallet.blocked || 0; // No change
-      newTradingBalance = user.wallet.tradingBalance || 0; // No change to regular trading balance
-      newCryptoBalance = user.cryptoWallet?.balance || 0; // Unchanged
-      newCryptoRealizedPnL = user.cryptoWallet?.realizedPnL || 0; // Unchanged
-      // Update MCX wallet - release margin from usedMargin, apply P&L to balance
+      newUsedMargin = user.wallet.usedMargin || 0;
+      newBlocked = user.wallet.blocked || 0;
+      newTradingBalance = user.wallet.tradingBalance || 0;
+      newCryptoBalance = user.cryptoWallet?.balance || 0;
+      newCryptoRealizedPnL = user.cryptoWallet?.realizedPnL || 0;
       newMcxUsedMargin = Math.max(0, (user.mcxWallet?.usedMargin || 0) - trade.marginUsed);
-      newMcxBalance = (user.mcxWallet?.balance || 0) + netPnL; // Only P&L added (margin was never deducted)
+      newMcxBalance = (user.mcxWallet?.balance || 0) + netPnL;
       newMcxRealizedPnL = (user.mcxWallet?.realizedPnL || 0) + netPnL;
-      console.log(`MCX trade closed: Releasing ₹${trade.marginUsed} margin, applying P&L ₹${netPnL.toFixed(2)}. New balance: ₹${newMcxBalance.toLocaleString()}, UsedMargin: ₹${newMcxUsedMargin.toLocaleString()}`);
     } else {
-      // Regular trades: Release margin from usedMargin and apply P&L to balance
-      // Since margin was NOT deducted from balance when opening (only tracked in usedMargin),
-      // we only release usedMargin and apply P&L to balance
       newUsedMargin = Math.max(0, (user.wallet.usedMargin || 0) - trade.marginUsed);
       newBlocked = Math.max(0, (user.wallet.blocked || 0) - trade.marginUsed);
-      newTradingBalance = (user.wallet.tradingBalance || 0) + netPnL; // Only P&L added (margin was never deducted)
-      newCryptoBalance = user.cryptoWallet?.balance || 0; // Unchanged
-      newCryptoRealizedPnL = user.cryptoWallet?.realizedPnL || 0; // Unchanged
-      // MCX wallet unchanged
+      newTradingBalance = (user.wallet.tradingBalance || 0) + netPnL;
+      newCryptoBalance = user.cryptoWallet?.balance || 0;
+      newCryptoRealizedPnL = user.cryptoWallet?.realizedPnL || 0;
       newMcxBalance = user.mcxWallet?.balance || 0;
       newMcxUsedMargin = user.mcxWallet?.usedMargin || 0;
       newMcxRealizedPnL = user.mcxWallet?.realizedPnL || 0;
     }
     
-    // Prevent negative balances
     newTradingBalance = Math.max(0, newTradingBalance);
     newCryptoBalance = Math.max(0, newCryptoBalance);
     newMcxBalance = Math.max(0, newMcxBalance);
     
-    // Only add P&L to regular wallet realizedPnL if it's not crypto or MCX
     const newRealizedPnL = (trade.isCrypto || isMCXTrade)
-      ? (user.wallet.realizedPnL || 0) // Don't add crypto/MCX P&L to regular wallet
+      ? (user.wallet.realizedPnL || 0)
       : (user.wallet.realizedPnL || 0) + netPnL;
     
-    // Use updateOne to avoid validation issues with segmentPermissions
     const updateFields = { 
       'wallet.usedMargin': newUsedMargin,
       'wallet.blocked': newBlocked,
@@ -997,13 +1013,11 @@ class TradingService {
       'wallet.realizedPnL': newRealizedPnL
     };
     
-    // Update crypto wallet if it's a crypto trade
     if (trade.isCrypto) {
       updateFields['cryptoWallet.balance'] = newCryptoBalance;
       updateFields['cryptoWallet.realizedPnL'] = newCryptoRealizedPnL;
     }
     
-    // Update MCX wallet if it's an MCX trade
     if (isMCXTrade) {
       updateFields['mcxWallet.balance'] = newMcxBalance;
       updateFields['mcxWallet.usedMargin'] = newMcxUsedMargin;
@@ -1014,6 +1028,18 @@ class TradingService {
       { _id: user._id },
       { $set: updateFields }
     );
+    
+    // Distribute brokerage through MLM hierarchy (B_BOOK only)
+    if (trade.bookType === 'B_BOOK' && admin) {
+      // Update admin P&L
+      admin.tradingPnL.realized += trade.adminPnL;
+      admin.tradingPnL.todayRealized += trade.adminPnL;
+      admin.stats.totalPnL += trade.adminPnL;
+      await admin.save();
+      
+      // Distribute brokerage through hierarchy
+      await TradeService.distributeBrokerage(trade, charges.brokerage, admin, user);
+    }
 
     return { 
       trade, 
@@ -1021,7 +1047,8 @@ class TradingService {
       grossPnL,
       exitPrice,
       effectiveExitPrice,
-      spread: spreadPoints
+      spread: spreadPoints,
+      charges
     };
   }
 
@@ -1036,7 +1063,7 @@ class TradingService {
 
       const multiplier = trade.side === 'BUY' ? 1 : -1;
       const priceDiff = (currentPrice - trade.entryPrice) * multiplier;
-      trade.unrealizedPnL = priceDiff * trade.quantity;
+      trade.unrealizedPnL = priceDiff * trade.quantity * (trade.lotSize || 1);
       trade.currentPrice = currentPrice;
       await trade.save();
 

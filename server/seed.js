@@ -5,6 +5,58 @@ import User from './models/User.js';
 
 dotenv.config();
 
+// Default segment permissions that cascade from admin to users
+const defaultSegmentPermissions = {
+  NSEFUT: {
+    enabled: true, maxExchangeLots: 500, commissionType: 'PER_LOT', commissionLot: 20,
+    maxLots: 100, minLots: 1, orderLots: 25, exposureIntraday: 10, exposureCarryForward: 5,
+    optionBuy: { allowed: true, commissionType: 'PER_LOT', commission: 20, strikeSelection: 50, maxExchangeLots: 500 },
+    optionSell: { allowed: true, commissionType: 'PER_LOT', commission: 20, strikeSelection: 50, maxExchangeLots: 500 }
+  },
+  NSEOPT: {
+    enabled: true, maxExchangeLots: 500, commissionType: 'PER_LOT', commissionLot: 20,
+    maxLots: 100, minLots: 1, orderLots: 25, exposureIntraday: 1, exposureCarryForward: 1,
+    optionBuy: { allowed: true, commissionType: 'PER_LOT', commission: 20, strikeSelection: 50, maxExchangeLots: 500 },
+    optionSell: { allowed: true, commissionType: 'PER_LOT', commission: 20, strikeSelection: 50, maxExchangeLots: 500 }
+  },
+  MCXFUT: {
+    enabled: true, maxExchangeLots: 200, commissionType: 'PER_LOT', commissionLot: 25,
+    maxLots: 50, minLots: 1, orderLots: 10, exposureIntraday: 8, exposureCarryForward: 4,
+    optionBuy: { allowed: true, commissionType: 'PER_LOT', commission: 25, strikeSelection: 50, maxExchangeLots: 200 },
+    optionSell: { allowed: true, commissionType: 'PER_LOT', commission: 25, strikeSelection: 50, maxExchangeLots: 200 }
+  },
+  MCXOPT: {
+    enabled: true, maxExchangeLots: 200, commissionType: 'PER_LOT', commissionLot: 25,
+    maxLots: 50, minLots: 1, orderLots: 10, exposureIntraday: 1, exposureCarryForward: 1,
+    optionBuy: { allowed: true, commissionType: 'PER_LOT', commission: 25, strikeSelection: 50, maxExchangeLots: 200 },
+    optionSell: { allowed: true, commissionType: 'PER_LOT', commission: 25, strikeSelection: 50, maxExchangeLots: 200 }
+  },
+  'NSE-EQ': {
+    enabled: true, maxExchangeLots: 1000, commissionType: 'PER_CRORE', commissionLot: 100,
+    maxLots: 500, minLots: 1, orderLots: 100, exposureIntraday: 5, exposureCarryForward: 1,
+    optionBuy: { allowed: false, commissionType: 'PER_LOT', commission: 0, strikeSelection: 0, maxExchangeLots: 0 },
+    optionSell: { allowed: false, commissionType: 'PER_LOT', commission: 0, strikeSelection: 0, maxExchangeLots: 0 }
+  },
+  'BSE-FUT': {
+    enabled: false, maxExchangeLots: 100, commissionType: 'PER_LOT', commissionLot: 20,
+    maxLots: 50, minLots: 1, orderLots: 10, exposureIntraday: 10, exposureCarryForward: 5,
+    optionBuy: { allowed: true, commissionType: 'PER_LOT', commission: 20, strikeSelection: 50, maxExchangeLots: 100 },
+    optionSell: { allowed: true, commissionType: 'PER_LOT', commission: 20, strikeSelection: 50, maxExchangeLots: 100 }
+  },
+  'BSE-OPT': {
+    enabled: false, maxExchangeLots: 100, commissionType: 'PER_LOT', commissionLot: 20,
+    maxLots: 50, minLots: 1, orderLots: 10, exposureIntraday: 1, exposureCarryForward: 1,
+    optionBuy: { allowed: true, commissionType: 'PER_LOT', commission: 20, strikeSelection: 50, maxExchangeLots: 100 },
+    optionSell: { allowed: true, commissionType: 'PER_LOT', commission: 20, strikeSelection: 50, maxExchangeLots: 100 }
+  },
+  CRYPTO: {
+    enabled: true, maxExchangeLots: 1000, commissionType: 'PER_LOT', commissionLot: 30,
+    maxLots: 500, minLots: 1, orderLots: 100, exposureIntraday: 3, exposureCarryForward: 2,
+    optionBuy: { allowed: false, commissionType: 'PER_LOT', commission: 0, strikeSelection: 0, maxExchangeLots: 0 },
+    optionSell: { allowed: false, commissionType: 'PER_LOT', commission: 0, strikeSelection: 0, maxExchangeLots: 0 }
+  }
+};
+
 /**
  * Hierarchy Structure:
  * SUPER_ADMIN (Level 0) - Can create ADMIN, BROKER, SUB_BROKER directly + Users
@@ -51,7 +103,8 @@ const seedHierarchy = async () => {
         pin: '1234',
         wallet: { balance: 10000000 }, // 1 Crore initial balance
         hierarchyLevel: 0,
-        hierarchyPath: []
+        hierarchyPath: [],
+        segmentPermissions: defaultSegmentPermissions
       });
       
       console.log('✓ Super Admin Created!');
@@ -78,7 +131,8 @@ const seedHierarchy = async () => {
         wallet: { balance: 1000000 }, // 10 Lakh initial balance
         createdBy: superAdmin._id,
         parentId: superAdmin._id,
-        hierarchyPath: [superAdmin._id]
+        hierarchyPath: [superAdmin._id],
+        segmentPermissions: defaultSegmentPermissions
       });
       
       console.log('\n✓ Demo Admin Created!');
@@ -106,7 +160,8 @@ const seedHierarchy = async () => {
         wallet: { balance: 500000 }, // 5 Lakh initial balance
         createdBy: admin._id,
         parentId: admin._id,
-        hierarchyPath: [superAdmin._id, admin._id]
+        hierarchyPath: [superAdmin._id, admin._id],
+        segmentPermissions: defaultSegmentPermissions
       });
       
       console.log('\n✓ Demo Broker Created (under Admin)!');
@@ -134,7 +189,8 @@ const seedHierarchy = async () => {
         wallet: { balance: 500000 },
         createdBy: superAdmin._id,
         parentId: superAdmin._id,
-        hierarchyPath: [superAdmin._id]
+        hierarchyPath: [superAdmin._id],
+        segmentPermissions: defaultSegmentPermissions
       });
       
       console.log('\n✓ Super Broker Created (directly under Super Admin)!');
@@ -162,7 +218,8 @@ const seedHierarchy = async () => {
         wallet: { balance: 100000 }, // 1 Lakh initial balance
         createdBy: broker._id,
         parentId: broker._id,
-        hierarchyPath: [superAdmin._id, admin._id, broker._id]
+        hierarchyPath: [superAdmin._id, admin._id, broker._id],
+        segmentPermissions: defaultSegmentPermissions
       });
       
       console.log('\n✓ Demo Sub Broker Created (under Broker)!');
@@ -190,7 +247,8 @@ const seedHierarchy = async () => {
         wallet: { balance: 100000 },
         createdBy: admin._id,
         parentId: admin._id,
-        hierarchyPath: [superAdmin._id, admin._id]
+        hierarchyPath: [superAdmin._id, admin._id],
+        segmentPermissions: defaultSegmentPermissions
       });
       
       console.log('\n✓ Admin Sub Broker Created (directly under Admin)!');
@@ -218,7 +276,8 @@ const seedHierarchy = async () => {
         wallet: { balance: 100000 },
         createdBy: superAdmin._id,
         parentId: superAdmin._id,
-        hierarchyPath: [superAdmin._id]
+        hierarchyPath: [superAdmin._id],
+        segmentPermissions: defaultSegmentPermissions
       });
       
       console.log('\n✓ Super Sub Broker Created (directly under Super Admin)!');
@@ -295,6 +354,45 @@ const seedHierarchy = async () => {
       console.log('  Password: user123');
     } else {
       console.log('\n✓ Sub Broker User already exists');
+    }
+
+    // ========== 6. UPDATE EXISTING ADMINS WITH SEGMENT PERMISSIONS ==========
+    console.log('\n---------- Updating Existing Admins with Segment Permissions ----------');
+    
+    const adminsWithoutSegments = await Admin.find({
+      $or: [
+        { segmentPermissions: { $exists: false } },
+        { segmentPermissions: null },
+        { segmentPermissions: { $eq: {} } }
+      ]
+    });
+    
+    if (adminsWithoutSegments.length > 0) {
+      for (const a of adminsWithoutSegments) {
+        await Admin.updateOne(
+          { _id: a._id },
+          { $set: { segmentPermissions: defaultSegmentPermissions } }
+        );
+        console.log(`  ✓ Updated ${a.name} (${a.role}) with default segment permissions`);
+      }
+    } else {
+      // Also update admins whose segmentPermissions Map is empty (size 0)
+      const allAdmins = await Admin.find({});
+      let updated = 0;
+      for (const a of allAdmins) {
+        const segPerms = a.segmentPermissions;
+        if (!segPerms || (segPerms instanceof Map && segPerms.size === 0) || Object.keys(segPerms).length === 0) {
+          await Admin.updateOne(
+            { _id: a._id },
+            { $set: { segmentPermissions: defaultSegmentPermissions } }
+          );
+          console.log(`  ✓ Updated ${a.name} (${a.role}) with default segment permissions`);
+          updated++;
+        }
+      }
+      if (updated === 0) {
+        console.log('  ✓ All admins already have segment permissions');
+      }
     }
 
     // ========== SUMMARY ==========

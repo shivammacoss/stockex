@@ -8,7 +8,7 @@ import Admin from '../models/Admin.js';
 import BankAccount from '../models/BankAccount.js';
 import FundRequest from '../models/FundRequest.js';
 import WalletLedger from '../models/WalletLedger.js';
-import jwt from 'jsonwebtoken';
+import { protectUser } from '../middleware/auth.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -44,24 +44,6 @@ const uploadProof = multer({
 });
 
 const router = express.Router();
-
-// Auth middleware
-const protectUser = async (req, res, next) => {
-  try {
-    const token = req.headers.authorization?.split(' ')[1];
-    if (!token) return res.status(401).json({ message: 'Not authorized' });
-
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    req.user = await User.findById(decoded.id).select('-password');
-    
-    if (!req.user) return res.status(401).json({ message: 'User not found' });
-    if (!req.user.isActive) return res.status(401).json({ message: 'Account is deactivated' });
-    
-    next();
-  } catch (error) {
-    res.status(401).json({ message: 'Not authorized' });
-  }
-};
 
 // Get admin's bank accounts (for deposit)
 router.get('/admin-bank-accounts', protectUser, async (req, res) => {

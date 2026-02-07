@@ -141,6 +141,33 @@ const systemSettingsSchema = new mongoose.Schema({
     }
   },
   
+  // MLM-style Brokerage Sharing Percentages
+  // When a user trades, brokerage is distributed up the hierarchy
+  // Example: User pays 100 brokerage -> SubBroker gets 30%, Broker gets 25%, Admin gets 25%, SuperAdmin gets 20%
+  brokerageSharing: {
+    // SuperAdmin's share of total brokerage (remaining after all levels)
+    superAdminShare: { type: Number, default: 20 }, // 20%
+    
+    // Admin's share of brokerage from their direct users and downline
+    adminShare: { type: Number, default: 25 }, // 25%
+    
+    // Broker's share of brokerage from their direct users and downline
+    brokerShare: { type: Number, default: 25 }, // 25%
+    
+    // SubBroker's share of brokerage from their direct users
+    subBrokerShare: { type: Number, default: 30 }, // 30%
+    
+    // Enable/disable brokerage sharing
+    enabled: { type: Boolean, default: true },
+    
+    // Sharing mode: 'PERCENTAGE' = each level gets % of total, 'CASCADING' = each level gets % of remaining
+    mode: { type: String, enum: ['PERCENTAGE', 'CASCADING'], default: 'PERCENTAGE' }
+  },
+  
+  // Note: Profit/Loss sharing is NOT distributed through hierarchy like brokerage.
+  // P&L goes only to the user's direct parent admin.
+  // For P&L sharing between admin levels, use Patti Sharing feature.
+  
   // Segment-wise default settings (margin, leverage per segment)
   segmentDefaults: {
     EQUITY: {
@@ -154,7 +181,13 @@ const systemSettingsSchema = new mongoose.Schema({
       carryForwardMaxLots: { type: Number, default: 5000 },
       carryForwardBreakupLots: { type: Number, default: 500 },
       brokeragePerLot: { type: Number, default: 20 },
-      brokeragePerCrore: { type: Number, default: 100 }
+      brokeragePerCrore: { type: Number, default: 100 },
+      // Admin-style fields for inheritance
+      commissionType: { type: String, enum: ['PER_LOT', 'PER_TRADE', 'PER_CRORE'], default: 'PER_CRORE' },
+      maxExchangeLots: { type: Number, default: 10000 },
+      maxLots: { type: Number, default: 500 },
+      minLots: { type: Number, default: 1 },
+      orderLots: { type: Number, default: 100 }
     },
     FNO: {
       enabled: { type: Boolean, default: true },
@@ -167,7 +200,26 @@ const systemSettingsSchema = new mongoose.Schema({
       carryForwardMaxLots: { type: Number, default: 50 },
       carryForwardBreakupLots: { type: Number, default: 5 },
       brokeragePerLot: { type: Number, default: 20 },
-      brokeragePerCrore: { type: Number, default: 100 }
+      brokeragePerCrore: { type: Number, default: 100 },
+      commissionType: { type: String, enum: ['PER_LOT', 'PER_TRADE', 'PER_CRORE'], default: 'PER_LOT' },
+      maxExchangeLots: { type: Number, default: 500 },
+      maxLots: { type: Number, default: 100 },
+      minLots: { type: Number, default: 1 },
+      orderLots: { type: Number, default: 25 },
+      optionBuy: {
+        allowed: { type: Boolean, default: true },
+        commissionType: { type: String, enum: ['PER_LOT', 'PER_TRADE', 'PER_CRORE'], default: 'PER_LOT' },
+        commission: { type: Number, default: 20 },
+        strikeSelection: { type: Number, default: 50 },
+        maxExchangeLots: { type: Number, default: 500 }
+      },
+      optionSell: {
+        allowed: { type: Boolean, default: true },
+        commissionType: { type: String, enum: ['PER_LOT', 'PER_TRADE', 'PER_CRORE'], default: 'PER_LOT' },
+        commission: { type: Number, default: 20 },
+        strikeSelection: { type: Number, default: 50 },
+        maxExchangeLots: { type: Number, default: 500 }
+      }
     },
     MCX: {
       enabled: { type: Boolean, default: true },
@@ -180,7 +232,26 @@ const systemSettingsSchema = new mongoose.Schema({
       carryForwardMaxLots: { type: Number, default: 25 },
       carryForwardBreakupLots: { type: Number, default: 3 },
       brokeragePerLot: { type: Number, default: 25 },
-      brokeragePerCrore: { type: Number, default: 120 }
+      brokeragePerCrore: { type: Number, default: 120 },
+      commissionType: { type: String, enum: ['PER_LOT', 'PER_TRADE', 'PER_CRORE'], default: 'PER_LOT' },
+      maxExchangeLots: { type: Number, default: 200 },
+      maxLots: { type: Number, default: 50 },
+      minLots: { type: Number, default: 1 },
+      orderLots: { type: Number, default: 10 },
+      optionBuy: {
+        allowed: { type: Boolean, default: true },
+        commissionType: { type: String, enum: ['PER_LOT', 'PER_TRADE', 'PER_CRORE'], default: 'PER_LOT' },
+        commission: { type: Number, default: 25 },
+        strikeSelection: { type: Number, default: 50 },
+        maxExchangeLots: { type: Number, default: 200 }
+      },
+      optionSell: {
+        allowed: { type: Boolean, default: true },
+        commissionType: { type: String, enum: ['PER_LOT', 'PER_TRADE', 'PER_CRORE'], default: 'PER_LOT' },
+        commission: { type: Number, default: 25 },
+        strikeSelection: { type: Number, default: 50 },
+        maxExchangeLots: { type: Number, default: 200 }
+      }
     },
     CRYPTO: {
       enabled: { type: Boolean, default: true },
@@ -193,7 +264,12 @@ const systemSettingsSchema = new mongoose.Schema({
       carryForwardMaxLots: { type: Number, default: 500 },
       carryForwardBreakupLots: { type: Number, default: 50 },
       brokeragePerLot: { type: Number, default: 30 },
-      brokeragePerCrore: { type: Number, default: 150 }
+      brokeragePerCrore: { type: Number, default: 150 },
+      commissionType: { type: String, enum: ['PER_LOT', 'PER_TRADE', 'PER_CRORE'], default: 'PER_LOT' },
+      maxExchangeLots: { type: Number, default: 1000 },
+      maxLots: { type: Number, default: 500 },
+      minLots: { type: Number, default: 1 },
+      orderLots: { type: Number, default: 100 }
     },
     CURRENCY: {
       enabled: { type: Boolean, default: true },
@@ -206,7 +282,12 @@ const systemSettingsSchema = new mongoose.Schema({
       carryForwardMaxLots: { type: Number, default: 50 },
       carryForwardBreakupLots: { type: Number, default: 5 },
       brokeragePerLot: { type: Number, default: 20 },
-      brokeragePerCrore: { type: Number, default: 100 }
+      brokeragePerCrore: { type: Number, default: 100 },
+      commissionType: { type: String, enum: ['PER_LOT', 'PER_TRADE', 'PER_CRORE'], default: 'PER_LOT' },
+      maxExchangeLots: { type: Number, default: 100 },
+      maxLots: { type: Number, default: 50 },
+      minLots: { type: Number, default: 1 },
+      orderLots: { type: Number, default: 10 }
     }
   },
   
@@ -322,6 +403,78 @@ const systemSettingsSchema = new mongoose.Schema({
     }
   },
   
+  // Admin Segment Permissions Defaults - SAME structure as Admin.segmentPermissions
+  // These are the master defaults that all admins inherit when they haven't set their own
+  // Uses the same segment keys as Admin model: NSEFUT, NSEOPT, MCXFUT, MCXOPT, NSE-EQ, BSE-FUT, BSE-OPT, CRYPTO
+  adminSegmentDefaults: {
+    type: Map,
+    of: {
+      enabled: { type: Boolean, default: false },
+      maxExchangeLots: { type: Number, default: 100 },
+      commissionType: { type: String, enum: ['PER_LOT', 'PER_TRADE', 'PER_CRORE'], default: 'PER_LOT' },
+      commissionLot: { type: Number, default: 0 },
+      maxLots: { type: Number, default: 50 },
+      minLots: { type: Number, default: 1 },
+      orderLots: { type: Number, default: 10 },
+      exposureIntraday: { type: Number, default: 1 },
+      exposureCarryForward: { type: Number, default: 1 },
+      optionBuy: {
+        allowed: { type: Boolean, default: true },
+        commissionType: { type: String, enum: ['PER_LOT', 'PER_TRADE', 'PER_CRORE'], default: 'PER_LOT' },
+        commission: { type: Number, default: 0 },
+        strikeSelection: { type: Number, default: 50 },
+        maxExchangeLots: { type: Number, default: 100 }
+      },
+      optionSell: {
+        allowed: { type: Boolean, default: true },
+        commissionType: { type: String, enum: ['PER_LOT', 'PER_TRADE', 'PER_CRORE'], default: 'PER_LOT' },
+        commission: { type: Number, default: 0 },
+        strikeSelection: { type: Number, default: 50 },
+        maxExchangeLots: { type: Number, default: 100 }
+      }
+    },
+    default: {}
+  },
+
+  // Admin Script Settings Defaults - SAME structure as Admin.scriptSettings
+  adminScriptDefaults: {
+    type: Map,
+    of: {
+      lotSettings: {
+        maxLots: { type: Number, default: 50 },
+        minLots: { type: Number, default: 1 },
+        perOrderLots: { type: Number, default: 10 }
+      },
+      quantitySettings: {
+        maxQuantity: { type: Number, default: 1000 },
+        minQuantity: { type: Number, default: 1 },
+        perOrderQuantity: { type: Number, default: 100 }
+      },
+      fixedMargin: {
+        intradayFuture: { type: Number, default: 0 },
+        carryFuture: { type: Number, default: 0 },
+        optionBuyIntraday: { type: Number, default: 0 },
+        optionBuyCarry: { type: Number, default: 0 },
+        optionSellIntraday: { type: Number, default: 0 },
+        optionSellCarry: { type: Number, default: 0 }
+      },
+      brokerage: {
+        intradayFuture: { type: Number, default: 0 },
+        carryFuture: { type: Number, default: 0 },
+        optionBuyIntraday: { type: Number, default: 0 },
+        optionBuyCarry: { type: Number, default: 0 },
+        optionSellIntraday: { type: Number, default: 0 },
+        optionSellCarry: { type: Number, default: 0 }
+      },
+      spread: {
+        buy: { type: Number, default: 0 },
+        sell: { type: Number, default: 0 }
+      },
+      blocked: { type: Boolean, default: false }
+    },
+    default: {}
+  },
+
   // Notification Settings
   notificationSettings: {
     marginWarningThreshold: { type: Number, default: 70 }, // % margin usage to trigger warning

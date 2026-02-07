@@ -1,52 +1,12 @@
 import express from 'express';
-import jwt from 'jsonwebtoken';
 import Instrument from '../models/Instrument.js';
 import Watchlist from '../models/Watchlist.js';
 import Admin from '../models/Admin.js';
 import User from '../models/User.js';
 import marketDataService from '../services/marketDataService.js';
+import { protectUser, protectAdmin, superAdminOnly } from '../middleware/auth.js';
 
 const router = express.Router();
-
-// Auth middleware for admins
-const protectAdmin = async (req, res, next) => {
-  try {
-    const token = req.headers.authorization?.split(' ')[1];
-    if (!token) return res.status(401).json({ message: 'Not authorized' });
-
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    req.admin = await Admin.findById(decoded.id).select('-password');
-    
-    if (!req.admin) return res.status(401).json({ message: 'Admin not found' });
-    next();
-  } catch (error) {
-    res.status(401).json({ message: 'Not authorized' });
-  }
-};
-
-// Auth middleware for users
-const protectUser = async (req, res, next) => {
-  try {
-    const token = req.headers.authorization?.split(' ')[1];
-    if (!token) return res.status(401).json({ message: 'Not authorized' });
-
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    req.user = await User.findById(decoded.id).select('-password');
-    
-    if (!req.user) return res.status(401).json({ message: 'User not found' });
-    next();
-  } catch (error) {
-    res.status(401).json({ message: 'Not authorized' });
-  }
-};
-
-// Super Admin only
-const superAdminOnly = (req, res, next) => {
-  if (req.admin.role !== 'SUPER_ADMIN') {
-    return res.status(403).json({ message: 'Super Admin access required' });
-  }
-  next();
-};
 
 // ==================== PUBLIC ROUTES ====================
 

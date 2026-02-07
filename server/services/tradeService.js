@@ -5,6 +5,7 @@ import MarketState from '../models/MarketState.js';
 import Charges from '../models/Charges.js';
 import WalletLedger from '../models/WalletLedger.js';
 import Instrument from '../models/Instrument.js';
+import SystemSettings from '../models/SystemSettings.js';
 
 class TradeService {
   
@@ -18,6 +19,9 @@ class TradeService {
   }
   
   // Calculate required margin for a trade
+  // NOTE: quantity here is the RAW quantity (e.g. number of shares/units, NOT multiplied by lotSize)
+  // notionalValue = price × quantity × lotSize
+  // If caller passes totalQuantity (already includes lotSize), pass lotSize=1
   static calculateMargin(price, quantity, lotSize, leverage, productType) {
     const notionalValue = price * quantity * lotSize;
     
@@ -52,7 +56,8 @@ class TradeService {
       availableMargin = mcxBalance - mcxUsedMargin;
       walletType = 'MCX';
     } else {
-      availableMargin = user.wallet.cashBalance - user.wallet.usedMargin + user.wallet.collateralValue;
+      const walletBalance = user.wallet?.tradingBalance || user.wallet?.cashBalance || 0;
+      availableMargin = walletBalance - user.wallet.usedMargin + (user.wallet.collateralValue || 0);
       walletType = 'Main';
     }
     
@@ -306,18 +311,19 @@ class TradeService {
     }
     
     // 6. Get leverage from admin charges
+    // Option buy = no leverage (full premium required as per SEBI/Zerodha rules)
     let leverage = 1;
     const isCrypto = tradeData.segment === 'CRYPTO' || tradeData.isCrypto;
+    const isOptionBuy = tradeData.instrumentType === 'OPTIONS' && tradeData.side === 'BUY';
     
-    if (tradeData.productType === 'MIS' || tradeData.productType === 'INTRADAY') {
+    if (!isOptionBuy && (tradeData.productType === 'MIS' || tradeData.productType === 'INTRADAY')) {
       if (tradeData.segment === 'EQUITY') {
         leverage = admin.charges?.intradayLeverage || 5;
       } else if (tradeData.instrumentType === 'FUTURES') {
         leverage = admin.charges?.futuresLeverage || 1;
       } else if (tradeData.instrumentType === 'OPTIONS') {
-        leverage = tradeData.side === 'BUY' 
-          ? admin.charges?.optionBuyLeverage || 1
-          : admin.charges?.optionSellLeverage || 1;
+        // Only option sell gets leverage
+        leverage = admin.charges?.optionSellLeverage || 1;
       } else if (isCrypto) {
         leverage = admin.charges?.cryptoLeverage || 1;
       }
@@ -403,10 +409,12 @@ class TradeService {
       if (fixedMarginPerLot > 0) {
         requiredMargin = fixedMarginPerLot * lots;
       } else {
-        requiredMargin = this.calculateMargin(marginPrice, tradeData.quantity, lotSize, leverage, tradeData.productType);
+        // Pass lotSize=1 since tradeData.quantity is already totalQuantity (lots * lotSize)
+        requiredMargin = this.calculateMargin(marginPrice, tradeData.quantity, 1, leverage, tradeData.productType);
       }
     } else {
-      requiredMargin = this.calculateMargin(marginPrice, tradeData.quantity, lotSize, leverage, tradeData.productType);
+      // Pass lotSize=1 since tradeData.quantity is already totalQuantity (lots * lotSize)
+      requiredMargin = this.calculateMargin(marginPrice, tradeData.quantity, 1, leverage, tradeData.productType);
     }
     
     // 11. Validate margin - pass segment and exchange for MCX wallet check
@@ -422,7 +430,7 @@ class TradeService {
     } else {
       await User.updateOne(
         { _id: userId },
-        { $inc: { 'wallet.usedMargin': requiredMargin } }
+        { $inc: { 'wallet.usedMargin': requiredMargin, 'wallet.blocked': requiredMargin } }
       );
     }
     
@@ -508,6 +516,8 @@ class TradeService {
         { _id: user._id },
         { $inc: { 
           'wallet.usedMargin': -trade.marginUsed,
+          'wallet.blocked': -trade.marginUsed,
+          'wallet.tradingBalance': trade.netPnL,
           'wallet.cashBalance': trade.netPnL,
           'wallet.realizedPnL': trade.netPnL,
           'wallet.todayRealizedPnL': trade.netPnL
@@ -518,7 +528,7 @@ class TradeService {
     await trade.save();
     
     // Create ledger entry for user
-    const balanceAfter = isMcx ? (user.mcxWallet?.balance || 0) : user.wallet.cashBalance;
+    const balanceAfter = isMcx ? (user.mcxWallet?.balance || 0) : (user.wallet?.tradingBalance || user.wallet?.cashBalance || 0);
     await WalletLedger.create({
       ownerType: 'USER',
       ownerId: user._id,
@@ -531,33 +541,160 @@ class TradeService {
       description: `${trade.symbol} ${trade.side} P&L${isMcx ? ' (MCX)' : ''}`
     });
     
-    // Update admin P&L (B_BOOK)
+    // Update admin P&L (B_BOOK) and distribute brokerage through hierarchy
     if (trade.bookType === 'B_BOOK' && admin) {
       admin.tradingPnL.realized += trade.adminPnL;
       admin.tradingPnL.todayRealized += trade.adminPnL;
       admin.stats.totalPnL += trade.adminPnL;
-      
-      // Add brokerage to admin wallet
-      admin.wallet.balance += charges.brokerage;
-      admin.stats.totalBrokerage += charges.brokerage;
-      
       await admin.save();
       
-      // Create ledger entry for admin brokerage
-      await WalletLedger.create({
-        ownerType: 'ADMIN',
-        ownerId: admin._id,
-        adminCode: admin.adminCode,
-        type: 'CREDIT',
-        reason: 'BROKERAGE',
-        amount: charges.brokerage,
-        balanceAfter: admin.wallet.balance,
-        reference: { type: 'Trade', id: trade._id },
-        description: `Brokerage from ${trade.tradeId}`
-      });
+      // Distribute brokerage through MLM hierarchy
+      await this.distributeBrokerage(trade, charges.brokerage, admin, user);
     }
     
     return trade;
+  }
+  
+  // Distribute brokerage through MLM hierarchy
+  // Handles cases where hierarchy levels are missing (e.g., user directly under Admin)
+  static async distributeBrokerage(trade, totalBrokerage, directAdmin, user) {
+    try {
+      // Get system settings for sharing percentages
+      const systemSettings = await SystemSettings.getSettings();
+      const sharing = systemSettings.brokerageSharing || {};
+      
+      // If sharing is disabled, give all to direct admin
+      if (!sharing.enabled) {
+        await this.creditBrokerageToAdmin(directAdmin, totalBrokerage, trade, 'Full brokerage (sharing disabled)');
+        return;
+      }
+      
+      // Get sharing percentages
+      const superAdminShare = sharing.superAdminShare || 20;
+      const adminShare = sharing.adminShare || 25;
+      const brokerShare = sharing.brokerShare || 25;
+      const subBrokerShare = sharing.subBrokerShare || 30;
+      
+      // Build hierarchy chain from user up to SuperAdmin
+      // user -> directAdmin -> ... -> SuperAdmin
+      const hierarchyChain = [];
+      let currentAdmin = directAdmin;
+      
+      while (currentAdmin) {
+        hierarchyChain.push({
+          admin: currentAdmin,
+          role: currentAdmin.role
+        });
+        
+        if (currentAdmin.role === 'SUPER_ADMIN' || !currentAdmin.parentId) {
+          break;
+        }
+        
+        currentAdmin = await Admin.findById(currentAdmin.parentId);
+      }
+      
+      // Determine which roles exist in hierarchy
+      const hasSubBroker = hierarchyChain.some(h => h.role === 'SUB_BROKER');
+      const hasBroker = hierarchyChain.some(h => h.role === 'BROKER');
+      const hasAdmin = hierarchyChain.some(h => h.role === 'ADMIN');
+      const hasSuperAdmin = hierarchyChain.some(h => h.role === 'SUPER_ADMIN');
+      
+      // Calculate actual distribution based on existing hierarchy
+      // Missing levels' shares go to the next level up
+      let distributions = {};
+      
+      if (sharing.mode === 'CASCADING') {
+        // Cascading mode: each level gets % of remaining
+        let remaining = totalBrokerage;
+        
+        if (hasSubBroker) {
+          distributions.SUB_BROKER = remaining * (subBrokerShare / 100);
+          remaining -= distributions.SUB_BROKER;
+        }
+        if (hasBroker) {
+          distributions.BROKER = remaining * (brokerShare / 100);
+          remaining -= distributions.BROKER;
+        }
+        if (hasAdmin) {
+          distributions.ADMIN = remaining * (adminShare / 100);
+          remaining -= distributions.ADMIN;
+        }
+        if (hasSuperAdmin) {
+          distributions.SUPER_ADMIN = remaining; // SuperAdmin gets whatever remains
+        }
+      } else {
+        // Percentage mode: redistribute missing shares proportionally
+        let totalActiveShare = 0;
+        let activeShares = {};
+        
+        if (hasSubBroker) {
+          activeShares.SUB_BROKER = subBrokerShare;
+          totalActiveShare += subBrokerShare;
+        }
+        if (hasBroker) {
+          activeShares.BROKER = brokerShare + (hasSubBroker ? 0 : subBrokerShare);
+          totalActiveShare += activeShares.BROKER;
+        } else if (!hasBroker && !hasSubBroker) {
+          // No broker or subbroker - their shares go to admin
+        }
+        if (hasAdmin) {
+          let extraShare = 0;
+          if (!hasBroker) extraShare += brokerShare;
+          if (!hasSubBroker && !hasBroker) extraShare += subBrokerShare;
+          activeShares.ADMIN = adminShare + extraShare;
+          totalActiveShare += activeShares.ADMIN;
+        }
+        if (hasSuperAdmin) {
+          let extraShare = 0;
+          if (!hasAdmin) {
+            extraShare += adminShare;
+            if (!hasBroker) extraShare += brokerShare;
+            if (!hasSubBroker) extraShare += subBrokerShare;
+          }
+          activeShares.SUPER_ADMIN = superAdminShare + extraShare;
+          totalActiveShare += activeShares.SUPER_ADMIN;
+        }
+        
+        // Calculate actual amounts
+        for (const [role, share] of Object.entries(activeShares)) {
+          distributions[role] = totalBrokerage * (share / 100);
+        }
+      }
+      
+      // Credit brokerage to each admin in hierarchy
+      for (const { admin, role } of hierarchyChain) {
+        const amount = distributions[role] || 0;
+        if (amount > 0) {
+          await this.creditBrokerageToAdmin(admin, amount, trade, `${role} share (${((amount/totalBrokerage)*100).toFixed(1)}%)`);
+        }
+      }
+      
+    } catch (error) {
+      console.error('Error distributing brokerage:', error);
+      // Fallback: credit all to direct admin
+      await this.creditBrokerageToAdmin(directAdmin, totalBrokerage, trade, 'Full brokerage (distribution error)');
+    }
+  }
+  
+  // Helper to credit brokerage to a single admin
+  static async creditBrokerageToAdmin(admin, amount, trade, description) {
+    if (!admin || amount <= 0) return;
+    
+    admin.wallet.balance += amount;
+    admin.stats.totalBrokerage += amount;
+    await admin.save();
+    
+    await WalletLedger.create({
+      ownerType: 'ADMIN',
+      ownerId: admin._id,
+      adminCode: admin.adminCode,
+      type: 'CREDIT',
+      reason: 'BROKERAGE',
+      amount: amount,
+      balanceAfter: admin.wallet.balance,
+      reference: { type: 'Trade', id: trade._id },
+      description: `Brokerage from ${trade.tradeId} - ${description}`
+    });
   }
   
   // Update live P&L for all open trades
