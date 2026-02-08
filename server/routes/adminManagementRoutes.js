@@ -677,6 +677,27 @@ router.put('/admins/:id/default-settings', protectAdmin, async (req, res) => {
       };
     }
     
+    if (defaultSettings.charges) {
+      childAdmin.defaultSettings.charges = {
+        ...childAdmin.defaultSettings.charges,
+        ...defaultSettings.charges
+      };
+    }
+    
+    if (defaultSettings.lotSettings) {
+      childAdmin.defaultSettings.lotSettings = {
+        ...childAdmin.defaultSettings.lotSettings,
+        ...defaultSettings.lotSettings
+      };
+    }
+    
+    if (defaultSettings.quantitySettings) {
+      childAdmin.defaultSettings.quantitySettings = {
+        ...childAdmin.defaultSettings.quantitySettings,
+        ...defaultSettings.quantitySettings
+      };
+    }
+    
     await childAdmin.save();
     
     res.json({ 

@@ -417,6 +417,19 @@ const adminSchema = new mongoose.Schema({
     leverage: {
       intraday: { type: Number, default: 1 },
       carryForward: { type: Number, default: 1 }
+    },
+    charges: {
+      depositFee: { type: Number, default: 0 },
+      withdrawalFee: { type: Number, default: 0 },
+      tradingFee: { type: Number, default: 0 }
+    },
+    lotSettings: {
+      maxLotSize: { type: Number, default: 100 },
+      minLotSize: { type: Number, default: 1 }
+    },
+    quantitySettings: {
+      maxQuantity: { type: Number, default: 50000 },
+      breakupQuantity: { type: Number, default: 5000 }
     }
   },
   

@@ -1295,16 +1295,16 @@ const AdminManagement = () => {
                     <Users size={16} /> Users ({adm.stats?.totalUsers || adm.userCount || 0})
                   </button>
                   <button
-                    onClick={() => { setSelectedAdmin(adm); setShowFundModal(true); }}
-                    className="px-3 py-2 bg-green-600 hover:bg-green-700 rounded text-sm flex items-center gap-1"
-                  >
-                    <Wallet size={16} /> Fund
-                  </button>
-                  <button
                     onClick={() => { setSelectedAdmin(adm); setShowChargesModal(true); }}
                     className="px-3 py-2 bg-purple-600 hover:bg-purple-700 rounded text-sm flex items-center gap-1"
                   >
                     <Settings size={16} /> Settings
+                  </button>
+                  <button
+                    onClick={() => { setSelectedAdmin(adm); setShowFundModal(true); }}
+                    className="px-3 py-2 bg-green-600 hover:bg-green-700 rounded text-sm flex items-center gap-1"
+                  >
+                    <Wallet size={16} /> Fund
                   </button>
                   <button
                     onClick={() => { setSelectedAdmin(adm); setShowPasswordModal(true); }}
@@ -2088,37 +2088,35 @@ const AdminPasswordResetModal = ({ admin: targetAdmin, token, onClose }) => {
   );
 };
 
-// Admin Charges Modal
+
+// Admin Settings Modal - All Settings (General, Segment Permissions, Script Settings)
 const AdminChargesModal = ({ admin: targetAdmin, token, onClose, onSuccess }) => {
-  const [charges, setCharges] = useState({
-    brokerage: targetAdmin.charges?.brokerage ?? 0,
-    intradayLeverage: targetAdmin.charges?.intradayLeverage ?? 1,
-    deliveryLeverage: targetAdmin.charges?.deliveryLeverage ?? 1,
-    optionBuyLeverage: targetAdmin.charges?.optionBuyLeverage ?? 1,
-    optionSellLeverage: targetAdmin.charges?.optionSellLeverage ?? 1,
-    futuresLeverage: targetAdmin.charges?.futuresLeverage ?? 1,
-    withdrawalFee: targetAdmin.charges?.withdrawalFee ?? 0,
-    profitShare: targetAdmin.charges?.profitShare ?? 0,
-    minWithdrawal: targetAdmin.charges?.minWithdrawal ?? 0,
-    maxWithdrawal: targetAdmin.charges?.maxWithdrawal ?? 0
-  });
-  const [leverageSettings, setLeverageSettings] = useState({
-    maxLeverageFromParent: targetAdmin.leverageSettings?.maxLeverageFromParent ?? 1,
-    intradayLeverage: targetAdmin.leverageSettings?.intradayLeverage ?? 1,
-    carryForwardLeverage: targetAdmin.leverageSettings?.carryForwardLeverage ?? 1
-  });
-  const [brokerageCaps, setBrokerageCaps] = useState({
-    perLot: {
-      min: targetAdmin.brokerageCaps?.perLot?.min ?? 0,
-      max: targetAdmin.brokerageCaps?.perLot?.max ?? 0
+  const [activeTab, setActiveTab] = useState('general');
+  const segmentKeys = ['NSEFUT', 'NSEOPT', 'MCXFUT', 'MCXOPT', 'NSE-EQ', 'BSE-FUT', 'BSE-OPT', 'CRYPTO'];
+
+  // General settings state
+  const [adminSettings, setAdminSettings] = useState({
+    brokerage: {
+      perLot: targetAdmin.defaultSettings?.brokerage?.perLot ?? 0,
+      perCrore: targetAdmin.defaultSettings?.brokerage?.perCrore ?? 0,
+      perTrade: targetAdmin.defaultSettings?.brokerage?.perTrade ?? 0
     },
-    perCrore: {
-      min: targetAdmin.brokerageCaps?.perCrore?.min ?? 0,
-      max: targetAdmin.brokerageCaps?.perCrore?.max ?? 0
+    leverage: {
+      intraday: targetAdmin.defaultSettings?.leverage?.intraday ?? targetAdmin.leverageSettings?.intradayLeverage ?? 1,
+      carryForward: targetAdmin.defaultSettings?.leverage?.carryForward ?? targetAdmin.leverageSettings?.carryForwardLeverage ?? 1
     },
-    perTrade: {
-      min: targetAdmin.brokerageCaps?.perTrade?.min ?? 0,
-      max: targetAdmin.brokerageCaps?.perTrade?.max ?? 0
+    charges: {
+      depositFee: targetAdmin.defaultSettings?.charges?.depositFee ?? 0,
+      withdrawalFee: targetAdmin.defaultSettings?.charges?.withdrawalFee ?? 0,
+      tradingFee: targetAdmin.defaultSettings?.charges?.tradingFee ?? 0
+    },
+    lotSettings: {
+      maxLotSize: targetAdmin.defaultSettings?.lotSettings?.maxLotSize ?? 100,
+      minLotSize: targetAdmin.defaultSettings?.lotSettings?.minLotSize ?? 1
+    },
+    quantitySettings: {
+      maxQuantity: targetAdmin.defaultSettings?.quantitySettings?.maxQuantity ?? 50000,
+      breakupQuantity: targetAdmin.defaultSettings?.quantitySettings?.breakupQuantity ?? 5000
     }
   });
   const [permissions, setPermissions] = useState({
@@ -2127,59 +2125,113 @@ const AdminChargesModal = ({ admin: targetAdmin, token, onClose, onSuccess }) =>
     canChangeLeverage: targetAdmin.permissions?.canChangeLeverage ?? false,
     canChangeLotSettings: targetAdmin.permissions?.canChangeLotSettings ?? false,
     canChangeTradingSettings: targetAdmin.permissions?.canChangeTradingSettings ?? false,
+    canChangeQuantitySettings: targetAdmin.permissions?.canChangeQuantitySettings ?? false,
     canCreateUsers: targetAdmin.permissions?.canCreateUsers !== false,
     canManageFunds: targetAdmin.permissions?.canManageFunds !== false
   });
-  const [defaultBrokerage, setDefaultBrokerage] = useState({
-    perLot: targetAdmin.defaultSettings?.brokerage?.perLot ?? 0,
-    perCrore: targetAdmin.defaultSettings?.brokerage?.perCrore ?? 0,
-    perTrade: targetAdmin.defaultSettings?.brokerage?.perTrade ?? 0
-  });
+
+  // Segment permissions state
+  const [segDefs, setSegDefs] = useState({});
+  const [expandedSeg, setExpandedSeg] = useState('NSEFUT');
+
+  // Script settings state
+  const [scriptDefs, setScriptDefs] = useState({});
+  const [scriptSearch, setScriptSearch] = useState('');
+  const [selectedScript, setSelectedScript] = useState('');
+
   const [loading, setLoading] = useState(false);
+  const [fetching, setFetching] = useState(true);
   const [message, setMessage] = useState({ type: '', text: '' });
+
+  // Fetch segment/script settings on mount
+  useEffect(() => {
+    const fetchSegScript = async () => {
+      try {
+        const { data } = await axios.get(`/api/admin/manage/admins/${targetAdmin._id}/segment-settings`, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        if (data.segmentPermissions) {
+          const sp = data.segmentPermissions;
+          const normalized = {};
+          Object.keys(sp).forEach(k => { normalized[k] = { ...sp[k] }; });
+          setSegDefs(normalized);
+        }
+        if (data.scriptSettings) {
+          const ss = data.scriptSettings;
+          const normalized = {};
+          Object.keys(ss).forEach(k => { normalized[k] = { ...ss[k] }; });
+          setScriptDefs(normalized);
+        }
+      } catch (err) {
+        console.error('Error fetching segment/script settings:', err);
+      } finally {
+        setFetching(false);
+      }
+    };
+    fetchSegScript();
+  }, [targetAdmin._id, token]);
+
+  const updateField = (category, field, value) => {
+    setAdminSettings(prev => ({
+      ...prev,
+      [category]: { ...prev[category], [field]: value }
+    }));
+  };
+
+  const handleSegDefChange = (seg, field, value) => {
+    setSegDefs(prev => ({
+      ...prev,
+      [seg]: { ...prev[seg], [field]: value }
+    }));
+  };
+
+  const handleScriptDefChange = (scriptKey, category, field, value) => {
+    setScriptDefs(prev => ({
+      ...prev,
+      [scriptKey]: {
+        ...prev[scriptKey],
+        [category]: { ...(prev[scriptKey]?.[category] || {}), [field]: value }
+      }
+    }));
+  };
+
+  const handleScriptDefTopLevel = (scriptKey, field, value) => {
+    setScriptDefs(prev => ({
+      ...prev,
+      [scriptKey]: { ...prev[scriptKey], [field]: value }
+    }));
+  };
 
   const handleSave = async (e) => {
     e.preventDefault();
     setLoading(true);
     setMessage({ type: '', text: '' });
     try {
-      // Save charges
-      await axios.put(`/api/admin/manage/admins/${targetAdmin._id}/charges`, { charges }, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      // Save brokerage caps
-      await axios.put(`/api/admin/manage/admins/${targetAdmin._id}/brokerage-caps`, { brokerageCaps }, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      // Save hierarchical leverage settings (single values for intraday and carryforward)
-      await axios.put(`/api/admin/manage/admins/${targetAdmin._id}/leverage`, {
-        maxLeverageFromParent: leverageSettings.maxLeverageFromParent,
-        intradayLeverage: Math.min(leverageSettings.intradayLeverage, leverageSettings.maxLeverageFromParent),
-        carryForwardLeverage: Math.min(leverageSettings.carryForwardLeverage, leverageSettings.maxLeverageFromParent)
-      }, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
+      // Save general default settings
+      await axios.put(`/api/admin/manage/admins/${targetAdmin._id}/default-settings`, {
+        defaultSettings: adminSettings
+      }, { headers: { Authorization: `Bearer ${token}` } });
       // Save permissions
       await axios.put(`/api/admin/manage/admins/${targetAdmin._id}/permissions`, { permissions }, {
         headers: { Authorization: `Bearer ${token}` }
       });
-      // Save default settings
-      await axios.put(`/api/admin/manage/admins/${targetAdmin._id}/default-settings`, {
-        defaultSettings: {
-          brokerage: defaultBrokerage,
-          leverage: {
-            intraday: leverageSettings.intradayLeverage,
-            carryForward: leverageSettings.carryForwardLeverage
-          }
-        }
-      }, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
+      // Save leverage settings
+      await axios.put(`/api/admin/manage/admins/${targetAdmin._id}/leverage`, {
+        maxLeverageFromParent: Math.max(adminSettings.leverage.intraday, adminSettings.leverage.carryForward),
+        intradayLeverage: adminSettings.leverage.intraday,
+        carryForwardLeverage: adminSettings.leverage.carryForward
+      }, { headers: { Authorization: `Bearer ${token}` } });
+      // Save segment permissions and script settings
+      await axios.put(`/api/admin/manage/admins/${targetAdmin._id}/segment-settings`, {
+        segmentPermissions: segDefs,
+        scriptSettings: scriptDefs
+      }, { headers: { Authorization: `Bearer ${token}` } });
+
       setMessage({ type: 'success', text: 'All settings updated successfully' });
       onSuccess();
       setTimeout(onClose, 1500);
     } catch (error) {
-      setMessage({ type: 'error', text: error.response?.data?.message || 'Error updating charges' });
+      setMessage({ type: 'error', text: error.response?.data?.message || 'Error updating settings' });
     } finally {
       setLoading(false);
     }
@@ -2187,227 +2239,429 @@ const AdminChargesModal = ({ admin: targetAdmin, token, onClose, onSuccess }) =>
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div className="bg-dark-800 rounded-lg w-full max-w-lg p-6 max-h-[90vh] overflow-y-auto">
+      <div className="bg-dark-800 rounded-lg w-full max-w-3xl p-6 max-h-[90vh] overflow-y-auto">
         <div className="flex justify-between mb-4">
-          <h2 className="text-xl font-bold">Edit Admin Charges</h2>
+          <h2 className="text-xl font-bold">Admin Settings</h2>
           <button onClick={onClose}><X size={24} /></button>
         </div>
         <div className="bg-dark-700 rounded p-3 mb-4">
           <div className="font-bold">{targetAdmin.name || targetAdmin.username}</div>
           <div className="text-xs text-purple-400 font-mono">{targetAdmin.adminCode}</div>
+          <div className="text-xs text-gray-500 mt-1">Override default settings for this specific admin</div>
         </div>
         {message.text && (
           <div className={`p-3 rounded mb-4 ${message.type === 'success' ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}`}>
             {message.text}
           </div>
         )}
-        <form onSubmit={handleSave} className="space-y-4">
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="block text-xs text-gray-400 mb-1">Brokerage (₹)</label>
-              <input type="number" value={charges.brokerage} onChange={e => setCharges({...charges, brokerage: Number(e.target.value)})} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2" />
-            </div>
-            <div>
-              <label className="block text-xs text-gray-400 mb-1">Withdrawal Fee (₹)</label>
-              <input type="number" value={charges.withdrawalFee} onChange={e => setCharges({...charges, withdrawalFee: Number(e.target.value)})} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2" />
-            </div>
-            <div>
-              <label className="block text-xs text-gray-400 mb-1">Profit Share (%)</label>
-              <input type="number" value={charges.profitShare} onChange={e => setCharges({...charges, profitShare: Number(e.target.value)})} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2" />
-            </div>
-            <div>
-              <label className="block text-xs text-gray-400 mb-1">Min Withdrawal (₹)</label>
-              <input type="number" value={charges.minWithdrawal} onChange={e => setCharges({...charges, minWithdrawal: Number(e.target.value)})} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2" />
-            </div>
-            <div>
-              <label className="block text-xs text-gray-400 mb-1">Max Withdrawal (₹)</label>
-              <input type="number" value={charges.maxWithdrawal} onChange={e => setCharges({...charges, maxWithdrawal: Number(e.target.value)})} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2" />
-            </div>
-          </div>
-          
-          {/* Hierarchical Leverage Settings */}
-          <div className="border-t border-dark-600 pt-4 mt-4">
-            <h3 className="text-sm font-semibold text-purple-400 mb-3">Leverage Settings (Hierarchical)</h3>
-            <p className="text-xs text-gray-500 mb-3">Set leverage options for Intraday (MIS) and Carry Forward (NRML) separately</p>
-            
-            {/* Max Leverage From Parent */}
-            <div className="bg-purple-900/20 border border-purple-500/30 rounded p-3 mb-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <div className="text-sm font-medium text-purple-300">Max Leverage Limit</div>
-                  <div className="text-xs text-gray-500">This admin cannot assign leverage higher than this</div>
-                </div>
-                <div className="flex items-center gap-2">
-                  <input 
-                    type="number" 
-                    min="1" 
-                    max="2000"
-                    value={leverageSettings.maxLeverageFromParent} 
-                    onChange={e => setLeverageSettings({...leverageSettings, maxLeverageFromParent: Number(e.target.value) || 10})} 
-                    className="w-24 bg-dark-700 border border-purple-500/50 rounded px-3 py-2 text-right text-purple-300 font-bold" 
-                  />
-                  <span className="text-purple-300 font-bold">x</span>
-                </div>
-              </div>
-            </div>
 
-            {/* Intraday (MIS) Leverage */}
-            <div className="bg-green-900/20 border border-green-500/30 rounded p-3 mb-3">
-              <div className="flex items-center justify-between">
-                <div>
-                  <div className="text-sm font-medium text-green-400">Intraday (MIS) Leverage</div>
-                  <div className="text-xs text-gray-500">Leverage for intraday trades</div>
-                </div>
-                <div className="flex items-center gap-2">
-                  <input 
-                    type="number" 
-                    min="1" 
-                    max={leverageSettings.maxLeverageFromParent || 2000}
-                    value={leverageSettings.intradayLeverage || 10} 
-                    onChange={e => {
-                      const val = Number(e.target.value) || 1;
-                      const max = leverageSettings.maxLeverageFromParent || 2000;
-                      setLeverageSettings({...leverageSettings, intradayLeverage: Math.min(val, max)});
-                    }} 
-                    className="w-24 bg-dark-700 border border-green-500/50 rounded px-3 py-2 text-right text-green-300 font-bold" 
-                  />
-                  <span className="text-green-300 font-bold">x</span>
-                </div>
-              </div>
-            </div>
+        {/* Tabs */}
+        <div className="flex gap-2 mb-5 border-b border-dark-600 pb-3">
+          <button type="button" onClick={() => setActiveTab('general')} className={`px-4 py-2 rounded-t font-medium text-sm ${activeTab === 'general' ? 'bg-purple-600 text-white' : 'bg-dark-700 text-gray-400 hover:bg-dark-600'}`}>
+            General Settings
+          </button>
+          <button type="button" onClick={() => setActiveTab('segments')} className={`px-4 py-2 rounded-t font-medium text-sm ${activeTab === 'segments' ? 'bg-cyan-600 text-white' : 'bg-dark-700 text-gray-400 hover:bg-dark-600'}`}>
+            Segment Permissions
+          </button>
+          <button type="button" onClick={() => setActiveTab('scripts')} className={`px-4 py-2 rounded-t font-medium text-sm ${activeTab === 'scripts' ? 'bg-green-600 text-white' : 'bg-dark-700 text-gray-400 hover:bg-dark-600'}`}>
+            Script Settings
+          </button>
+        </div>
 
-            {/* Carry Forward (NRML) Leverage */}
-            <div className="bg-blue-900/20 border border-blue-500/30 rounded p-3">
-              <div className="flex items-center justify-between">
-                <div>
-                  <div className="text-sm font-medium text-blue-400">Carry Forward (NRML) Leverage</div>
-                  <div className="text-xs text-gray-500">Leverage for overnight positions</div>
-                </div>
-                <div className="flex items-center gap-2">
-                  <input 
-                    type="number" 
-                    min="1" 
-                    max={leverageSettings.maxLeverageFromParent || 2000}
-                    value={leverageSettings.carryForwardLeverage || 5} 
-                    onChange={e => {
-                      const val = Number(e.target.value) || 1;
-                      const max = leverageSettings.maxLeverageFromParent || 2000;
-                      setLeverageSettings({...leverageSettings, carryForwardLeverage: Math.min(val, max)});
-                    }} 
-                    className="w-24 bg-dark-700 border border-blue-500/50 rounded px-3 py-2 text-right text-blue-300 font-bold" 
-                  />
-                  <span className="text-blue-300 font-bold">x</span>
-                </div>
-              </div>
-            </div>
-          </div>
-          
-          {/* Brokerage Caps Section */}
-          <div className="border-t border-dark-600 pt-4 mt-4">
-            <h3 className="text-sm font-semibold text-yellow-400 mb-3">Brokerage Caps (Min/Max Limits)</h3>
-            <p className="text-xs text-gray-500 mb-3">Set minimum and maximum brokerage this admin can charge to users</p>
-            
-            {/* Per Lot Caps */}
-            <div className="bg-dark-700 rounded p-3 mb-3">
-              <div className="text-xs text-gray-400 font-medium mb-2">Per Lot (₹)</div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs text-gray-500 mb-1">Min</label>
-                  <input type="number" value={brokerageCaps.perLot.min} onChange={e => setBrokerageCaps({...brokerageCaps, perLot: {...brokerageCaps.perLot, min: Number(e.target.value)}})} className="w-full bg-dark-600 border border-dark-500 rounded px-3 py-2 text-sm" />
-                </div>
-                <div>
-                  <label className="block text-xs text-gray-500 mb-1">Max</label>
-                  <input type="number" value={brokerageCaps.perLot.max} onChange={e => setBrokerageCaps({...brokerageCaps, perLot: {...brokerageCaps.perLot, max: Number(e.target.value)}})} className="w-full bg-dark-600 border border-dark-500 rounded px-3 py-2 text-sm" />
-                </div>
-              </div>
-            </div>
-            
-            {/* Per Crore Caps */}
-            <div className="bg-dark-700 rounded p-3 mb-3">
-              <div className="text-xs text-gray-400 font-medium mb-2">Per Crore (₹)</div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs text-gray-500 mb-1">Min</label>
-                  <input type="number" value={brokerageCaps.perCrore.min} onChange={e => setBrokerageCaps({...brokerageCaps, perCrore: {...brokerageCaps.perCrore, min: Number(e.target.value)}})} className="w-full bg-dark-600 border border-dark-500 rounded px-3 py-2 text-sm" />
-                </div>
-                <div>
-                  <label className="block text-xs text-gray-500 mb-1">Max</label>
-                  <input type="number" value={brokerageCaps.perCrore.max} onChange={e => setBrokerageCaps({...brokerageCaps, perCrore: {...brokerageCaps.perCrore, max: Number(e.target.value)}})} className="w-full bg-dark-600 border border-dark-500 rounded px-3 py-2 text-sm" />
-                </div>
-              </div>
-            </div>
-            
-            {/* Per Trade Caps */}
-            <div className="bg-dark-700 rounded p-3">
-              <div className="text-xs text-gray-400 font-medium mb-2">Per Trade (₹)</div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs text-gray-500 mb-1">Min</label>
-                  <input type="number" value={brokerageCaps.perTrade.min} onChange={e => setBrokerageCaps({...brokerageCaps, perTrade: {...brokerageCaps.perTrade, min: Number(e.target.value)}})} className="w-full bg-dark-600 border border-dark-500 rounded px-3 py-2 text-sm" />
-                </div>
-                <div>
-                  <label className="block text-xs text-gray-500 mb-1">Max</label>
-                  <input type="number" value={brokerageCaps.perTrade.max} onChange={e => setBrokerageCaps({...brokerageCaps, perTrade: {...brokerageCaps.perTrade, max: Number(e.target.value)}})} className="w-full bg-dark-600 border border-dark-500 rounded px-3 py-2 text-sm" />
-                </div>
-              </div>
-            </div>
-          </div>
+        <form onSubmit={handleSave}>
 
-          {/* Default Brokerage Settings */}
-          <div className="border-t border-dark-600 pt-4 mt-4">
-            <h3 className="text-sm font-semibold text-cyan-400 mb-3">Default Brokerage (Applied to Users)</h3>
-            <p className="text-xs text-gray-500 mb-3">These values are applied to users by default</p>
-            <div className="grid grid-cols-3 gap-3">
-              <div>
-                <label className="block text-xs text-gray-400 mb-1">Per Lot (₹)</label>
-                <input type="number" value={defaultBrokerage.perLot} onChange={e => setDefaultBrokerage({...defaultBrokerage, perLot: Number(e.target.value)})} className="w-full bg-dark-700 border border-cyan-500/30 rounded px-3 py-2 text-sm" />
-              </div>
-              <div>
-                <label className="block text-xs text-gray-400 mb-1">Per Crore (₹)</label>
-                <input type="number" value={defaultBrokerage.perCrore} onChange={e => setDefaultBrokerage({...defaultBrokerage, perCrore: Number(e.target.value)})} className="w-full bg-dark-700 border border-cyan-500/30 rounded px-3 py-2 text-sm" />
-              </div>
-              <div>
-                <label className="block text-xs text-gray-400 mb-1">Per Trade (₹)</label>
-                <input type="number" value={defaultBrokerage.perTrade} onChange={e => setDefaultBrokerage({...defaultBrokerage, perTrade: Number(e.target.value)})} className="w-full bg-dark-700 border border-cyan-500/30 rounded px-3 py-2 text-sm" />
-              </div>
-            </div>
-          </div>
-
-          {/* Permissions Section */}
-          <div className="border-t border-dark-600 pt-4 mt-4">
-            <h3 className="text-sm font-semibold text-orange-400 mb-3">Permissions</h3>
-            <p className="text-xs text-gray-500 mb-3">Control what this admin can modify. Disabled = locked to default values.</p>
-            <div className="grid grid-cols-1 gap-2">
-              {[
-                { key: 'canChangeBrokerage', label: 'Can Change Brokerage', desc: 'Allow modifying brokerage rates' },
-                { key: 'canChangeCharges', label: 'Can Change Charges', desc: 'Allow modifying fees and charges' },
-                { key: 'canChangeLeverage', label: 'Can Change Leverage', desc: 'Allow modifying leverage settings' },
-                { key: 'canChangeLotSettings', label: 'Can Change Lot Settings', desc: 'Allow modifying lot limits' },
-                { key: 'canChangeTradingSettings', label: 'Can Change Trading Settings', desc: 'Allow modifying trading rules' },
-                { key: 'canCreateUsers', label: 'Can Create Users', desc: 'Allow creating new users' },
-                { key: 'canManageFunds', label: 'Can Manage Funds', desc: 'Allow adding/withdrawing funds' }
-              ].map(perm => (
-                <div key={perm.key} className="flex items-center justify-between p-2 bg-dark-700 rounded">
+          {/* ===== GENERAL SETTINGS TAB ===== */}
+          {activeTab === 'general' && (
+            <div className="space-y-5">
+              {/* Brokerage Settings */}
+              <div className="bg-dark-700/50 rounded-lg p-4">
+                <h3 className="text-sm font-semibold text-green-400 mb-3 flex items-center gap-2"><DollarSign size={16} /> Brokerage Settings</h3>
+                <div className="grid grid-cols-3 gap-3">
                   <div>
-                    <div className="text-sm font-medium">{perm.label}</div>
-                    <div className="text-xs text-gray-500">{perm.desc}</div>
+                    <label className="block text-xs text-gray-400 mb-1">Per Lot (₹)</label>
+                    <input type="number" step="0.01" value={adminSettings.brokerage.perLot} onChange={e => updateField('brokerage', 'perLot', parseFloat(e.target.value) || 0)} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => setPermissions({...permissions, [perm.key]: !permissions[perm.key]})}
-                    className={`w-12 h-6 rounded-full transition ${permissions[perm.key] ? 'bg-green-600' : 'bg-dark-500'}`}
-                  >
-                    <div className={`w-5 h-5 bg-white rounded-full transition transform ${permissions[perm.key] ? 'translate-x-6' : 'translate-x-0.5'}`} />
-                  </button>
+                  <div>
+                    <label className="block text-xs text-gray-400 mb-1">Per Crore (₹)</label>
+                    <input type="number" step="0.01" value={adminSettings.brokerage.perCrore} onChange={e => updateField('brokerage', 'perCrore', parseFloat(e.target.value) || 0)} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-gray-400 mb-1">Per Trade (₹)</label>
+                    <input type="number" step="0.01" value={adminSettings.brokerage.perTrade} onChange={e => updateField('brokerage', 'perTrade', parseFloat(e.target.value) || 0)} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
+                  </div>
                 </div>
-              ))}
+              </div>
+
+              {/* Leverage Settings */}
+              <div className="bg-dark-700/50 rounded-lg p-4">
+                <h3 className="text-sm font-semibold text-blue-400 mb-3 flex items-center gap-2"><TrendingUp size={16} /> Leverage Settings</h3>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs text-gray-400 mb-1">Intraday Leverage (x)</label>
+                    <input type="number" min="1" value={adminSettings.leverage.intraday} onChange={e => updateField('leverage', 'intraday', parseFloat(e.target.value) || 1)} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-gray-400 mb-1">Carry Forward Leverage (x)</label>
+                    <input type="number" min="1" value={adminSettings.leverage.carryForward} onChange={e => updateField('leverage', 'carryForward', parseFloat(e.target.value) || 1)} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
+                  </div>
+                </div>
+              </div>
+
+              {/* Charges Settings */}
+              <div className="bg-dark-700/50 rounded-lg p-4">
+                <h3 className="text-sm font-semibold text-purple-400 mb-3 flex items-center gap-2"><CreditCard size={16} /> Charges Settings</h3>
+                <div className="grid grid-cols-3 gap-3">
+                  <div>
+                    <label className="block text-xs text-gray-400 mb-1">Deposit Fee (%)</label>
+                    <input type="number" step="0.01" value={adminSettings.charges.depositFee} onChange={e => updateField('charges', 'depositFee', parseFloat(e.target.value) || 0)} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-gray-400 mb-1">Withdrawal Fee (%)</label>
+                    <input type="number" step="0.01" value={adminSettings.charges.withdrawalFee} onChange={e => updateField('charges', 'withdrawalFee', parseFloat(e.target.value) || 0)} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-gray-400 mb-1">Trading Fee (%)</label>
+                    <input type="number" step="0.01" value={adminSettings.charges.tradingFee} onChange={e => updateField('charges', 'tradingFee', parseFloat(e.target.value) || 0)} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
+                  </div>
+                </div>
+              </div>
+
+              {/* Lot Settings */}
+              <div className="bg-dark-700/50 rounded-lg p-4">
+                <h3 className="text-sm font-semibold text-orange-400 mb-3 flex items-center gap-2"><Layers size={16} /> Lot Settings</h3>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs text-gray-400 mb-1">Max Lot Size</label>
+                    <input type="number" value={adminSettings.lotSettings.maxLotSize} onChange={e => updateField('lotSettings', 'maxLotSize', parseInt(e.target.value) || 0)} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-gray-400 mb-1">Min Lot Size</label>
+                    <input type="number" value={adminSettings.lotSettings.minLotSize} onChange={e => updateField('lotSettings', 'minLotSize', parseInt(e.target.value) || 0)} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
+                  </div>
+                </div>
+              </div>
+
+              {/* Quantity Settings */}
+              <div className="bg-dark-700/50 rounded-lg p-4">
+                <h3 className="text-sm font-semibold text-cyan-400 mb-3 flex items-center gap-2"><BarChart3 size={16} /> Quantity Settings</h3>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs text-gray-400 mb-1">Max Quantity (Total Limit)</label>
+                    <input type="number" value={adminSettings.quantitySettings.maxQuantity} onChange={e => updateField('quantitySettings', 'maxQuantity', parseInt(e.target.value) || 0)} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-gray-400 mb-1">Breakup Quantity (Per Order)</label>
+                    <input type="number" value={adminSettings.quantitySettings.breakupQuantity} onChange={e => updateField('quantitySettings', 'breakupQuantity', parseInt(e.target.value) || 0)} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
+                  </div>
+                </div>
+              </div>
+
+              {/* Permissions */}
+              <div className="bg-dark-700/50 rounded-lg p-4">
+                <h3 className="text-sm font-semibold text-yellow-400 mb-3 flex items-center gap-2"><Shield size={16} /> Permissions</h3>
+                <div className="grid grid-cols-1 gap-2">
+                  {[
+                    { key: 'canChangeBrokerage', label: 'Can Change Brokerage', desc: 'Allow modifying brokerage rates' },
+                    { key: 'canChangeCharges', label: 'Can Change Charges', desc: 'Allow modifying fees and charges' },
+                    { key: 'canChangeLeverage', label: 'Can Change Leverage', desc: 'Allow modifying leverage settings' },
+                    { key: 'canChangeLotSettings', label: 'Can Change Lot Settings', desc: 'Allow modifying lot limits' },
+                    { key: 'canChangeTradingSettings', label: 'Can Change Trading Settings', desc: 'Allow modifying trading rules' },
+                    { key: 'canChangeQuantitySettings', label: 'Can Change Quantity Settings', desc: 'Allow modifying quantity limits' },
+                    { key: 'canCreateUsers', label: 'Can Create Users', desc: 'Allow creating new users' },
+                    { key: 'canManageFunds', label: 'Can Manage Funds', desc: 'Allow adding/withdrawing funds' }
+                  ].map(perm => (
+                    <div key={perm.key} className="flex items-center justify-between p-2 bg-dark-800 rounded">
+                      <div>
+                        <div className="text-sm font-medium">{perm.label}</div>
+                        <div className="text-xs text-gray-500">{perm.desc}</div>
+                      </div>
+                      <button type="button" onClick={() => setPermissions({...permissions, [perm.key]: !permissions[perm.key]})}
+                        className={`w-12 h-6 rounded-full transition ${permissions[perm.key] ? 'bg-green-600' : 'bg-dark-500'}`}>
+                        <div className={`w-5 h-5 bg-white rounded-full transition transform ${permissions[perm.key] ? 'translate-x-6' : 'translate-x-0.5'}`} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
             </div>
-          </div>
-          
-          <div className="flex gap-3 pt-4">
+          )}
+
+          {/* ===== SEGMENT PERMISSIONS TAB ===== */}
+          {activeTab === 'segments' && (
+            <div>
+              {fetching ? (
+                <div className="text-center py-8"><RefreshCw className="animate-spin inline" size={24} /></div>
+              ) : (
+                <>
+                  <p className="text-xs text-gray-400 mb-3">Click a segment to configure. Green = Enabled, Gray = Disabled.</p>
+                  <div className="flex gap-2 mb-4 flex-wrap">
+                    {segmentKeys.map(seg => {
+                      const isEnabled = segDefs[seg]?.enabled;
+                      return (
+                        <button type="button" key={seg} onClick={() => setExpandedSeg(seg)}
+                          className={`px-3 py-1.5 rounded font-medium text-xs transition ${
+                            expandedSeg === seg
+                              ? (isEnabled ? 'bg-green-600 text-white' : 'bg-gray-600 text-white')
+                              : (isEnabled ? 'bg-green-600/30 text-green-300 hover:bg-green-600/50' : 'bg-dark-700 text-gray-400 hover:bg-dark-600')
+                          }`}>
+                          {seg}
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  {expandedSeg && (() => {
+                    const s = segDefs[expandedSeg] || {};
+                    const isOpt = ['NSEOPT', 'MCXOPT', 'BSE-OPT'].includes(expandedSeg);
+                    return (
+                      <div className="bg-dark-700/50 rounded-lg p-4">
+                        <div className="flex items-center justify-between mb-4">
+                          <h3 className="text-sm font-bold text-cyan-400">{expandedSeg} Settings</h3>
+                          <button type="button" onClick={() => handleSegDefChange(expandedSeg, 'enabled', !s.enabled)}
+                            className={`px-3 py-1 rounded text-xs font-medium ${s.enabled ? 'bg-green-600' : 'bg-red-600'}`}>
+                            {s.enabled ? 'Enabled' : 'Disabled'}
+                          </button>
+                        </div>
+
+                        {/* Leverage */}
+                        <h4 className="text-xs font-semibold text-yellow-400 mb-2">Leverage</h4>
+                        <div className="grid grid-cols-2 gap-3 mb-4">
+                          <div>
+                            <label className="block text-xs text-gray-400 mb-1">Intraday (x)</label>
+                            <input type="number" value={s.exposureIntraday || 0} onChange={e => handleSegDefChange(expandedSeg, 'exposureIntraday', parseFloat(e.target.value) || 0)} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
+                          </div>
+                          <div>
+                            <label className="block text-xs text-gray-400 mb-1">Carry Forward (x)</label>
+                            <input type="number" value={s.exposureCarryForward || 0} onChange={e => handleSegDefChange(expandedSeg, 'exposureCarryForward', parseFloat(e.target.value) || 0)} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
+                          </div>
+                        </div>
+
+                        {/* Lot & Quantity */}
+                        <h4 className="text-xs font-semibold text-blue-400 mb-2">Lot & Quantity</h4>
+                        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+                          <div>
+                            <label className="block text-xs text-gray-400 mb-1">Max Exchange Lots</label>
+                            <input type="number" value={s.maxExchangeLots || 0} onChange={e => handleSegDefChange(expandedSeg, 'maxExchangeLots', parseInt(e.target.value) || 0)} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
+                          </div>
+                          <div>
+                            <label className="block text-xs text-gray-400 mb-1">Max Lots</label>
+                            <input type="number" value={s.maxLots || 0} onChange={e => handleSegDefChange(expandedSeg, 'maxLots', parseInt(e.target.value) || 0)} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
+                          </div>
+                          <div>
+                            <label className="block text-xs text-gray-400 mb-1">Min Lots</label>
+                            <input type="number" value={s.minLots || 0} onChange={e => handleSegDefChange(expandedSeg, 'minLots', parseInt(e.target.value) || 0)} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
+                          </div>
+                          <div>
+                            <label className="block text-xs text-gray-400 mb-1">Order Lots</label>
+                            <input type="number" value={s.orderLots || 0} onChange={e => handleSegDefChange(expandedSeg, 'orderLots', parseInt(e.target.value) || 0)} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
+                          </div>
+                        </div>
+
+                        {/* Brokerage */}
+                        <h4 className="text-xs font-semibold text-green-400 mb-2">Brokerage</h4>
+                        <div className="grid grid-cols-2 gap-3 mb-4">
+                          <div>
+                            <label className="block text-xs text-gray-400 mb-1">Commission (₹)</label>
+                            <input type="number" value={s.commissionLot || 0} onChange={e => handleSegDefChange(expandedSeg, 'commissionLot', parseFloat(e.target.value) || 0)} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
+                          </div>
+                          <div>
+                            <label className="block text-xs text-gray-400 mb-1">Commission Type</label>
+                            <select value={s.commissionType || 'PER_LOT'} onChange={e => handleSegDefChange(expandedSeg, 'commissionType', e.target.value)} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm">
+                              <option value="PER_LOT">Per Lot</option>
+                              <option value="PER_TRADE">Per Trade</option>
+                              <option value="PER_CRORE">Per Crore</option>
+                            </select>
+                          </div>
+                        </div>
+
+                        {/* Option Buy/Sell - only for OPT segments */}
+                        {isOpt && (
+                          <>
+                            <h4 className="text-xs font-semibold text-purple-400 mb-2">Option Buy / Sell</h4>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                              {['optionBuy', 'optionSell'].map(optType => {
+                                const opt = s[optType] || {};
+                                return (
+                                  <div key={optType} className="bg-dark-800 rounded-lg p-3">
+                                    <div className="flex items-center justify-between mb-2">
+                                      <h5 className="text-xs font-semibold">{optType === 'optionBuy' ? 'Option Buy' : 'Option Sell'}</h5>
+                                      <button type="button" onClick={() => handleSegDefChange(expandedSeg, optType, { ...opt, allowed: !opt.allowed })}
+                                        className={`px-2 py-0.5 rounded text-xs font-medium ${opt.allowed !== false ? 'bg-green-600' : 'bg-red-600'}`}>
+                                        {opt.allowed !== false ? 'Allowed' : 'Blocked'}
+                                      </button>
+                                    </div>
+                                    <div className="grid grid-cols-2 gap-2">
+                                      <div>
+                                        <label className="block text-xs text-gray-400 mb-1">Commission (₹)</label>
+                                        <input type="number" value={opt.commission || 0} onChange={e => handleSegDefChange(expandedSeg, optType, { ...opt, commission: parseFloat(e.target.value) || 0 })} className="w-full bg-dark-700 border border-dark-600 rounded px-2 py-1.5 text-xs" />
+                                      </div>
+                                      <div>
+                                        <label className="block text-xs text-gray-400 mb-1">Strike Selection</label>
+                                        <input type="number" value={opt.strikeSelection || 0} onChange={e => handleSegDefChange(expandedSeg, optType, { ...opt, strikeSelection: parseInt(e.target.value) || 0 })} className="w-full bg-dark-700 border border-dark-600 rounded px-2 py-1.5 text-xs" />
+                                      </div>
+                                      <div>
+                                        <label className="block text-xs text-gray-400 mb-1">Max Exch Lots</label>
+                                        <input type="number" value={opt.maxExchangeLots || 0} onChange={e => handleSegDefChange(expandedSeg, optType, { ...opt, maxExchangeLots: parseInt(e.target.value) || 0 })} className="w-full bg-dark-700 border border-dark-600 rounded px-2 py-1.5 text-xs" />
+                                      </div>
+                                      <div>
+                                        <label className="block text-xs text-gray-400 mb-1">Comm. Type</label>
+                                        <select value={opt.commissionType || 'PER_LOT'} onChange={e => handleSegDefChange(expandedSeg, optType, { ...opt, commissionType: e.target.value })} className="w-full bg-dark-700 border border-dark-600 rounded px-2 py-1.5 text-xs">
+                                          <option value="PER_LOT">Per Lot</option>
+                                          <option value="PER_TRADE">Per Trade</option>
+                                          <option value="PER_CRORE">Per Crore</option>
+                                        </select>
+                                      </div>
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </>
+                        )}
+                      </div>
+                    );
+                  })()}
+                </>
+              )}
+            </div>
+          )}
+
+          {/* ===== SCRIPT SETTINGS TAB ===== */}
+          {activeTab === 'scripts' && (
+            <div>
+              {fetching ? (
+                <div className="text-center py-8"><RefreshCw className="animate-spin inline" size={24} /></div>
+              ) : (
+                <>
+                  <p className="text-xs text-gray-400 mb-3">Add a script name and configure its settings.</p>
+                  <div className="flex gap-2 mb-4">
+                    <input type="text" placeholder="Script name (e.g. NIFTY, BANKNIFTY)" value={scriptSearch}
+                      onChange={e => setScriptSearch(e.target.value.toUpperCase())}
+                      className="flex-1 bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
+                    <button type="button" onClick={() => {
+                      if (scriptSearch.trim()) {
+                        setScriptDefs(prev => ({
+                          ...prev,
+                          [scriptSearch.trim()]: prev[scriptSearch.trim()] || {
+                            lotSettings: { maxLots: 50, minLots: 1, perOrderLots: 10 },
+                            quantitySettings: { maxQuantity: 1000, minQuantity: 1, perOrderQuantity: 100 },
+                            fixedMargin: { intradayFuture: 0, carryFuture: 0, optionBuyIntraday: 0, optionBuyCarry: 0, optionSellIntraday: 0, optionSellCarry: 0 },
+                            brokerage: { intradayFuture: 0, carryFuture: 0, optionBuyIntraday: 0, optionBuyCarry: 0, optionSellIntraday: 0, optionSellCarry: 0 },
+                            spread: { buy: 0, sell: 0 },
+                            blocked: false
+                          }
+                        }));
+                        setSelectedScript(scriptSearch.trim());
+                        setScriptSearch('');
+                      }
+                    }} className="px-4 py-2 bg-green-600 hover:bg-green-700 rounded font-medium text-sm">Add</button>
+                  </div>
+
+                  <div className="flex gap-2 mb-4 flex-wrap">
+                    {Object.keys(scriptDefs).map(sk => (
+                      <button type="button" key={sk} onClick={() => setSelectedScript(sk)}
+                        className={`px-3 py-1.5 rounded text-xs font-medium transition ${
+                          selectedScript === sk
+                            ? (scriptDefs[sk]?.blocked ? 'bg-red-600 text-white' : 'bg-cyan-600 text-white')
+                            : (scriptDefs[sk]?.blocked ? 'bg-red-600/30 text-red-300' : 'bg-dark-700 text-gray-400 hover:bg-dark-600')
+                        }`}>
+                        {sk}
+                      </button>
+                    ))}
+                  </div>
+
+                  {selectedScript && scriptDefs[selectedScript] && (() => {
+                    const sc = scriptDefs[selectedScript];
+                    return (
+                      <div className="bg-dark-700/50 rounded-lg p-4">
+                        <div className="flex items-center justify-between mb-4">
+                          <h3 className="text-sm font-bold text-cyan-400">{selectedScript}</h3>
+                          <div className="flex gap-2">
+                            <button type="button" onClick={() => handleScriptDefTopLevel(selectedScript, 'blocked', !sc.blocked)}
+                              className={`px-3 py-1 rounded text-xs font-medium ${sc.blocked ? 'bg-red-600' : 'bg-green-600'}`}>
+                              {sc.blocked ? 'Blocked' : 'Active'}
+                            </button>
+                            <button type="button" onClick={() => {
+                              const nd = { ...scriptDefs }; delete nd[selectedScript]; setScriptDefs(nd); setSelectedScript('');
+                            }} className="px-3 py-1 rounded text-xs font-medium bg-red-800 hover:bg-red-700">Remove</button>
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                          {/* Lot Settings */}
+                          <div>
+                            <h4 className="text-xs font-semibold text-yellow-400 mb-2">Lot Settings</h4>
+                            <div className="space-y-2">
+                              {[['maxLots', 'Max Lots'], ['minLots', 'Min Lots'], ['perOrderLots', 'Per Order Lots']].map(([f, l]) => (
+                                <div key={f}>
+                                  <label className="block text-xs text-gray-400 mb-1">{l}</label>
+                                  <input type="number" value={sc.lotSettings?.[f] || 0} onChange={e => handleScriptDefChange(selectedScript, 'lotSettings', f, parseInt(e.target.value) || 0)} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-1.5 text-sm" />
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                          {/* Quantity Settings */}
+                          <div>
+                            <h4 className="text-xs font-semibold text-blue-400 mb-2">Quantity Settings</h4>
+                            <div className="space-y-2">
+                              {[['maxQuantity', 'Max Quantity'], ['minQuantity', 'Min Quantity'], ['perOrderQuantity', 'Per Order Qty']].map(([f, l]) => (
+                                <div key={f}>
+                                  <label className="block text-xs text-gray-400 mb-1">{l}</label>
+                                  <input type="number" value={sc.quantitySettings?.[f] || 0} onChange={e => handleScriptDefChange(selectedScript, 'quantitySettings', f, parseInt(e.target.value) || 0)} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-1.5 text-sm" />
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                          {/* Spread */}
+                          <div>
+                            <h4 className="text-xs font-semibold text-orange-400 mb-2">Spread</h4>
+                            <div className="space-y-2">
+                              {[['buy', 'Buy Spread'], ['sell', 'Sell Spread']].map(([f, l]) => (
+                                <div key={f}>
+                                  <label className="block text-xs text-gray-400 mb-1">{l}</label>
+                                  <input type="number" step="0.01" value={sc.spread?.[f] || 0} onChange={e => handleScriptDefChange(selectedScript, 'spread', f, parseFloat(e.target.value) || 0)} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-1.5 text-sm" />
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                          {/* Fixed Margin */}
+                          <div className="col-span-full xl:col-span-1">
+                            <h4 className="text-xs font-semibold text-purple-400 mb-2">Fixed Margin</h4>
+                            <div className="grid grid-cols-2 gap-2">
+                              {[['intradayFuture', 'Intra Future'], ['carryFuture', 'Carry Future'], ['optionBuyIntraday', 'Opt Buy Intra'], ['optionBuyCarry', 'Opt Buy Carry'], ['optionSellIntraday', 'Opt Sell Intra'], ['optionSellCarry', 'Opt Sell Carry']].map(([f, l]) => (
+                                <div key={f}>
+                                  <label className="block text-xs text-gray-400 mb-1">{l}</label>
+                                  <input type="number" value={sc.fixedMargin?.[f] || 0} onChange={e => handleScriptDefChange(selectedScript, 'fixedMargin', f, parseFloat(e.target.value) || 0)} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-1.5 text-sm" />
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                          {/* Brokerage */}
+                          <div className="col-span-full xl:col-span-1">
+                            <h4 className="text-xs font-semibold text-green-400 mb-2">Brokerage</h4>
+                            <div className="grid grid-cols-2 gap-2">
+                              {[['intradayFuture', 'Intra Future'], ['carryFuture', 'Carry Future'], ['optionBuyIntraday', 'Opt Buy Intra'], ['optionBuyCarry', 'Opt Buy Carry'], ['optionSellIntraday', 'Opt Sell Intra'], ['optionSellCarry', 'Opt Sell Carry']].map(([f, l]) => (
+                                <div key={f}>
+                                  <label className="block text-xs text-gray-400 mb-1">{l}</label>
+                                  <input type="number" value={sc.brokerage?.[f] || 0} onChange={e => handleScriptDefChange(selectedScript, 'brokerage', f, parseFloat(e.target.value) || 0)} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-1.5 text-sm" />
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })()}
+                </>
+              )}
+            </div>
+          )}
+
+          {/* Save / Cancel */}
+          <div className="flex gap-3 pt-5">
             <button type="button" onClick={onClose} className="flex-1 bg-dark-600 py-2 rounded">Cancel</button>
-            <button type="submit" disabled={loading} className="flex-1 bg-purple-600 hover:bg-purple-700 py-2 rounded">
-              {loading ? 'Saving...' : 'Save Charges'}
+            <button type="submit" disabled={loading} className="flex-1 bg-purple-600 hover:bg-purple-700 py-2 rounded font-medium">
+              {loading ? 'Saving...' : 'Save All Settings'}
             </button>
           </div>
         </form>
@@ -9850,10 +10104,8 @@ const SystemDefaultSettings = () => {
   const { admin } = useAuth();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [mainTab, setMainTab] = useState('roles'); // 'roles', 'segments', 'instruments'
+  const [mainTab, setMainTab] = useState('roles'); // 'roles', 'adminDefaults', 'sharing', 'notifications'
   const [activeTab, setActiveTab] = useState('ADMIN');
-  const [activeSegment, setActiveSegment] = useState('EQUITY');
-  const [activeInstrument, setActiveInstrument] = useState('NIFTY');
   const [message, setMessage] = useState({ type: '', text: '' });
   
   // Admin Segment/Script Defaults state (same structure as admin My Settings)
@@ -9865,8 +10117,6 @@ const SystemDefaultSettings = () => {
   const [adminDefScriptSearch, setAdminDefScriptSearch] = useState('');
   const [adminDefSelectedScript, setAdminDefSelectedScript] = useState('');
   
-  const segments = ['EQUITY', 'FNO', 'MCX', 'CRYPTO', 'CURRENCY'];
-  const instruments = ['NIFTY', 'BANKNIFTY', 'FINNIFTY', 'MIDCPNIFTY', 'SENSEX', 'CRUDEOIL', 'GOLD', 'SILVER', 'NATURALGAS'];
   
   const [settings, setSettings] = useState({
     adminDefaults: {
@@ -9899,24 +10149,6 @@ const SystemDefaultSettings = () => {
       charges: { depositFee: 0, withdrawalFee: 0, tradingFee: 0 },
       lotSettings: { maxLotSize: 10, minLotSize: 1 },
       quantitySettings: { maxQuantity: 5000, breakupQuantity: 500 }
-    },
-    segmentDefaults: {
-      EQUITY: { enabled: true, intradayLeverage: 5, deliveryLeverage: 1, marginRequired: 20, lotSize: 1, intradayMaxLots: 10000, intradayBreakupLots: 1000, carryForwardMaxLots: 5000, carryForwardBreakupLots: 500, brokeragePerLot: 20, brokeragePerCrore: 100, commissionType: 'PER_CRORE', maxExchangeLots: 10000, maxLots: 500, minLots: 1, orderLots: 100 },
-      FNO: { enabled: true, intradayLeverage: 10, carryForwardLeverage: 5, marginRequired: 10, lotSize: 50, intradayMaxLots: 100, intradayBreakupLots: 10, carryForwardMaxLots: 50, carryForwardBreakupLots: 5, brokeragePerLot: 20, brokeragePerCrore: 100, commissionType: 'PER_LOT', maxExchangeLots: 500, maxLots: 100, minLots: 1, orderLots: 25, optionBuy: { allowed: true, commissionType: 'PER_LOT', commission: 20, strikeSelection: 50, maxExchangeLots: 500 }, optionSell: { allowed: true, commissionType: 'PER_LOT', commission: 20, strikeSelection: 50, maxExchangeLots: 500 } },
-      MCX: { enabled: true, intradayLeverage: 8, carryForwardLeverage: 4, marginRequired: 12, lotSize: 100, intradayMaxLots: 50, intradayBreakupLots: 5, carryForwardMaxLots: 25, carryForwardBreakupLots: 3, brokeragePerLot: 25, brokeragePerCrore: 120, commissionType: 'PER_LOT', maxExchangeLots: 200, maxLots: 50, minLots: 1, orderLots: 10, optionBuy: { allowed: true, commissionType: 'PER_LOT', commission: 25, strikeSelection: 50, maxExchangeLots: 200 }, optionSell: { allowed: true, commissionType: 'PER_LOT', commission: 25, strikeSelection: 50, maxExchangeLots: 200 } },
-      CRYPTO: { enabled: true, intradayLeverage: 3, carryForwardLeverage: 2, marginRequired: 33, lotSize: 1, intradayMaxLots: 1000, intradayBreakupLots: 100, carryForwardMaxLots: 500, carryForwardBreakupLots: 50, brokeragePerLot: 30, brokeragePerCrore: 150, commissionType: 'PER_LOT', maxExchangeLots: 1000, maxLots: 500, minLots: 1, orderLots: 100 },
-      CURRENCY: { enabled: true, intradayLeverage: 10, carryForwardLeverage: 5, marginRequired: 10, lotSize: 1000, intradayMaxLots: 100, intradayBreakupLots: 10, carryForwardMaxLots: 50, carryForwardBreakupLots: 5, brokeragePerLot: 20, brokeragePerCrore: 100, commissionType: 'PER_LOT', maxExchangeLots: 100, maxLots: 50, minLots: 1, orderLots: 10 }
-    },
-    instrumentDefaults: {
-      NIFTY: { enabled: true, intradayLeverage: 15, carryForwardLeverage: 8, marginRequired: 7, lotSize: 25, intradayMaxLots: 100, intradayBreakupLots: 10, carryForwardMaxLots: 50, carryForwardBreakupLots: 5, brokeragePerLot: 20 },
-      BANKNIFTY: { enabled: true, intradayLeverage: 12, carryForwardLeverage: 6, marginRequired: 8, lotSize: 15, intradayMaxLots: 100, intradayBreakupLots: 10, carryForwardMaxLots: 50, carryForwardBreakupLots: 5, brokeragePerLot: 20 },
-      FINNIFTY: { enabled: true, intradayLeverage: 12, carryForwardLeverage: 6, marginRequired: 8, lotSize: 25, intradayMaxLots: 100, intradayBreakupLots: 10, carryForwardMaxLots: 50, carryForwardBreakupLots: 5, brokeragePerLot: 20 },
-      MIDCPNIFTY: { enabled: true, intradayLeverage: 10, carryForwardLeverage: 5, marginRequired: 10, lotSize: 50, intradayMaxLots: 100, intradayBreakupLots: 10, carryForwardMaxLots: 50, carryForwardBreakupLots: 5, brokeragePerLot: 20 },
-      SENSEX: { enabled: true, intradayLeverage: 12, carryForwardLeverage: 6, marginRequired: 8, lotSize: 10, intradayMaxLots: 100, intradayBreakupLots: 10, carryForwardMaxLots: 50, carryForwardBreakupLots: 5, brokeragePerLot: 20 },
-      CRUDEOIL: { enabled: true, intradayLeverage: 8, carryForwardLeverage: 4, marginRequired: 12, lotSize: 100, intradayMaxLots: 50, intradayBreakupLots: 5, carryForwardMaxLots: 25, carryForwardBreakupLots: 3, brokeragePerLot: 25 },
-      GOLD: { enabled: true, intradayLeverage: 8, carryForwardLeverage: 4, marginRequired: 12, lotSize: 100, intradayMaxLots: 50, intradayBreakupLots: 5, carryForwardMaxLots: 25, carryForwardBreakupLots: 3, brokeragePerLot: 25 },
-      SILVER: { enabled: true, intradayLeverage: 8, carryForwardLeverage: 4, marginRequired: 12, lotSize: 30, intradayMaxLots: 50, intradayBreakupLots: 5, carryForwardMaxLots: 25, carryForwardBreakupLots: 3, brokeragePerLot: 25 },
-      NATURALGAS: { enabled: true, intradayLeverage: 6, carryForwardLeverage: 3, marginRequired: 15, lotSize: 1250, intradayMaxLots: 25, intradayBreakupLots: 5, carryForwardMaxLots: 10, carryForwardBreakupLots: 2, brokeragePerLot: 25 }
     },
     notificationSettings: {
       marginWarningThreshold: 70,
@@ -9954,24 +10186,6 @@ const SystemDefaultSettings = () => {
       setSettings(prev => ({
         ...prev,
         ...data,
-        segmentDefaults: {
-          EQUITY: { ...prev.segmentDefaults?.EQUITY, ...data.segmentDefaults?.EQUITY },
-          FNO: { ...prev.segmentDefaults?.FNO, ...data.segmentDefaults?.FNO },
-          MCX: { ...prev.segmentDefaults?.MCX, ...data.segmentDefaults?.MCX },
-          CRYPTO: { ...prev.segmentDefaults?.CRYPTO, ...data.segmentDefaults?.CRYPTO },
-          CURRENCY: { ...prev.segmentDefaults?.CURRENCY, ...data.segmentDefaults?.CURRENCY }
-        },
-        instrumentDefaults: {
-          NIFTY: { ...prev.instrumentDefaults?.NIFTY, ...data.instrumentDefaults?.NIFTY },
-          BANKNIFTY: { ...prev.instrumentDefaults?.BANKNIFTY, ...data.instrumentDefaults?.BANKNIFTY },
-          FINNIFTY: { ...prev.instrumentDefaults?.FINNIFTY, ...data.instrumentDefaults?.FINNIFTY },
-          MIDCPNIFTY: { ...prev.instrumentDefaults?.MIDCPNIFTY, ...data.instrumentDefaults?.MIDCPNIFTY },
-          SENSEX: { ...prev.instrumentDefaults?.SENSEX, ...data.instrumentDefaults?.SENSEX },
-          CRUDEOIL: { ...prev.instrumentDefaults?.CRUDEOIL, ...data.instrumentDefaults?.CRUDEOIL },
-          GOLD: { ...prev.instrumentDefaults?.GOLD, ...data.instrumentDefaults?.GOLD },
-          SILVER: { ...prev.instrumentDefaults?.SILVER, ...data.instrumentDefaults?.SILVER },
-          NATURALGAS: { ...prev.instrumentDefaults?.NATURALGAS, ...data.instrumentDefaults?.NATURALGAS }
-        },
         notificationSettings: { ...prev.notificationSettings, ...data.notificationSettings },
         brokerageSharing: { ...prev.brokerageSharing, ...data.brokerageSharing }
       }));
@@ -10056,32 +10270,6 @@ const SystemDefaultSettings = () => {
     }
   };
 
-  const updateSegmentSettings = (segment, field, value) => {
-    setSettings(prev => ({
-      ...prev,
-      segmentDefaults: {
-        ...prev.segmentDefaults,
-        [segment]: {
-          ...prev.segmentDefaults?.[segment],
-          [field]: value
-        }
-      }
-    }));
-  };
-
-  const updateInstrumentSettings = (instrument, field, value) => {
-    setSettings(prev => ({
-      ...prev,
-      instrumentDefaults: {
-        ...prev.instrumentDefaults,
-        [instrument]: {
-          ...prev.instrumentDefaults?.[instrument],
-          [field]: value
-        }
-      }
-    }));
-  };
-
   const updateNotificationSettings = (field, value) => {
     setSettings(prev => ({
       ...prev,
@@ -10122,8 +10310,6 @@ const SystemDefaultSettings = () => {
 
   const roleSettings = getCurrentRoleSettings();
   const showPermissions = activeTab !== 'USER';
-  const currentSegmentSettings = settings.segmentDefaults?.[activeSegment] || {};
-  const currentInstrumentSettings = settings.instrumentDefaults?.[activeInstrument] || {};
 
   if (loading) {
     return <div className="flex items-center justify-center h-64"><RefreshCw className="animate-spin" size={32} /></div>;
@@ -10159,12 +10345,6 @@ const SystemDefaultSettings = () => {
         </button>
         <button onClick={() => setMainTab('sharing')} className={`px-5 py-2.5 rounded-t font-medium ${mainTab === 'sharing' ? 'bg-green-600 text-white' : 'bg-dark-700 text-gray-400'}`}>
           Brokerage Sharing (MLM)
-        </button>
-        <button onClick={() => setMainTab('segments')} className={`px-5 py-2.5 rounded-t font-medium ${mainTab === 'segments' ? 'bg-blue-600 text-white' : 'bg-dark-700 text-gray-400'}`}>
-          Segment Settings
-        </button>
-        <button onClick={() => setMainTab('instruments')} className={`px-5 py-2.5 rounded-t font-medium ${mainTab === 'instruments' ? 'bg-purple-600 text-white' : 'bg-dark-700 text-gray-400'}`}>
-          Instrument Settings
         </button>
         <button onClick={() => setMainTab('adminDefaults')} className={`px-5 py-2.5 rounded-t font-medium ${mainTab === 'adminDefaults' ? 'bg-cyan-600 text-white' : 'bg-dark-700 text-gray-400'}`}>
           Admin Segment & Script Defaults
@@ -10450,505 +10630,6 @@ const SystemDefaultSettings = () => {
           <li>• <strong>User defaults:</strong> Applied to all new users created by any admin in the hierarchy.</li>
         </ul>
       </div>
-        </>
-      )}
-
-      {/* SEGMENT SETTINGS TAB */}
-      {mainTab === 'segments' && (
-        <>
-          <div className="flex gap-2 mb-6 flex-wrap">
-            {segments.map(seg => (
-              <button
-                key={seg}
-                onClick={() => setActiveSegment(seg)}
-                className={`px-4 py-2 rounded font-medium transition ${activeSegment === seg ? 'bg-blue-600 text-white' : 'bg-dark-700 text-gray-400 hover:bg-dark-600'}`}
-              >
-                {seg}
-              </button>
-            ))}
-          </div>
-
-          <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
-            <div className="bg-dark-800 rounded-lg p-6">
-              <div className="flex items-center justify-between mb-4">
-                <h3 className="text-lg font-bold">Enable/Disable</h3>
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={currentSegmentSettings.enabled !== false}
-                    onChange={e => updateSegmentSettings(activeSegment, 'enabled', e.target.checked)}
-                    className="w-5 h-5"
-                  />
-                  <span className={currentSegmentSettings.enabled !== false ? 'text-green-400' : 'text-red-400'}>
-                    {currentSegmentSettings.enabled !== false ? 'Enabled' : 'Disabled'}
-                  </span>
-                </label>
-              </div>
-            </div>
-
-            <div className="bg-dark-800 rounded-lg p-6">
-              <h3 className="text-lg font-bold mb-4 flex items-center gap-2">
-                <TrendingUp size={20} className="text-blue-400" />
-                Leverage Settings
-              </h3>
-              <div className="space-y-4">
-                <div>
-                  <label className="block text-sm text-gray-400 mb-1">Intraday Leverage (x)</label>
-                  <input
-                    type="number"
-                    value={currentSegmentSettings.intradayLeverage || 0}
-                    onChange={e => updateSegmentSettings(activeSegment, 'intradayLeverage', parseFloat(e.target.value) || 0)}
-                    className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm text-gray-400 mb-1">
-                    {activeSegment === 'EQUITY' ? 'Delivery Leverage (x)' : 'Carry Forward Leverage (x)'}
-                  </label>
-                  <input
-                    type="number"
-                    value={activeSegment === 'EQUITY' ? (currentSegmentSettings.deliveryLeverage || 0) : (currentSegmentSettings.carryForwardLeverage || 0)}
-                    onChange={e => updateSegmentSettings(activeSegment, activeSegment === 'EQUITY' ? 'deliveryLeverage' : 'carryForwardLeverage', parseFloat(e.target.value) || 0)}
-                    className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2"
-                  />
-                </div>
-              </div>
-            </div>
-
-            <div className="bg-dark-800 rounded-lg p-6">
-              <h3 className="text-lg font-bold mb-4 flex items-center gap-2">
-                <Shield size={20} className="text-orange-400" />
-                Margin Settings
-              </h3>
-              <div className="space-y-4">
-                <div>
-                  <label className="block text-sm text-gray-400 mb-1">Margin Required (%)</label>
-                  <input
-                    type="number"
-                    value={currentSegmentSettings.marginRequired || 0}
-                    onChange={e => updateSegmentSettings(activeSegment, 'marginRequired', parseFloat(e.target.value) || 0)}
-                    className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2"
-                  />
-                </div>
-              </div>
-            </div>
-
-            <div className="bg-dark-800 rounded-lg p-6">
-              <h3 className="text-lg font-bold mb-4 flex items-center gap-2">
-                <DollarSign size={20} className="text-green-400" />
-                Brokerage Settings
-              </h3>
-              <div className="space-y-4">
-                <div>
-                  <label className="block text-sm text-gray-400 mb-1">Brokerage Per Lot (₹)</label>
-                  <input
-                    type="number"
-                    value={currentSegmentSettings.brokeragePerLot || 0}
-                    onChange={e => updateSegmentSettings(activeSegment, 'brokeragePerLot', parseFloat(e.target.value) || 0)}
-                    className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm text-gray-400 mb-1">Brokerage Per Crore (₹)</label>
-                  <input
-                    type="number"
-                    value={currentSegmentSettings.brokeragePerCrore || 0}
-                    onChange={e => updateSegmentSettings(activeSegment, 'brokeragePerCrore', parseFloat(e.target.value) || 0)}
-                    className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2"
-                  />
-                </div>
-              </div>
-            </div>
-
-            <div className="bg-dark-800 rounded-lg p-6 col-span-full xl:col-span-2">
-              <h3 className="text-lg font-bold mb-4 flex items-center gap-2">
-                <BarChart3 size={20} className="text-cyan-400" />
-                Lot & Quantity Settings
-              </h3>
-              <div className="space-y-4">
-                <div>
-                  <label className="block text-sm text-gray-400 mb-1">Lot Size (Quantity per 1 lot)</label>
-                  <input
-                    type="number"
-                    value={currentSegmentSettings.lotSize || 0}
-                    onChange={e => updateSegmentSettings(activeSegment, 'lotSize', parseInt(e.target.value) || 0)}
-                    className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2"
-                  />
-                </div>
-                
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-3 border-t border-dark-600">
-                  <div className="bg-dark-700/50 rounded-lg p-4">
-                    <h4 className="text-sm font-semibold text-yellow-400 mb-3">⚡ Intraday (Market Hours)</h4>
-                    <div className="space-y-3">
-                      <div>
-                        <label className="block text-xs text-gray-400 mb-1">Max Lots</label>
-                        <input
-                          type="number"
-                          value={currentSegmentSettings.intradayMaxLots || 0}
-                          onChange={e => updateSegmentSettings(activeSegment, 'intradayMaxLots', parseInt(e.target.value) || 0)}
-                          className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-xs text-gray-400 mb-1">Breakup Lots (Per Order)</label>
-                        <input
-                          type="number"
-                          value={currentSegmentSettings.intradayBreakupLots || 0}
-                          onChange={e => updateSegmentSettings(activeSegment, 'intradayBreakupLots', parseInt(e.target.value) || 0)}
-                          className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
-                        />
-                      </div>
-                      <div className="bg-dark-800 rounded p-2 mt-2">
-                        <div className="flex justify-between text-xs">
-                          <span className="text-gray-500">Max Qty:</span>
-                          <span className="text-green-400 font-bold">{((currentSegmentSettings.lotSize || 0) * (currentSegmentSettings.intradayMaxLots || 0)).toLocaleString()}</span>
-                        </div>
-                        <div className="flex justify-between text-xs mt-1">
-                          <span className="text-gray-500">Breakup Qty:</span>
-                          <span className="text-cyan-400 font-bold">{((currentSegmentSettings.lotSize || 0) * (currentSegmentSettings.intradayBreakupLots || 0)).toLocaleString()}</span>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                  
-                  <div className="bg-dark-700/50 rounded-lg p-4">
-                    <h4 className="text-sm font-semibold text-purple-400 mb-3">🌙 Carry Forward (After Market)</h4>
-                    <div className="space-y-3">
-                      <div>
-                        <label className="block text-xs text-gray-400 mb-1">Max Lots</label>
-                        <input
-                          type="number"
-                          value={currentSegmentSettings.carryForwardMaxLots || 0}
-                          onChange={e => updateSegmentSettings(activeSegment, 'carryForwardMaxLots', parseInt(e.target.value) || 0)}
-                          className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-xs text-gray-400 mb-1">Breakup Lots (Per Order)</label>
-                        <input
-                          type="number"
-                          value={currentSegmentSettings.carryForwardBreakupLots || 0}
-                          onChange={e => updateSegmentSettings(activeSegment, 'carryForwardBreakupLots', parseInt(e.target.value) || 0)}
-                          className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
-                        />
-                      </div>
-                      <div className="bg-dark-800 rounded p-2 mt-2">
-                        <div className="flex justify-between text-xs">
-                          <span className="text-gray-500">Max Qty:</span>
-                          <span className="text-green-400 font-bold">{((currentSegmentSettings.lotSize || 0) * (currentSegmentSettings.carryForwardMaxLots || 0)).toLocaleString()}</span>
-                        </div>
-                        <div className="flex justify-between text-xs mt-1">
-                          <span className="text-gray-500">Breakup Qty:</span>
-                          <span className="text-cyan-400 font-bold">{((currentSegmentSettings.lotSize || 0) * (currentSegmentSettings.carryForwardBreakupLots || 0)).toLocaleString()}</span>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Admin-style Inheritance Settings */}
-            <div className="bg-dark-800 rounded-lg p-6 col-span-full">
-              <h3 className="text-lg font-bold mb-4 flex items-center gap-2">
-                <Shield size={20} className="text-yellow-400" />
-                Admin Inheritance Defaults
-                <span className="text-xs font-normal text-gray-400 ml-2">(These cascade to admins/users when they haven't set their own)</span>
-              </h3>
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                <div>
-                  <label className="block text-sm text-gray-400 mb-1">Commission Type</label>
-                  <select
-                    value={currentSegmentSettings.commissionType || 'PER_LOT'}
-                    onChange={e => updateSegmentSettings(activeSegment, 'commissionType', e.target.value)}
-                    className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2"
-                  >
-                    <option value="PER_LOT">Per Lot</option>
-                    <option value="PER_TRADE">Per Trade</option>
-                    <option value="PER_CRORE">Per Crore</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-sm text-gray-400 mb-1">Max Exchange Lots</label>
-                  <input
-                    type="number"
-                    value={currentSegmentSettings.maxExchangeLots || 0}
-                    onChange={e => updateSegmentSettings(activeSegment, 'maxExchangeLots', parseInt(e.target.value) || 0)}
-                    className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm text-gray-400 mb-1">Max Lots</label>
-                  <input
-                    type="number"
-                    value={currentSegmentSettings.maxLots || 0}
-                    onChange={e => updateSegmentSettings(activeSegment, 'maxLots', parseInt(e.target.value) || 0)}
-                    className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm text-gray-400 mb-1">Min Lots</label>
-                  <input
-                    type="number"
-                    value={currentSegmentSettings.minLots || 0}
-                    onChange={e => updateSegmentSettings(activeSegment, 'minLots', parseInt(e.target.value) || 0)}
-                    className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm text-gray-400 mb-1">Order Lots (Breakup)</label>
-                  <input
-                    type="number"
-                    value={currentSegmentSettings.orderLots || 0}
-                    onChange={e => updateSegmentSettings(activeSegment, 'orderLots', parseInt(e.target.value) || 0)}
-                    className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2"
-                  />
-                </div>
-              </div>
-
-              {/* Option Buy/Sell - only for FNO and MCX */}
-              {(activeSegment === 'FNO' || activeSegment === 'MCX') && (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-6 pt-4 border-t border-dark-600">
-                  {['optionBuy', 'optionSell'].map(optType => (
-                    <div key={optType} className="bg-dark-700 rounded-lg p-4">
-                      <div className="flex items-center justify-between mb-3">
-                        <h4 className="text-sm font-semibold text-purple-400">
-                          {optType === 'optionBuy' ? 'Option Buy' : 'Option Sell'}
-                        </h4>
-                        <button
-                          onClick={() => {
-                            const current = currentSegmentSettings[optType]?.allowed !== false;
-                            updateSegmentSettings(activeSegment, optType, { ...currentSegmentSettings[optType], allowed: !current });
-                          }}
-                          className={`px-3 py-1 rounded text-xs font-medium ${
-                            currentSegmentSettings[optType]?.allowed !== false ? 'bg-green-600' : 'bg-red-600'
-                          }`}
-                        >
-                          {currentSegmentSettings[optType]?.allowed !== false ? 'Allowed' : 'Blocked'}
-                        </button>
-                      </div>
-                      <div className="grid grid-cols-2 gap-3">
-                        <div>
-                          <label className="block text-xs text-gray-400 mb-1">Commission (₹)</label>
-                          <input
-                            type="number"
-                            value={currentSegmentSettings[optType]?.commission || 0}
-                            onChange={e => updateSegmentSettings(activeSegment, optType, { ...currentSegmentSettings[optType], commission: parseFloat(e.target.value) || 0 })}
-                            className="w-full bg-dark-800 border border-dark-600 rounded px-2 py-1.5 text-sm"
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-xs text-gray-400 mb-1">Strike Selection</label>
-                          <input
-                            type="number"
-                            value={currentSegmentSettings[optType]?.strikeSelection || 0}
-                            onChange={e => updateSegmentSettings(activeSegment, optType, { ...currentSegmentSettings[optType], strikeSelection: parseInt(e.target.value) || 0 })}
-                            className="w-full bg-dark-800 border border-dark-600 rounded px-2 py-1.5 text-sm"
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-xs text-gray-400 mb-1">Max Exchange Lots</label>
-                          <input
-                            type="number"
-                            value={currentSegmentSettings[optType]?.maxExchangeLots || 0}
-                            onChange={e => updateSegmentSettings(activeSegment, optType, { ...currentSegmentSettings[optType], maxExchangeLots: parseInt(e.target.value) || 0 })}
-                            className="w-full bg-dark-800 border border-dark-600 rounded px-2 py-1.5 text-sm"
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-xs text-gray-400 mb-1">Commission Type</label>
-                          <select
-                            value={currentSegmentSettings[optType]?.commissionType || 'PER_LOT'}
-                            onChange={e => updateSegmentSettings(activeSegment, optType, { ...currentSegmentSettings[optType], commissionType: e.target.value })}
-                            className="w-full bg-dark-800 border border-dark-600 rounded px-2 py-1.5 text-sm"
-                          >
-                            <option value="PER_LOT">Per Lot</option>
-                            <option value="PER_TRADE">Per Trade</option>
-                            <option value="PER_CRORE">Per Crore</option>
-                          </select>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
-        </>
-      )}
-
-      {/* INSTRUMENT SETTINGS TAB */}
-      {mainTab === 'instruments' && (
-        <>
-          <div className="flex gap-2 mb-6 flex-wrap">
-            {instruments.map(inst => (
-              <button
-                key={inst}
-                onClick={() => setActiveInstrument(inst)}
-                className={`px-3 py-2 rounded font-medium text-sm transition ${activeInstrument === inst ? 'bg-purple-600 text-white' : 'bg-dark-700 text-gray-400 hover:bg-dark-600'}`}
-              >
-                {inst}
-              </button>
-            ))}
-          </div>
-
-          <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
-            <div className="bg-dark-800 rounded-lg p-6">
-              <div className="flex items-center justify-between mb-4">
-                <h3 className="text-lg font-bold">{activeInstrument}</h3>
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={currentInstrumentSettings.enabled !== false}
-                    onChange={e => updateInstrumentSettings(activeInstrument, 'enabled', e.target.checked)}
-                    className="w-5 h-5"
-                  />
-                  <span className={currentInstrumentSettings.enabled !== false ? 'text-green-400' : 'text-red-400'}>
-                    {currentInstrumentSettings.enabled !== false ? 'Enabled' : 'Disabled'}
-                  </span>
-                </label>
-              </div>
-            </div>
-
-            <div className="bg-dark-800 rounded-lg p-6">
-              <h3 className="text-lg font-bold mb-4 flex items-center gap-2">
-                <TrendingUp size={20} className="text-blue-400" />
-                Leverage Settings
-              </h3>
-              <div className="space-y-4">
-                <div>
-                  <label className="block text-sm text-gray-400 mb-1">Intraday Leverage (x)</label>
-                  <input
-                    type="number"
-                    value={currentInstrumentSettings.intradayLeverage || 0}
-                    onChange={e => updateInstrumentSettings(activeInstrument, 'intradayLeverage', parseFloat(e.target.value) || 0)}
-                    className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm text-gray-400 mb-1">Carry Forward Leverage (x)</label>
-                  <input
-                    type="number"
-                    value={currentInstrumentSettings.carryForwardLeverage || 0}
-                    onChange={e => updateInstrumentSettings(activeInstrument, 'carryForwardLeverage', parseFloat(e.target.value) || 0)}
-                    className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2"
-                  />
-                </div>
-              </div>
-            </div>
-
-            <div className="bg-dark-800 rounded-lg p-6">
-              <h3 className="text-lg font-bold mb-4 flex items-center gap-2">
-                <Shield size={20} className="text-orange-400" />
-                Margin & Lot Settings
-              </h3>
-              <div className="space-y-4">
-                <div>
-                  <label className="block text-sm text-gray-400 mb-1">Margin Required (%)</label>
-                  <input
-                    type="number"
-                    value={currentInstrumentSettings.marginRequired || 0}
-                    onChange={e => updateInstrumentSettings(activeInstrument, 'marginRequired', parseFloat(e.target.value) || 0)}
-                    className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm text-gray-400 mb-1">Lot Size (Quantity per 1 lot)</label>
-                  <input
-                    type="number"
-                    value={currentInstrumentSettings.lotSize || 0}
-                    onChange={e => updateInstrumentSettings(activeInstrument, 'lotSize', parseInt(e.target.value) || 0)}
-                    className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm text-gray-400 mb-1">Brokerage Per Lot (₹)</label>
-                  <input
-                    type="number"
-                    value={currentInstrumentSettings.brokeragePerLot || 0}
-                    onChange={e => updateInstrumentSettings(activeInstrument, 'brokeragePerLot', parseFloat(e.target.value) || 0)}
-                    className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2"
-                  />
-                </div>
-              </div>
-            </div>
-
-            <div className="bg-dark-800 rounded-lg p-6 col-span-full xl:col-span-2">
-              <h3 className="text-lg font-bold mb-4 flex items-center gap-2">
-                <BarChart3 size={20} className="text-cyan-400" />
-                Lot & Quantity Settings
-              </h3>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div className="bg-dark-700/50 rounded-lg p-4">
-                  <h4 className="text-sm font-semibold text-yellow-400 mb-3">⚡ Intraday (Market Hours)</h4>
-                  <div className="space-y-3">
-                    <div>
-                      <label className="block text-xs text-gray-400 mb-1">Max Lots</label>
-                      <input
-                        type="number"
-                        value={currentInstrumentSettings.intradayMaxLots || 0}
-                        onChange={e => updateInstrumentSettings(activeInstrument, 'intradayMaxLots', parseInt(e.target.value) || 0)}
-                        className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs text-gray-400 mb-1">Breakup Lots (Per Order)</label>
-                      <input
-                        type="number"
-                        value={currentInstrumentSettings.intradayBreakupLots || 0}
-                        onChange={e => updateInstrumentSettings(activeInstrument, 'intradayBreakupLots', parseInt(e.target.value) || 0)}
-                        className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
-                      />
-                    </div>
-                    <div className="bg-dark-800 rounded p-2 mt-2">
-                      <div className="flex justify-between text-xs">
-                        <span className="text-gray-500">Max Qty:</span>
-                        <span className="text-green-400 font-bold">{((currentInstrumentSettings.lotSize || 0) * (currentInstrumentSettings.intradayMaxLots || 0)).toLocaleString()}</span>
-                      </div>
-                      <div className="flex justify-between text-xs mt-1">
-                        <span className="text-gray-500">Breakup Qty:</span>
-                        <span className="text-cyan-400 font-bold">{((currentInstrumentSettings.lotSize || 0) * (currentInstrumentSettings.intradayBreakupLots || 0)).toLocaleString()}</span>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-                
-                <div className="bg-dark-700/50 rounded-lg p-4">
-                  <h4 className="text-sm font-semibold text-purple-400 mb-3">🌙 Carry Forward (After Market)</h4>
-                  <div className="space-y-3">
-                    <div>
-                      <label className="block text-xs text-gray-400 mb-1">Max Lots</label>
-                      <input
-                        type="number"
-                        value={currentInstrumentSettings.carryForwardMaxLots || 0}
-                        onChange={e => updateInstrumentSettings(activeInstrument, 'carryForwardMaxLots', parseInt(e.target.value) || 0)}
-                        className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs text-gray-400 mb-1">Breakup Lots (Per Order)</label>
-                      <input
-                        type="number"
-                        value={currentInstrumentSettings.carryForwardBreakupLots || 0}
-                        onChange={e => updateInstrumentSettings(activeInstrument, 'carryForwardBreakupLots', parseInt(e.target.value) || 0)}
-                        className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
-                      />
-                    </div>
-                    <div className="bg-dark-800 rounded p-2 mt-2">
-                      <div className="flex justify-between text-xs">
-                        <span className="text-gray-500">Max Qty:</span>
-                        <span className="text-green-400 font-bold">{((currentInstrumentSettings.lotSize || 0) * (currentInstrumentSettings.carryForwardMaxLots || 0)).toLocaleString()}</span>
-                      </div>
-                      <div className="flex justify-between text-xs mt-1">
-                        <span className="text-gray-500">Breakup Qty:</span>
-                        <span className="text-cyan-400 font-bold">{((currentInstrumentSettings.lotSize || 0) * (currentInstrumentSettings.carryForwardBreakupLots || 0)).toLocaleString()}</span>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
         </>
       )}
 
