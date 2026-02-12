@@ -12,6 +12,8 @@ import Position from '../models/Position.js';
 import SystemSettings from '../models/SystemSettings.js';
 import PattiSharing from '../models/PattiSharing.js';
 import GameSettings from '../models/GameSettings.js';
+import NiftyNumberBet from '../models/NiftyNumberBet.js';
+import NiftyJackpotBid from '../models/NiftyJackpotBid.js';
 import jwt from 'jsonwebtoken';
 
 const router = express.Router();
@@ -4545,6 +4547,16 @@ router.put('/game-settings', protectAdmin, superAdminOnly, async (req, res) => {
     if (!settings) {
       settings = new GameSettings(req.body);
     } else {
+      // Deep merge games separately so Mongoose detects nested changes
+      if (req.body.games) {
+        for (const [gameId, gameData] of Object.entries(req.body.games)) {
+          if (settings.games && settings.games[gameId]) {
+            Object.assign(settings.games[gameId], gameData);
+          }
+        }
+        settings.markModified('games');
+        delete req.body.games;
+      }
       Object.assign(settings, req.body);
     }
     await settings.save();
@@ -4564,6 +4576,7 @@ router.put('/game-settings/game/:gameId', protectAdmin, superAdminOnly, async (r
     
     if (settings.games && settings.games[gameId]) {
       Object.assign(settings.games[gameId], gameData);
+      settings.markModified('games');
       await settings.save();
       res.json(settings);
     } else {
@@ -4736,6 +4749,260 @@ router.delete('/users/:id/permanent', protectAdmin, superAdminOnly, async (req, 
     res.json({ 
       message: 'User permanently deleted',
       deletedUser: user.username || user.email
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// ==================== NIFTY NUMBER GAME (Admin) ====================
+
+// Get all Nifty Number bets for a date
+router.get('/nifty-number/bets', protectAdmin, superAdminOnly, async (req, res) => {
+  try {
+    const { date } = req.query;
+    const filter = date ? { betDate: date } : {};
+    const bets = await NiftyNumberBet.find(filter)
+      .populate('user', 'name email username userId')
+      .populate('admin', 'name adminCode')
+      .sort({ createdAt: -1 })
+      .limit(200);
+
+    const stats = {
+      totalBets: bets.length,
+      totalAmount: bets.reduce((s, b) => s + b.amount, 0),
+      pending: bets.filter(b => b.status === 'pending').length,
+      won: bets.filter(b => b.status === 'won').length,
+      lost: bets.filter(b => b.status === 'lost').length,
+    };
+
+    res.json({ bets, stats });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Declare Nifty Number result for a date
+router.post('/nifty-number/declare-result', protectAdmin, superAdminOnly, async (req, res) => {
+  try {
+    const { date, resultNumber, closingPrice } = req.body;
+
+    const num = parseInt(resultNumber);
+    if (isNaN(num) || num < 0 || num > 99) {
+      return res.status(400).json({ message: 'Result number must be between 0 and 99 (.00-.99)' });
+    }
+    if (!date) {
+      return res.status(400).json({ message: 'Date is required' });
+    }
+
+    // Get game settings for profit distribution
+    const settings = await GameSettings.getSettings();
+    const gameConfig = settings.games?.niftyNumber;
+    const fixedProfit = gameConfig?.fixedProfit || 4000;
+    const adminSharePct = gameConfig?.adminSharePercent || 50;
+    const superAdminSharePct = gameConfig?.superAdminSharePercent || 50;
+
+    // Get all pending bets for this date
+    const pendingBets = await NiftyNumberBet.find({ betDate: date, status: 'pending' });
+    if (pendingBets.length === 0) {
+      return res.status(400).json({ message: 'No pending bets found for this date' });
+    }
+
+    let winnersCount = 0;
+    let losersCount = 0;
+    let totalPaidOut = 0;
+    let totalCollected = 0;
+
+    for (const bet of pendingBets) {
+      const won = bet.selectedNumber === num;
+      bet.resultNumber = num;
+      bet.closingPrice = closingPrice || null;
+      bet.resultDeclaredAt = new Date();
+
+      if (won) {
+        bet.status = 'won';
+        bet.profit = fixedProfit;
+
+        // Credit user: refund bet amount + fixed profit
+        const user = await User.findById(bet.user);
+        if (user) {
+          user.gamesWallet.balance += bet.amount + fixedProfit;
+          user.gamesWallet.usedMargin = Math.max(0, user.gamesWallet.usedMargin - bet.amount);
+          user.gamesWallet.realizedPnL += fixedProfit;
+          user.gamesWallet.todayRealizedPnL += fixedProfit;
+          await user.save();
+        }
+        totalPaidOut += bet.amount + fixedProfit;
+        winnersCount++;
+      } else {
+        bet.status = 'lost';
+        bet.profit = -bet.amount;
+
+        // Distribute loss to admin/superadmin
+        const lossAmount = bet.amount;
+        const adminShare = parseFloat((lossAmount * adminSharePct / 100).toFixed(2));
+        const superAdminShare = parseFloat((lossAmount * superAdminSharePct / 100).toFixed(2));
+        bet.distribution = { adminShare, superAdminShare, platformShare: 0 };
+
+        // Release used margin
+        const user = await User.findById(bet.user);
+        if (user) {
+          user.gamesWallet.usedMargin = Math.max(0, user.gamesWallet.usedMargin - bet.amount);
+          user.gamesWallet.realizedPnL -= bet.amount;
+          user.gamesWallet.todayRealizedPnL -= bet.amount;
+          await user.save();
+        }
+
+        totalCollected += lossAmount;
+        losersCount++;
+      }
+
+      await bet.save();
+    }
+
+    res.json({
+      message: `Result declared: .${num.toString().padStart(2, '0')}`,
+      resultNumber: num,
+      date,
+      closingPrice,
+      summary: {
+        totalBets: pendingBets.length,
+        winners: winnersCount,
+        losers: losersCount,
+        totalPaidOut,
+        totalCollected,
+        adminShareTotal: parseFloat((totalCollected * adminSharePct / 100).toFixed(2)),
+        superAdminShareTotal: parseFloat((totalCollected * superAdminSharePct / 100).toFixed(2)),
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Get Nifty Jackpot bids for a date (admin view)
+router.get('/nifty-jackpot/bids', protectAdmin, async (req, res) => {
+  try {
+    const { date } = req.query;
+    if (!date) return res.status(400).json({ message: 'Date is required' });
+
+    const bids = await NiftyJackpotBid.find({ betDate: date })
+      .sort({ amount: -1 })
+      .populate('user', 'name username phone');
+
+    const settings = await GameSettings.getSettings();
+    const gc = settings.games?.niftyJackpot;
+    const topWinners = gc?.topWinners || 20;
+    const firstPrize = gc?.firstPrize || 3000;
+    const prizeStep = gc?.prizeStep || 20;
+
+    res.json({
+      date,
+      totalBids: bids.length,
+      topWinners,
+      firstPrize,
+      prizeStep,
+      bids: bids.map((b, idx) => ({
+        _id: b._id,
+        user: { _id: b.user?._id, name: b.user?.name, username: b.user?.username },
+        amount: b.amount,
+        rank: idx + 1,
+        prize: (idx + 1) <= topWinners ? Math.max(0, firstPrize - idx * prizeStep) : 0,
+        status: b.status
+      }))
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Declare Nifty Jackpot result for a date
+router.post('/nifty-jackpot/declare-result', protectAdmin, superAdminOnly, async (req, res) => {
+  try {
+    const { date } = req.body;
+    if (!date) return res.status(400).json({ message: 'Date is required' });
+
+    // Get game settings
+    const settings = await GameSettings.getSettings();
+    const gc = settings.games?.niftyJackpot;
+    const topWinners = gc?.topWinners || 20;
+    const firstPrize = gc?.firstPrize || 3000;
+    const prizeStep = gc?.prizeStep || 20;
+    const adminSharePct = gc?.adminSharePercent || 50;
+    const superAdminSharePct = gc?.superAdminSharePercent || 50;
+
+    // Get all pending bids for this date, sorted by amount descending
+    const pendingBids = await NiftyJackpotBid.find({ betDate: date, status: 'pending' }).sort({ amount: -1 });
+    if (pendingBids.length === 0) {
+      return res.status(400).json({ message: 'No pending bids found for this date' });
+    }
+
+    let winnersCount = 0;
+    let losersCount = 0;
+    let totalPaidOut = 0;
+    let totalCollected = 0;
+
+    for (let i = 0; i < pendingBids.length; i++) {
+      const bid = pendingBids[i];
+      const rank = i + 1;
+      bid.rank = rank;
+      bid.resultDeclaredAt = new Date();
+
+      if (rank <= topWinners) {
+        // Winner
+        const prize = Math.max(0, firstPrize - (rank - 1) * prizeStep);
+        bid.status = 'won';
+        bid.prize = prize;
+
+        // Credit user: refund bid amount + prize
+        const user = await User.findById(bid.user);
+        if (user) {
+          user.gamesWallet.balance += bid.amount + prize;
+          user.gamesWallet.usedMargin = Math.max(0, user.gamesWallet.usedMargin - bid.amount);
+          user.gamesWallet.realizedPnL += prize;
+          user.gamesWallet.todayRealizedPnL += prize;
+          await user.save();
+        }
+        totalPaidOut += bid.amount + prize;
+        winnersCount++;
+      } else {
+        // Loser
+        bid.status = 'lost';
+        bid.prize = 0;
+
+        const lossAmount = bid.amount;
+        const adminShare = parseFloat((lossAmount * adminSharePct / 100).toFixed(2));
+        const superAdminShare = parseFloat((lossAmount * superAdminSharePct / 100).toFixed(2));
+        bid.distribution = { adminShare, superAdminShare, platformShare: 0 };
+
+        // Release used margin
+        const user = await User.findById(bid.user);
+        if (user) {
+          user.gamesWallet.usedMargin = Math.max(0, user.gamesWallet.usedMargin - bid.amount);
+          user.gamesWallet.realizedPnL -= bid.amount;
+          user.gamesWallet.todayRealizedPnL -= bid.amount;
+          await user.save();
+        }
+
+        totalCollected += lossAmount;
+        losersCount++;
+      }
+
+      await bid.save();
+    }
+
+    res.json({
+      message: `Jackpot result declared for ${date}`,
+      date,
+      summary: {
+        totalBids: pendingBids.length,
+        winners: winnersCount,
+        losers: losersCount,
+        totalPaidOut,
+        totalCollected,
+        adminShareTotal: parseFloat((totalCollected * adminSharePct / 100).toFixed(2)),
+        superAdminShareTotal: parseFloat((totalCollected * superAdminSharePct / 100).toFixed(2)),
+      }
     });
   } catch (error) {
     res.status(500).json({ message: error.message });

@@ -43,35 +43,49 @@ const gameSettingsSchema = new mongoose.Schema({
     niftyNumber: {
       ...gameConfigSchema.obj,
       name: { type: String, default: 'Nifty Number' },
-      description: { type: String, default: 'Guess the last digit of Nifty price' },
+      description: { type: String, default: 'Pick a decimal (.00-.99) of Nifty closing price' },
       winMultiplier: { type: Number, default: 9 },
-      roundDuration: { type: Number, default: 300 },
+      roundDuration: { type: Number, default: 86400 }, // 1 day in seconds
       enabled: { type: Boolean, default: true },
       minBet: { type: Number, default: 100 },
       maxBet: { type: Number, default: 10000 },
-      brokeragePercent: { type: Number, default: 10 }
+      brokeragePercent: { type: Number, default: 10 },
+      fixedProfit: { type: Number, default: 4000 }, // Fixed profit on win
+      adminSharePercent: { type: Number, default: 50 }, // Admin gets this % of losing bets
+      superAdminSharePercent: { type: Number, default: 50 }, // SuperAdmin gets this % of losing bets
+      resultTime: { type: String, default: '15:30' }, // IST time when result is declared
+      betsPerDay: { type: Number, default: 10 } // Max bets per user per day
     },
     niftyJackpot: {
       ...gameConfigSchema.obj,
       name: { type: String, default: 'Nifty Jackpot' },
-      description: { type: String, default: 'Pick your lucky number for jackpot' },
-      winMultiplier: { type: Number, default: 100 },
-      roundDuration: { type: Number, default: 900 },
+      description: { type: String, default: 'Bid and compete for top ranks to win prizes' },
+      winMultiplier: { type: Number, default: 1.5 },
+      roundDuration: { type: Number, default: 86400 },
       enabled: { type: Boolean, default: true },
-      minBet: { type: Number, default: 50 },
-      maxBet: { type: Number, default: 5000 },
-      brokeragePercent: { type: Number, default: 15 }
+      minBet: { type: Number, default: 100 },
+      maxBet: { type: Number, default: 50000 },
+      brokeragePercent: { type: Number, default: 5 },
+      topWinners: { type: Number, default: 20 },
+      firstPrize: { type: Number, default: 3000 },
+      prizeStep: { type: Number, default: 20 },
+      resultTime: { type: String, default: '15:30' },
+      bidsPerDay: { type: Number, default: 1 },
+      adminSharePercent: { type: Number, default: 50 },
+      superAdminSharePercent: { type: Number, default: 50 }
     },
     niftyBracket: {
       ...gameConfigSchema.obj,
       name: { type: String, default: 'Nifty Bracket' },
-      description: { type: String, default: 'Predict the price range' },
-      winMultiplier: { type: Number, default: 5 },
-      roundDuration: { type: Number, default: 180 },
+      description: { type: String, default: 'Buy/Sell on bracket levels around Nifty price' },
+      winMultiplier: { type: Number, default: 2 },
+      roundDuration: { type: Number, default: 300 }, // 5 min max wait
       enabled: { type: Boolean, default: true },
       minBet: { type: Number, default: 100 },
       maxBet: { type: Number, default: 25000 },
-      brokeragePercent: { type: Number, default: 8 }
+      brokeragePercent: { type: Number, default: 5 },
+      bracketGap: { type: Number, default: 20 }, // Points above/below current price
+      expiryMinutes: { type: Number, default: 5 }, // Trade expires if neither level hit
     },
     btcUpDown: {
       ...gameConfigSchema.obj,

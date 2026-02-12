@@ -6,6 +6,10 @@ import BankAccount from '../models/BankAccount.js';
 import FundRequest from '../models/FundRequest.js';
 import Notification from '../models/Notification.js';
 import BrokerChangeRequest from '../models/BrokerChangeRequest.js';
+import GameSettings from '../models/GameSettings.js';
+import NiftyNumberBet from '../models/NiftyNumberBet.js';
+import NiftyBracketTrade from '../models/NiftyBracketTrade.js';
+import NiftyJackpotBid from '../models/NiftyJackpotBid.js';
 import { protectUser, generateToken, generateSessionToken } from '../middleware/auth.js';
 
 const router = express.Router();
@@ -439,7 +443,7 @@ router.post('/withdraw-request', protectUser, async (req, res) => {
 // Get wallet info (enhanced with dual wallet system)
 router.get('/wallet', protectUser, async (req, res) => {
   try {
-    const user = await User.findById(req.user._id).select('wallet cryptoWallet mcxWallet marginSettings rmsSettings');
+    const user = await User.findById(req.user._id).select('wallet cryptoWallet mcxWallet gamesWallet marginSettings rmsSettings');
     
     // Dual wallet system - Main Wallet (cashBalance) and Trading Account (tradingBalance)
     // Handle legacy: if cashBalance is 0 but balance has value, use balance as cashBalance
@@ -493,6 +497,17 @@ router.get('/wallet', protectUser, async (req, res) => {
         todayRealizedPnL: user.mcxWallet?.todayRealizedPnL || 0,
         todayUnrealizedPnL: user.mcxWallet?.todayUnrealizedPnL || 0,
         availableBalance: (user.mcxWallet?.balance || 0) - (user.mcxWallet?.usedMargin || 0)
+      },
+      
+      // Separate Games Wallet - For fantasy/games trading
+      gamesWallet: {
+        balance: user.gamesWallet?.balance || 0,
+        usedMargin: user.gamesWallet?.usedMargin || 0,
+        realizedPnL: user.gamesWallet?.realizedPnL || 0,
+        unrealizedPnL: user.gamesWallet?.unrealizedPnL || 0,
+        todayRealizedPnL: user.gamesWallet?.todayRealizedPnL || 0,
+        todayUnrealizedPnL: user.gamesWallet?.todayUnrealizedPnL || 0,
+        availableBalance: (user.gamesWallet?.balance || 0) - (user.gamesWallet?.usedMargin || 0)
       },
       
       // Legacy fields for backward compatibility
@@ -1072,6 +1087,732 @@ router.get('/demo/info', protectUser, async (req, res) => {
       daysRemaining,
       demoBalance: user.wallet.balance || user.wallet.cashBalance
     });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// PUBLIC: Get game settings for frontend (user-facing)
+router.get('/game-settings', protectUser, async (req, res) => {
+  try {
+    const settings = await GameSettings.getSettings();
+    const settingsObj = settings.toObject();
+    
+    // Return only what the frontend needs (no internal/admin fields)
+    const games = {};
+    if (settingsObj.games) {
+      for (const [key, game] of Object.entries(settingsObj.games)) {
+        games[key] = {
+          enabled: game.enabled,
+          name: game.name,
+          description: game.description,
+          winMultiplier: game.winMultiplier,
+          brokeragePercent: game.brokeragePercent,
+          minBet: game.minBet,
+          maxBet: game.maxBet,
+          roundDuration: game.roundDuration,
+          cooldownBetweenRounds: game.cooldownBetweenRounds,
+          // Nifty Number specific
+          ...(game.fixedProfit !== undefined && { fixedProfit: game.fixedProfit }),
+          ...(game.resultTime !== undefined && { resultTime: game.resultTime }),
+          ...(game.betsPerDay !== undefined && { betsPerDay: game.betsPerDay }),
+          // Nifty Bracket specific
+          ...(game.bracketGap !== undefined && { bracketGap: game.bracketGap }),
+          ...(game.expiryMinutes !== undefined && { expiryMinutes: game.expiryMinutes }),
+          // Nifty Jackpot specific
+          ...(game.topWinners !== undefined && { topWinners: game.topWinners }),
+          ...(game.firstPrize !== undefined && { firstPrize: game.firstPrize }),
+          ...(game.prizeStep !== undefined && { prizeStep: game.prizeStep }),
+          ...(game.bidsPerDay !== undefined && { bidsPerDay: game.bidsPerDay }),
+        };
+      }
+    }
+
+    res.json({
+      gamesEnabled: settingsObj.gamesEnabled,
+      maintenanceMode: settingsObj.maintenanceMode,
+      maintenanceMessage: settingsObj.maintenanceMessage,
+      games,
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// ==================== UP/DOWN GAME (Nifty & BTC) ====================
+
+// Place an Up/Down bet (debit gamesWallet)
+router.post('/game-bet/place', protectUser, async (req, res) => {
+  try {
+    const { gameId, prediction, amount, entryPrice, windowNumber } = req.body;
+    const userId = req.user._id;
+
+    if (!['UP', 'DOWN'].includes(prediction)) {
+      return res.status(400).json({ message: 'Prediction must be UP or DOWN' });
+    }
+
+    // Map gameId to settings key
+    const settingsKey = gameId === 'btcupdown' ? 'btcUpDown' : 'niftyUpDown';
+    const settings = await GameSettings.getSettings();
+    const gameConfig = settings.games?.[settingsKey];
+    if (!gameConfig?.enabled) {
+      return res.status(400).json({ message: 'This game is currently disabled' });
+    }
+
+    const betAmount = parseFloat(amount);
+    if (isNaN(betAmount) || betAmount <= 0) {
+      return res.status(400).json({ message: 'Invalid bet amount' });
+    }
+    if (betAmount < (gameConfig.minBet || 100)) {
+      return res.status(400).json({ message: `Minimum bet is ₹${gameConfig.minBet || 100}` });
+    }
+    if (betAmount > (gameConfig.maxBet || 50000)) {
+      return res.status(400).json({ message: `Maximum bet is ₹${gameConfig.maxBet || 50000}` });
+    }
+
+    const user = await User.findById(userId);
+    if (!user || user.gamesWallet.balance < betAmount) {
+      return res.status(400).json({ message: 'Insufficient balance in games wallet' });
+    }
+
+    // Debit
+    user.gamesWallet.balance -= betAmount;
+    user.gamesWallet.usedMargin += betAmount;
+    await user.save();
+
+    res.json({
+      message: 'Bet placed!',
+      betId: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+      newBalance: user.gamesWallet.balance
+    });
+  } catch (error) {
+    console.error('Game bet place error:', error);
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Resolve Up/Down bets (credit/debit gamesWallet based on results)
+router.post('/game-bet/resolve', protectUser, async (req, res) => {
+  try {
+    const { trades } = req.body;
+    // trades = [{ amount, won, pnl, brokerage }]
+    if (!Array.isArray(trades) || trades.length === 0) {
+      return res.status(400).json({ message: 'No trades to resolve' });
+    }
+
+    const user = await User.findById(req.user._id);
+    if (!user) return res.status(404).json({ message: 'User not found' });
+
+    let totalPnl = 0;
+    for (const trade of trades) {
+      const amount = parseFloat(trade.amount);
+      const pnl = parseFloat(trade.pnl);
+      const won = trade.won;
+
+      // Release used margin
+      user.gamesWallet.usedMargin = Math.max(0, user.gamesWallet.usedMargin - amount);
+
+      if (won) {
+        // Refund bet + profit
+        user.gamesWallet.balance += amount + pnl;
+        user.gamesWallet.realizedPnL += pnl;
+        user.gamesWallet.todayRealizedPnL += pnl;
+      } else {
+        // Loss — bet already deducted, just track P&L
+        user.gamesWallet.realizedPnL -= amount;
+        user.gamesWallet.todayRealizedPnL -= amount;
+      }
+      totalPnl += pnl;
+    }
+
+    await user.save();
+
+    res.json({
+      message: `${trades.length} trade(s) resolved`,
+      totalPnl,
+      newBalance: user.gamesWallet.balance
+    });
+  } catch (error) {
+    console.error('Game bet resolve error:', error);
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// ==================== NIFTY NUMBER GAME ====================
+
+// Helper: Get today's date string in IST (YYYY-MM-DD)
+function getTodayIST() {
+  const now = new Date();
+  const ist = new Date(now.getTime() + (5.5 * 60 * 60 * 1000));
+  return ist.toISOString().split('T')[0];
+}
+
+// Place a Nifty Number bet (multiple numbers allowed per day)
+router.post('/nifty-number/bet', protectUser, async (req, res) => {
+  try {
+    const { selectedNumbers, amount } = req.body;
+    const userId = req.user._id;
+    const today = getTodayIST();
+
+    // Support both single number (legacy) and array of numbers
+    const numbers = Array.isArray(selectedNumbers)
+      ? selectedNumbers.map(n => parseInt(n))
+      : [parseInt(selectedNumbers ?? req.body.selectedNumber)];
+
+    // Validate numbers
+    if (numbers.length === 0) {
+      return res.status(400).json({ message: 'Please select at least one number' });
+    }
+    for (const num of numbers) {
+      if (isNaN(num) || num < 0 || num > 99) {
+        return res.status(400).json({ message: 'All numbers must be between .00 and .99' });
+      }
+    }
+    // Check for duplicates in the request
+    if (new Set(numbers).size !== numbers.length) {
+      return res.status(400).json({ message: 'Duplicate numbers are not allowed' });
+    }
+
+    // Get game settings
+    const settings = await GameSettings.getSettings();
+    const gameConfig = settings.games?.niftyNumber;
+    if (!gameConfig?.enabled) {
+      return res.status(400).json({ message: 'Nifty Number game is currently disabled' });
+    }
+
+    // Validate amount (per number)
+    const betAmount = parseFloat(amount);
+    if (isNaN(betAmount) || betAmount <= 0) {
+      return res.status(400).json({ message: 'Invalid bet amount' });
+    }
+    if (betAmount < (gameConfig.minBet || 100)) {
+      return res.status(400).json({ message: `Minimum bet is ₹${gameConfig.minBet || 100} per number` });
+    }
+    if (betAmount > (gameConfig.maxBet || 10000)) {
+      return res.status(400).json({ message: `Maximum bet is ₹${gameConfig.maxBet || 10000} per number` });
+    }
+
+    const totalCost = betAmount * numbers.length;
+
+    // Check how many bets user already placed today
+    const todayBetsCount = await NiftyNumberBet.countDocuments({ user: userId, betDate: today });
+    const maxBetsPerDay = gameConfig.betsPerDay || 1;
+    if (todayBetsCount + numbers.length > maxBetsPerDay) {
+      const remaining = Math.max(0, maxBetsPerDay - todayBetsCount);
+      return res.status(400).json({ message: `You can only place ${maxBetsPerDay} bets per day. You have ${remaining} remaining.` });
+    }
+
+    // Check if user already bet on any of these numbers today
+    const existingBets = await NiftyNumberBet.find({ user: userId, betDate: today, selectedNumber: { $in: numbers } });
+    if (existingBets.length > 0) {
+      const dupes = existingBets.map(b => `.${b.selectedNumber.toString().padStart(2, '0')}`).join(', ');
+      return res.status(400).json({ message: `You already bet on ${dupes} today` });
+    }
+
+    // Check balance
+    const user = await User.findById(userId);
+    if (!user || user.gamesWallet.balance < totalCost) {
+      return res.status(400).json({ message: `Insufficient balance. Need ₹${totalCost.toLocaleString()} for ${numbers.length} number(s)` });
+    }
+
+    // Debit the total bet amount
+    user.gamesWallet.balance -= totalCost;
+    user.gamesWallet.usedMargin += totalCost;
+    await user.save();
+
+    // Create bets for each number
+    const betDocs = numbers.map(num => ({
+      user: userId,
+      selectedNumber: num,
+      amount: betAmount,
+      betDate: today,
+      admin: user.admin || null,
+      status: 'pending'
+    }));
+    const bets = await NiftyNumberBet.insertMany(betDocs);
+
+    res.json({
+      message: `${numbers.length} bet(s) placed successfully!`,
+      bets: bets.map(b => ({
+        _id: b._id,
+        selectedNumber: b.selectedNumber,
+        amount: b.amount,
+        betDate: b.betDate,
+        status: b.status
+      })),
+      newBalance: user.gamesWallet.balance
+    });
+  } catch (error) {
+    console.error('Nifty Number bet error:', error);
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Get today's bets for current user
+router.get('/nifty-number/today', protectUser, async (req, res) => {
+  try {
+    const today = getTodayIST();
+    const bets = await NiftyNumberBet.find({ user: req.user._id, betDate: today }).sort({ createdAt: -1 });
+
+    const settings = await GameSettings.getSettings();
+    const maxBetsPerDay = settings.games?.niftyNumber?.betsPerDay || 1;
+
+    res.json({
+      hasBet: bets.length > 0,
+      betsCount: bets.length,
+      maxBetsPerDay,
+      remaining: Math.max(0, maxBetsPerDay - bets.length),
+      bets: bets.map(b => ({
+        _id: b._id,
+        selectedNumber: b.selectedNumber,
+        amount: b.amount,
+        betDate: b.betDate,
+        status: b.status,
+        resultNumber: b.resultNumber,
+        closingPrice: b.closingPrice,
+        profit: b.profit,
+        resultDeclaredAt: b.resultDeclaredAt
+      }))
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Get bet history for current user
+router.get('/nifty-number/history', protectUser, async (req, res) => {
+  try {
+    const bets = await NiftyNumberBet.find({ user: req.user._id })
+      .sort({ createdAt: -1 })
+      .limit(30);
+
+    res.json(bets.map(b => ({
+      _id: b._id,
+      selectedNumber: b.selectedNumber,
+      amount: b.amount,
+      betDate: b.betDate,
+      status: b.status,
+      resultNumber: b.resultNumber,
+      closingPrice: b.closingPrice,
+      profit: b.profit,
+      resultDeclaredAt: b.resultDeclaredAt
+    })));
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// ==================== NIFTY BRACKET GAME ====================
+
+// Place a bracket trade
+router.post('/nifty-bracket/trade', protectUser, async (req, res) => {
+  try {
+    const { prediction, amount, entryPrice } = req.body;
+    const userId = req.user._id;
+
+    // Validate prediction
+    if (!['BUY', 'SELL'].includes(prediction)) {
+      return res.status(400).json({ message: 'Prediction must be BUY or SELL' });
+    }
+
+    // Get game settings
+    const settings = await GameSettings.getSettings();
+    const gameConfig = settings.games?.niftyBracket;
+    if (!gameConfig?.enabled) {
+      return res.status(400).json({ message: 'Nifty Bracket game is currently disabled' });
+    }
+
+    // Validate amount
+    const betAmount = parseFloat(amount);
+    if (isNaN(betAmount) || betAmount <= 0) {
+      return res.status(400).json({ message: 'Invalid bet amount' });
+    }
+    if (betAmount < (gameConfig.minBet || 100)) {
+      return res.status(400).json({ message: `Minimum bet is ₹${gameConfig.minBet || 100}` });
+    }
+    if (betAmount > (gameConfig.maxBet || 25000)) {
+      return res.status(400).json({ message: `Maximum bet is ₹${gameConfig.maxBet || 25000}` });
+    }
+
+    // Validate entryPrice
+    const price = parseFloat(entryPrice);
+    if (isNaN(price) || price <= 0) {
+      return res.status(400).json({ message: 'Invalid entry price' });
+    }
+
+    const bracketGap = gameConfig.bracketGap || 20;
+    const expiryMinutes = gameConfig.expiryMinutes || 5;
+    const winMultiplier = gameConfig.winMultiplier || 2;
+    const brokeragePercent = gameConfig.brokeragePercent || 5;
+
+    const upperTarget = parseFloat((price + bracketGap).toFixed(2));
+    const lowerTarget = parseFloat((price - bracketGap).toFixed(2));
+
+    // Check balance
+    const user = await User.findById(userId);
+    if (!user || user.gamesWallet.balance < betAmount) {
+      return res.status(400).json({ message: 'Insufficient balance in games wallet' });
+    }
+
+    // Debit the bet amount
+    user.gamesWallet.balance -= betAmount;
+    user.gamesWallet.usedMargin += betAmount;
+    await user.save();
+
+    // Create the trade
+    const expiresAt = new Date(Date.now() + expiryMinutes * 60 * 1000);
+    const tradeData = {
+      user: userId,
+      entryPrice: price,
+      upperTarget,
+      lowerTarget,
+      bracketGap,
+      prediction,
+      amount: betAmount,
+      winMultiplier,
+      brokeragePercent,
+      expiresAt,
+      status: 'active'
+    };
+    if (user.admin) tradeData.admin = user.admin;
+    const trade = await NiftyBracketTrade.create(tradeData);
+
+    res.json({
+      message: 'Trade placed!',
+      trade: {
+        _id: trade._id,
+        entryPrice: trade.entryPrice,
+        upperTarget: trade.upperTarget,
+        lowerTarget: trade.lowerTarget,
+        prediction: trade.prediction,
+        amount: trade.amount,
+        status: trade.status,
+        expiresAt: trade.expiresAt,
+        winMultiplier,
+        brokeragePercent
+      },
+      newBalance: user.gamesWallet.balance
+    });
+  } catch (error) {
+    console.error('Nifty Bracket trade error:', error);
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Get active bracket trades for current user
+router.get('/nifty-bracket/active', protectUser, async (req, res) => {
+  try {
+    const trades = await NiftyBracketTrade.find({
+      user: req.user._id,
+      status: 'active'
+    }).sort({ createdAt: -1 });
+
+    res.json(trades.map(t => ({
+      _id: t._id,
+      entryPrice: t.entryPrice,
+      upperTarget: t.upperTarget,
+      lowerTarget: t.lowerTarget,
+      prediction: t.prediction,
+      amount: t.amount,
+      status: t.status,
+      expiresAt: t.expiresAt,
+      winMultiplier: t.winMultiplier,
+      brokeragePercent: t.brokeragePercent,
+      createdAt: t.createdAt
+    })));
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Get bracket trade history for current user
+router.get('/nifty-bracket/history', protectUser, async (req, res) => {
+  try {
+    const trades = await NiftyBracketTrade.find({
+      user: req.user._id,
+      status: { $ne: 'active' }
+    }).sort({ createdAt: -1 }).limit(50);
+
+    res.json(trades.map(t => ({
+      _id: t._id,
+      entryPrice: t.entryPrice,
+      upperTarget: t.upperTarget,
+      lowerTarget: t.lowerTarget,
+      prediction: t.prediction,
+      amount: t.amount,
+      status: t.status,
+      exitPrice: t.exitPrice,
+      profit: t.profit,
+      brokerageAmount: t.brokerageAmount,
+      resolvedAt: t.resolvedAt,
+      createdAt: t.createdAt
+    })));
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Resolve a bracket trade (called by socket/cron when price hits target or expires)
+router.post('/nifty-bracket/resolve', protectUser, async (req, res) => {
+  try {
+    const { tradeId, currentPrice } = req.body;
+    const trade = await NiftyBracketTrade.findOne({ _id: tradeId, user: req.user._id, status: 'active' });
+    if (!trade) {
+      return res.status(404).json({ message: 'Active trade not found' });
+    }
+
+    const price = parseFloat(currentPrice);
+    const now = new Date();
+    let status, exitPrice, profit = 0, brokerageAmount = 0;
+
+    const hitUpper = price >= trade.upperTarget;
+    const hitLower = price <= trade.lowerTarget;
+    const expired = now >= trade.expiresAt;
+
+    if (hitUpper) {
+      exitPrice = trade.upperTarget;
+      if (trade.prediction === 'BUY') {
+        // User predicted BUY (price goes up) and upper target hit → WIN
+        const grossWin = trade.amount * trade.winMultiplier;
+        brokerageAmount = parseFloat(((grossWin - trade.amount) * trade.brokeragePercent / 100).toFixed(2));
+        profit = parseFloat((grossWin - trade.amount - brokerageAmount).toFixed(2));
+        status = 'won';
+      } else {
+        // User predicted SELL but price went up → LOSS
+        profit = -trade.amount;
+        status = 'lost';
+      }
+    } else if (hitLower) {
+      exitPrice = trade.lowerTarget;
+      if (trade.prediction === 'SELL') {
+        // User predicted SELL (price goes down) and lower target hit → WIN
+        const grossWin = trade.amount * trade.winMultiplier;
+        brokerageAmount = parseFloat(((grossWin - trade.amount) * trade.brokeragePercent / 100).toFixed(2));
+        profit = parseFloat((grossWin - trade.amount - brokerageAmount).toFixed(2));
+        status = 'won';
+      } else {
+        // User predicted BUY but price went down → LOSS
+        profit = -trade.amount;
+        status = 'lost';
+      }
+    } else if (expired) {
+      // Neither target hit → expired, refund
+      exitPrice = price;
+      profit = 0;
+      status = 'expired';
+    } else {
+      return res.status(400).json({ message: 'Trade is still active, no target hit yet' });
+    }
+
+    // Update trade
+    trade.status = status;
+    trade.exitPrice = exitPrice;
+    trade.profit = profit;
+    trade.brokerageAmount = brokerageAmount;
+    trade.resolvedAt = now;
+    await trade.save();
+
+    // Update user wallet
+    const user = await User.findById(trade.user);
+    if (user) {
+      user.gamesWallet.usedMargin = Math.max(0, user.gamesWallet.usedMargin - trade.amount);
+      if (status === 'won') {
+        const payout = trade.amount + profit + brokerageAmount; // refund bet + gross win - brokerage already deducted from profit
+        user.gamesWallet.balance += trade.amount + profit;
+        user.gamesWallet.realizedPnL += profit;
+        user.gamesWallet.todayRealizedPnL += profit;
+      } else if (status === 'lost') {
+        user.gamesWallet.realizedPnL -= trade.amount;
+        user.gamesWallet.todayRealizedPnL -= trade.amount;
+      } else if (status === 'expired') {
+        // Refund full amount
+        user.gamesWallet.balance += trade.amount;
+      }
+      await user.save();
+    }
+
+    res.json({
+      message: status === 'won' ? 'You won!' : status === 'lost' ? 'You lost' : 'Trade expired - amount refunded',
+      trade: {
+        _id: trade._id,
+        status: trade.status,
+        exitPrice: trade.exitPrice,
+        profit: trade.profit,
+        brokerageAmount: trade.brokerageAmount
+      },
+      newBalance: user?.gamesWallet.balance
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// ==================== NIFTY JACKPOT GAME ====================
+
+// Place a jackpot bid (one per day)
+router.post('/nifty-jackpot/bid', protectUser, async (req, res) => {
+  try {
+    const { amount } = req.body;
+    const userId = req.user._id;
+    const today = getTodayIST();
+
+    // Get game settings
+    const settings = await GameSettings.getSettings();
+    const gameConfig = settings.games?.niftyJackpot;
+    if (!gameConfig?.enabled) {
+      return res.status(400).json({ message: 'Nifty Jackpot game is currently disabled' });
+    }
+
+    // Validate amount
+    const bidAmount = parseFloat(amount);
+    if (isNaN(bidAmount) || bidAmount <= 0) {
+      return res.status(400).json({ message: 'Invalid bid amount' });
+    }
+    if (bidAmount < (gameConfig.minBet || 100)) {
+      return res.status(400).json({ message: `Minimum bid is ₹${gameConfig.minBet || 100}` });
+    }
+    if (bidAmount > (gameConfig.maxBet || 50000)) {
+      return res.status(400).json({ message: `Maximum bid is ₹${gameConfig.maxBet || 50000}` });
+    }
+
+    // Check if user already placed a bid today
+    const existingBid = await NiftyJackpotBid.findOne({ user: userId, betDate: today });
+    if (existingBid) {
+      return res.status(400).json({ message: 'You have already placed a bid today. Only 1 bid per day is allowed.' });
+    }
+
+    // Check balance
+    const user = await User.findById(userId);
+    if (!user || user.gamesWallet.balance < bidAmount) {
+      return res.status(400).json({ message: 'Insufficient balance in games wallet' });
+    }
+
+    // Debit the bid amount
+    user.gamesWallet.balance -= bidAmount;
+    user.gamesWallet.usedMargin += bidAmount;
+    await user.save();
+
+    // Create the bid
+    const bidData = {
+      user: userId,
+      amount: bidAmount,
+      betDate: today,
+      status: 'pending'
+    };
+    if (user.admin) bidData.admin = user.admin;
+    const bid = await NiftyJackpotBid.create(bidData);
+
+    res.json({
+      message: 'Bid placed successfully!',
+      bid: {
+        _id: bid._id,
+        amount: bid.amount,
+        betDate: bid.betDate,
+        status: bid.status
+      },
+      newBalance: user.gamesWallet.balance
+    });
+  } catch (error) {
+    if (error.code === 11000) {
+      return res.status(400).json({ message: 'You have already placed a bid today.' });
+    }
+    console.error('Nifty Jackpot bid error:', error);
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Get today's bid for current user
+router.get('/nifty-jackpot/today', protectUser, async (req, res) => {
+  try {
+    const today = getTodayIST();
+    const bid = await NiftyJackpotBid.findOne({ user: req.user._id, betDate: today });
+
+    res.json({
+      hasBid: !!bid,
+      bid: bid ? {
+        _id: bid._id,
+        amount: bid.amount,
+        betDate: bid.betDate,
+        status: bid.status,
+        rank: bid.rank,
+        prize: bid.prize,
+        resultDeclaredAt: bid.resultDeclaredAt
+      } : null
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Get live leaderboard for today (top bidders)
+router.get('/nifty-jackpot/leaderboard', protectUser, async (req, res) => {
+  try {
+    const date = req.query.date || getTodayIST();
+
+    const bids = await NiftyJackpotBid.find({ betDate: date })
+      .sort({ amount: -1 })
+      .populate('user', 'name username')
+      .limit(50);
+
+    const settings = await GameSettings.getSettings();
+    const gameConfig = settings.games?.niftyJackpot;
+    const topWinners = gameConfig?.topWinners || 20;
+    const firstPrize = gameConfig?.firstPrize || 3000;
+    const prizeStep = gameConfig?.prizeStep || 20;
+
+    const leaderboard = bids.map((bid, idx) => {
+      const rank = idx + 1;
+      const prize = rank <= topWinners ? Math.max(0, firstPrize - (rank - 1) * prizeStep) : 0;
+      return {
+        rank,
+        userId: bid.user?._id,
+        name: bid.user?.name || bid.user?.username || 'Anonymous',
+        amount: bid.amount,
+        prize,
+        isWinner: rank <= topWinners,
+        status: bid.status
+      };
+    });
+
+    // Find current user's position
+    const myBid = await NiftyJackpotBid.findOne({ user: req.user._id, betDate: date });
+    let myRank = null;
+    if (myBid) {
+      const higherBids = await NiftyJackpotBid.countDocuments({ betDate: date, amount: { $gt: myBid.amount } });
+      myRank = higherBids + 1;
+    }
+
+    res.json({
+      date,
+      totalBids: bids.length,
+      topWinners,
+      firstPrize,
+      prizeStep,
+      leaderboard,
+      myRank,
+      myBid: myBid ? { amount: myBid.amount, status: myBid.status, rank: myBid.rank, prize: myBid.prize } : null
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Get bid history for current user
+router.get('/nifty-jackpot/history', protectUser, async (req, res) => {
+  try {
+    const bids = await NiftyJackpotBid.find({ user: req.user._id })
+      .sort({ createdAt: -1 })
+      .limit(30);
+
+    res.json(bids.map(b => ({
+      _id: b._id,
+      amount: b.amount,
+      betDate: b.betDate,
+      status: b.status,
+      rank: b.rank,
+      prize: b.prize,
+      resultDeclaredAt: b.resultDeclaredAt
+    })));
   } catch (error) {
     res.status(500).json({ message: error.message });
   }

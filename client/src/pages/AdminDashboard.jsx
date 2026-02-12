@@ -11873,10 +11873,10 @@ const GameSettingsManagement = () => {
 
   const gamesList = [
     { id: 'niftyUpDown', name: 'Nifty Up/Down', icon: TrendingUp, color: 'text-green-400' },
-    { id: 'niftyNumber', name: 'Nifty Number', icon: Hash, color: 'text-blue-400' },
-    { id: 'niftyJackpot', name: 'Nifty Jackpot', icon: Trophy, color: 'text-yellow-400' },
-    { id: 'niftyBracket', name: 'Nifty Bracket', icon: Target, color: 'text-purple-400' },
-    { id: 'btcUpDown', name: 'BTC Up/Down', icon: Bitcoin, color: 'text-orange-400' }
+    { id: 'btcUpDown', name: 'BTC Up/Down', icon: Bitcoin, color: 'text-orange-400' },
+    { id: 'niftyNumber', name: 'Nifty Number', icon: Hash, color: 'text-purple-400' },
+    { id: 'niftyBracket', name: 'Nifty Bracket', icon: Target, color: 'text-cyan-400' },
+    { id: 'niftyJackpot', name: 'Nifty Jackpot', icon: Trophy, color: 'text-yellow-400' }
   ];
 
   useEffect(() => {
@@ -12306,6 +12306,178 @@ const GameSettingsManagement = () => {
                   />
                 </div>
               </div>
+
+              {/* Nifty Bracket Specific Settings */}
+              {selectedGame === 'niftyBracket' && (
+                <div className="space-y-4">
+                  <h4 className="font-medium text-cyan-400">Nifty Bracket Settings</h4>
+                  <div>
+                    <label className="block text-sm text-gray-400 mb-2">Bracket Gap (points)</label>
+                    <input
+                      type="number"
+                      value={currentGame?.bracketGap || 20}
+                      onChange={e => updateGameSetting(selectedGame, 'bracketGap', parseFloat(e.target.value))}
+                      className="w-full bg-dark-700 border border-dark-600 rounded px-4 py-2"
+                    />
+                    <p className="text-xs text-gray-500 mt-1">Points above/below current price for BUY/SELL targets</p>
+                  </div>
+                  <div>
+                    <label className="block text-sm text-gray-400 mb-2">Expiry (minutes)</label>
+                    <input
+                      type="number"
+                      value={currentGame?.expiryMinutes || 5}
+                      onChange={e => updateGameSetting(selectedGame, 'expiryMinutes', parseInt(e.target.value))}
+                      className="w-full bg-dark-700 border border-dark-600 rounded px-4 py-2"
+                      min="1"
+                    />
+                    <p className="text-xs text-gray-500 mt-1">Trade expires and amount is refunded if neither target is hit</p>
+                  </div>
+                </div>
+              )}
+
+              {/* Nifty Jackpot Specific Settings */}
+              {selectedGame === 'niftyJackpot' && (
+                <>
+                  <div className="space-y-4">
+                    <h4 className="font-medium text-yellow-400">Nifty Jackpot Settings</h4>
+                    <div>
+                      <label className="block text-sm text-gray-400 mb-2">Top Winners Count</label>
+                      <input
+                        type="number"
+                        value={currentGame?.topWinners || 20}
+                        onChange={e => updateGameSetting(selectedGame, 'topWinners', parseInt(e.target.value))}
+                        className="w-full bg-dark-700 border border-dark-600 rounded px-4 py-2"
+                        min="1"
+                      />
+                      <p className="text-xs text-gray-500 mt-1">Number of top bidders who win prizes</p>
+                    </div>
+                    <div>
+                      <label className="block text-sm text-gray-400 mb-2">1st Prize Amount (₹)</label>
+                      <input
+                        type="number"
+                        value={currentGame?.firstPrize || 3000}
+                        onChange={e => updateGameSetting(selectedGame, 'firstPrize', parseFloat(e.target.value))}
+                        className="w-full bg-dark-700 border border-dark-600 rounded px-4 py-2"
+                        min="0"
+                      />
+                      <p className="text-xs text-gray-500 mt-1">Prize for the highest bidder (Rank #1)</p>
+                    </div>
+                    <div>
+                      <label className="block text-sm text-gray-400 mb-2">Prize Step Decrease (₹)</label>
+                      <input
+                        type="number"
+                        value={currentGame?.prizeStep || 20}
+                        onChange={e => updateGameSetting(selectedGame, 'prizeStep', parseFloat(e.target.value))}
+                        className="w-full bg-dark-700 border border-dark-600 rounded px-4 py-2"
+                        min="0"
+                      />
+                      <p className="text-xs text-gray-500 mt-1">Prize decreases by this amount for each rank (e.g., 1st: ₹3000, 2nd: ₹2980, 3rd: ₹2960...)</p>
+                    </div>
+                    <div>
+                      <label className="block text-sm text-gray-400 mb-2">Result Time (IST)</label>
+                      <input
+                        type="time"
+                        value={currentGame?.resultTime || '15:30'}
+                        onChange={e => updateGameSetting(selectedGame, 'resultTime', e.target.value)}
+                        className="w-full bg-dark-700 border border-dark-600 rounded px-4 py-2"
+                      />
+                    </div>
+                  </div>
+                  <div className="space-y-4">
+                    <h4 className="font-medium text-orange-400">Profit Distribution (on Losses)</h4>
+                    <div>
+                      <label className="block text-sm text-gray-400 mb-2">Admin Share (%)</label>
+                      <input
+                        type="number"
+                        value={currentGame?.adminSharePercent || 50}
+                        onChange={e => updateGameSetting(selectedGame, 'adminSharePercent', parseFloat(e.target.value))}
+                        className="w-full bg-dark-700 border border-dark-600 rounded px-4 py-2"
+                        min="0"
+                        max="100"
+                      />
+                      <p className="text-xs text-gray-500 mt-1">% of loser bid amounts that go to the managing admin</p>
+                    </div>
+                    <div>
+                      <label className="block text-sm text-gray-400 mb-2">Super Admin Share (%)</label>
+                      <input
+                        type="number"
+                        value={currentGame?.superAdminSharePercent || 50}
+                        onChange={e => updateGameSetting(selectedGame, 'superAdminSharePercent', parseFloat(e.target.value))}
+                        className="w-full bg-dark-700 border border-dark-600 rounded px-4 py-2"
+                        min="0"
+                        max="100"
+                      />
+                      <p className="text-xs text-gray-500 mt-1">% of loser bid amounts that go to super admin</p>
+                    </div>
+                  </div>
+                </>
+              )}
+
+              {/* Nifty Number Specific Settings */}
+              {selectedGame === 'niftyNumber' && (
+                <>
+                  <div className="space-y-4">
+                    <h4 className="font-medium text-pink-400">Nifty Number Settings</h4>
+                    <div>
+                      <label className="block text-sm text-gray-400 mb-2">Fixed Profit on Win (₹)</label>
+                      <input
+                        type="number"
+                        value={currentGame?.fixedProfit || 4000}
+                        onChange={e => updateGameSetting(selectedGame, 'fixedProfit', parseFloat(e.target.value))}
+                        className="w-full bg-dark-700 border border-dark-600 rounded px-4 py-2"
+                      />
+                      <p className="text-xs text-gray-500 mt-1">Fixed profit amount user receives on winning</p>
+                    </div>
+                    <div>
+                      <label className="block text-sm text-gray-400 mb-2">Bets Per Day</label>
+                      <input
+                        type="number"
+                        value={currentGame?.betsPerDay || 1}
+                        onChange={e => updateGameSetting(selectedGame, 'betsPerDay', parseInt(e.target.value))}
+                        className="w-full bg-dark-700 border border-dark-600 rounded px-4 py-2"
+                        min="1"
+                      />
+                      <p className="text-xs text-gray-500 mt-1">Max bets a user can place per day</p>
+                    </div>
+                    <div>
+                      <label className="block text-sm text-gray-400 mb-2">Result Time (IST)</label>
+                      <input
+                        type="time"
+                        value={currentGame?.resultTime || '15:30'}
+                        onChange={e => updateGameSetting(selectedGame, 'resultTime', e.target.value)}
+                        className="w-full bg-dark-700 border border-dark-600 rounded px-4 py-2"
+                      />
+                    </div>
+                  </div>
+                  <div className="space-y-4">
+                    <h4 className="font-medium text-orange-400">Profit Distribution (on Losses)</h4>
+                    <div>
+                      <label className="block text-sm text-gray-400 mb-2">Admin Share (%)</label>
+                      <input
+                        type="number"
+                        value={currentGame?.adminSharePercent || 50}
+                        onChange={e => updateGameSetting(selectedGame, 'adminSharePercent', parseFloat(e.target.value))}
+                        className="w-full bg-dark-700 border border-dark-600 rounded px-4 py-2"
+                        min="0"
+                        max="100"
+                      />
+                      <p className="text-xs text-gray-500 mt-1">% of user losses that go to the managing admin</p>
+                    </div>
+                    <div>
+                      <label className="block text-sm text-gray-400 mb-2">Super Admin Share (%)</label>
+                      <input
+                        type="number"
+                        value={currentGame?.superAdminSharePercent || 50}
+                        onChange={e => updateGameSetting(selectedGame, 'superAdminSharePercent', parseFloat(e.target.value))}
+                        className="w-full bg-dark-700 border border-dark-600 rounded px-4 py-2"
+                        min="0"
+                        max="100"
+                      />
+                      <p className="text-xs text-gray-500 mt-1">% of user losses that go to super admin</p>
+                    </div>
+                  </div>
+                </>
+              )}
             </div>
           </div>
         </div>
