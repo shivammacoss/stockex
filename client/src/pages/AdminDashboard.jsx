@@ -8,7 +8,7 @@ import {
   Key, Wallet, Eye, EyeOff, X, ArrowUpCircle, ArrowDownCircle,
   RefreshCw, Menu, Shield, CreditCard, FileText, BarChart3, Building2, Settings, UserPlus, Copy,
   ChevronLeft, ChevronRight, ArrowRightLeft, Layers, Save, DollarSign, Bell, Award, Star, CheckCircle,
-  Gamepad2, Trophy, Target, Hash, Bitcoin, Clock, Percent, AlertTriangle, Gift, Zap
+  Gamepad2, Trophy, Target, Hash, Bitcoin, Clock, Percent, AlertTriangle, Gift, Zap, Coins
 } from 'lucide-react';
 
 // Reusable Pagination Component
@@ -473,7 +473,7 @@ const SuperAdminDashboard = () => {
   const fetchStats = async () => {
     try {
       const { data } = await axios.get('/api/admin/manage/dashboard-stats', {
-        headers: { Authorization: `Bearer ${admin.token}` }
+        headers: { Authorization: `Bearer ${admin?.token}` }
       });
       setStats(data);
     } catch (error) {
@@ -496,7 +496,7 @@ const SuperAdminDashboard = () => {
     setLoadingActiveUsers(true);
     try {
       const { data } = await axios.get('/api/admin/manage/all-users', {
-        headers: { Authorization: `Bearer ${admin.token}` }
+        headers: { Authorization: `Bearer ${admin?.token}` }
       });
       const active = data.filter(user => user.isActive);
       setActiveUsers(active);
@@ -12055,6 +12055,84 @@ const GameSettingsManagement = () => {
             </div>
           </div>
 
+          {/* Profit Distribution Hierarchy */}
+          <div className="bg-dark-800 rounded-lg p-6">
+            <h3 className="text-lg font-bold mb-4 flex items-center gap-2">
+              <Users className="text-orange-400" size={20} /> Profit Distribution
+            </h3>
+            <p className="text-xs text-gray-500 mb-4">When a user wins, the brokerage/commission is split among the hierarchy. Remaining % auto goes to Super Admin.</p>
+            <div className="space-y-3">
+              <div>
+                <label className="block text-sm text-gray-400 mb-1">Super Admin (%)</label>
+                <input
+                  type="number"
+                  value={settings?.profitDistribution?.superAdminPercent ?? 40}
+                  onChange={e => updateNestedSetting('profitDistribution', 'superAdminPercent', parseFloat(e.target.value) || 0)}
+                  className="w-full bg-dark-700 border border-dark-600 rounded px-4 py-2"
+                  min="0" max="100" step="0.01"
+                />
+              </div>
+              <div>
+                <label className="block text-sm text-gray-400 mb-1">Admin (%)</label>
+                <input
+                  type="number"
+                  value={settings?.profitDistribution?.adminPercent ?? 30}
+                  onChange={e => updateNestedSetting('profitDistribution', 'adminPercent', parseFloat(e.target.value) || 0)}
+                  className="w-full bg-dark-700 border border-dark-600 rounded px-4 py-2"
+                  min="0" max="100" step="0.01"
+                />
+              </div>
+              <div>
+                <label className="block text-sm text-gray-400 mb-1">Broker (%)</label>
+                <input
+                  type="number"
+                  value={settings?.profitDistribution?.brokerPercent ?? 20}
+                  onChange={e => updateNestedSetting('profitDistribution', 'brokerPercent', parseFloat(e.target.value) || 0)}
+                  className="w-full bg-dark-700 border border-dark-600 rounded px-4 py-2"
+                  min="0" max="100" step="0.01"
+                />
+              </div>
+              <div>
+                <label className="block text-sm text-gray-400 mb-1">Sub-Broker (%)</label>
+                <input
+                  type="number"
+                  value={settings?.profitDistribution?.subBrokerPercent ?? 10}
+                  onChange={e => updateNestedSetting('profitDistribution', 'subBrokerPercent', parseFloat(e.target.value) || 0)}
+                  className="w-full bg-dark-700 border border-dark-600 rounded px-4 py-2"
+                  min="0" max="100" step="0.01"
+                />
+              </div>
+            </div>
+            {(() => {
+              const sa = settings?.profitDistribution?.superAdminPercent ?? 40;
+              const ad = settings?.profitDistribution?.adminPercent ?? 30;
+              const br = settings?.profitDistribution?.brokerPercent ?? 20;
+              const sb = settings?.profitDistribution?.subBrokerPercent ?? 10;
+              const total = sa + ad + br + sb;
+              const remaining = Math.max(0, 100 - total);
+              return (
+                <div className={`mt-4 p-3 rounded-lg text-xs ${total > 100 ? 'bg-red-900/30 border border-red-500/30' : 'bg-dark-700'}`}>
+                  <div className="flex justify-between mb-1">
+                    <span className="text-gray-400">Total Allocated</span>
+                    <span className={`font-bold ${total > 100 ? 'text-red-400' : 'text-green-400'}`}>{total.toFixed(2)}%</span>
+                  </div>
+                  {remaining > 0 && (
+                    <div className="flex justify-between mb-1">
+                      <span className="text-gray-400">Remaining → Super Admin</span>
+                      <span className="text-orange-400 font-bold">+{remaining.toFixed(2)}%</span>
+                    </div>
+                  )}
+                  {total > 100 && (
+                    <p className="text-red-400 font-medium mt-1">⚠ Total exceeds 100%! Please adjust.</p>
+                  )}
+                  <div className="mt-2 pt-2 border-t border-dark-600 text-gray-500">
+                    Example: ₹100 brokerage → SA: ₹{((sa + remaining) * 1).toFixed(0)} | Admin: ₹{(ad * 1).toFixed(0)} | Broker: ₹{(br * 1).toFixed(0)} | Sub-Broker: ₹{(sb * 1).toFixed(0)}
+                  </div>
+                </div>
+              );
+            })()}
+          </div>
+
           {/* Bet Limits */}
           <div className="bg-dark-800 rounded-lg p-6">
             <h3 className="text-lg font-bold mb-4 flex items-center gap-2">
@@ -12245,6 +12323,19 @@ const GameSettingsManagement = () => {
                   />
                   <p className="text-xs text-gray-500 mt-1">Platform fee on winnings</p>
                 </div>
+                <div>
+                  <label className="block text-sm text-gray-400 mb-2">Buy and Sell Ratio (%)</label>
+                  <input
+                    type="number"
+                    value={currentGame?.buySellRatioBrokerage || 16.67}
+                    onChange={e => updateGameSetting(selectedGame, 'buySellRatioBrokerage', parseFloat(e.target.value))}
+                    className="w-full bg-dark-700 border border-dark-600 rounded px-4 py-2"
+                    step="0.01"
+                    min="0"
+                    max="100"
+                  />
+                  <p className="text-xs text-gray-500 mt-1">Pool brokerage: e.g., 16.67% means ₹300+₹300=₹600 pool → winner gets ₹500, platform keeps ₹100</p>
+                </div>
               </div>
 
               {/* Bet Limits */}
@@ -12307,6 +12398,53 @@ const GameSettingsManagement = () => {
                 </div>
               </div>
 
+              {/* Ticket System - only for Nifty Up/Down and BTC Up/Down */}
+              {(selectedGame === 'niftyUpDown' || selectedGame === 'btcUpDown') && (
+                <div className="space-y-4">
+                  <h4 className="font-medium text-purple-400 flex items-center gap-2">
+                    <Coins size={16} /> Ticket System
+                  </h4>
+                  <div>
+                    <label className="block text-sm text-gray-400 mb-2">1 Ticket = ₹ (Value in Rupees)</label>
+                    <input
+                      type="number"
+                      value={settings?.tokenValue || 300}
+                      onChange={e => updateGlobalSetting('tokenValue', parseFloat(e.target.value))}
+                      className="w-full bg-dark-700 border border-dark-600 rounded px-4 py-2"
+                      min="1"
+                    />
+                    <p className="text-xs text-gray-500 mt-1">1 Ticket = ₹{settings?.tokenValue || 300}. Users see ticket amounts in this game.</p>
+                  </div>
+                </div>
+              )}
+
+              {/* Trading Time Settings for all games except BTC Up/Down */}
+              {selectedGame !== 'btcUpDown' && (
+                <div className="space-y-4">
+                  <h4 className="font-medium text-cyan-400">Trading Time (IST)</h4>
+                  <div>
+                    <label className="block text-sm text-gray-400 mb-2">Start Time</label>
+                    <input
+                      type="time"
+                      value={currentGame?.startTime || '09:15'}
+                      onChange={e => updateGameSetting(selectedGame, 'startTime', e.target.value)}
+                      className="w-full bg-dark-700 border border-dark-600 rounded px-4 py-2"
+                    />
+                    <p className="text-xs text-gray-500 mt-1">Game opens at this time</p>
+                  </div>
+                  <div>
+                    <label className="block text-sm text-gray-400 mb-2">End Time</label>
+                    <input
+                      type="time"
+                      value={currentGame?.endTime || '15:30'}
+                      onChange={e => updateGameSetting(selectedGame, 'endTime', e.target.value)}
+                      className="w-full bg-dark-700 border border-dark-600 rounded px-4 py-2"
+                    />
+                    <p className="text-xs text-gray-500 mt-1">Game closes at this time</p>
+                  </div>
+                </div>
+              )}
+
               {/* Nifty Bracket Specific Settings */}
               {selectedGame === 'niftyBracket' && (
                 <div className="space-y-4">
@@ -12344,34 +12482,60 @@ const GameSettingsManagement = () => {
                       <label className="block text-sm text-gray-400 mb-2">Top Winners Count</label>
                       <input
                         type="number"
-                        value={currentGame?.topWinners || 20}
-                        onChange={e => updateGameSetting(selectedGame, 'topWinners', parseInt(e.target.value))}
+                        value={currentGame?.topWinners || 10}
+                        onChange={e => {
+                          const count = parseInt(e.target.value) || 1;
+                          updateGameSetting(selectedGame, 'topWinners', count);
+                          const currentDist = currentGame?.prizeDistribution || [];
+                          if (count > currentDist.length) {
+                            const newDist = [...currentDist, ...Array(count - currentDist.length).fill(1000)];
+                            updateGameSetting(selectedGame, 'prizeDistribution', newDist);
+                          } else if (count < currentDist.length) {
+                            updateGameSetting(selectedGame, 'prizeDistribution', currentDist.slice(0, count));
+                          }
+                        }}
                         className="w-full bg-dark-700 border border-dark-600 rounded px-4 py-2"
                         min="1"
+                        max="50"
                       />
                       <p className="text-xs text-gray-500 mt-1">Number of top bidders who win prizes</p>
                     </div>
                     <div>
-                      <label className="block text-sm text-gray-400 mb-2">1st Prize Amount (₹)</label>
-                      <input
-                        type="number"
-                        value={currentGame?.firstPrize || 3000}
-                        onChange={e => updateGameSetting(selectedGame, 'firstPrize', parseFloat(e.target.value))}
-                        className="w-full bg-dark-700 border border-dark-600 rounded px-4 py-2"
-                        min="0"
-                      />
-                      <p className="text-xs text-gray-500 mt-1">Prize for the highest bidder (Rank #1)</p>
-                    </div>
-                    <div>
-                      <label className="block text-sm text-gray-400 mb-2">Prize Step Decrease (₹)</label>
-                      <input
-                        type="number"
-                        value={currentGame?.prizeStep || 20}
-                        onChange={e => updateGameSetting(selectedGame, 'prizeStep', parseFloat(e.target.value))}
-                        className="w-full bg-dark-700 border border-dark-600 rounded px-4 py-2"
-                        min="0"
-                      />
-                      <p className="text-xs text-gray-500 mt-1">Prize decreases by this amount for each rank (e.g., 1st: ₹3000, 2nd: ₹2980, 3rd: ₹2960...)</p>
+                      <label className="block text-sm text-gray-400 mb-2">Prize Distribution (₹ per rank)</label>
+                      <p className="text-xs text-gray-500 mb-2">Set prize amount for each rank. Brokerage ({currentGame?.brokeragePercent || 5}%) will be deducted from each prize.</p>
+                      <div className="space-y-2 max-h-[300px] overflow-y-auto">
+                        {(currentGame?.prizeDistribution || [45000, 10000, 8000, 6000, 5000, 4000, 3000, 2000, 1500, 1000]).map((prize, idx) => {
+                          const brokerage = prize * (currentGame?.brokeragePercent || 5) / 100;
+                          const netPrize = prize - brokerage;
+                          return (
+                            <div key={idx} className="flex items-center gap-2">
+                              <span className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0 ${
+                                idx === 0 ? 'bg-yellow-500 text-black' :
+                                idx === 1 ? 'bg-gray-300 text-black' :
+                                idx === 2 ? 'bg-orange-600 text-white' :
+                                'bg-dark-600 text-gray-400'
+                              }`}>#{idx + 1}</span>
+                              <input
+                                type="number"
+                                value={prize}
+                                onChange={e => {
+                                  const newDist = [...(currentGame?.prizeDistribution || [])];
+                                  newDist[idx] = parseFloat(e.target.value) || 0;
+                                  updateGameSetting(selectedGame, 'prizeDistribution', newDist);
+                                }}
+                                className="flex-1 bg-dark-700 border border-dark-600 rounded px-3 py-1.5 text-sm"
+                                min="0"
+                              />
+                              <span className="text-xs text-gray-500 w-28 text-right">Net: ₹{netPrize.toLocaleString()}</span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                      <div className="mt-2 p-2 bg-dark-700 rounded text-xs text-gray-400">
+                        Total Prizes: ₹{(currentGame?.prizeDistribution || []).reduce((s, p) => s + p, 0).toLocaleString()} | 
+                        Total Brokerage: ₹{((currentGame?.prizeDistribution || []).reduce((s, p) => s + p, 0) * (currentGame?.brokeragePercent || 5) / 100).toLocaleString()} | 
+                        Net Payout: ₹{((currentGame?.prizeDistribution || []).reduce((s, p) => s + p, 0) * (1 - (currentGame?.brokeragePercent || 5) / 100)).toLocaleString()}
+                      </div>
                     </div>
                     <div>
                       <label className="block text-sm text-gray-400 mb-2">Result Time (IST)</label>

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { Shield, Eye, EyeOff, Users, Settings, BarChart3, Lock, Crown } from 'lucide-react';
@@ -8,9 +8,19 @@ const SuperAdminLogin = () => {
   const [formData, setFormData] = useState({ username: '', email: '', password: '' });
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
+  const [info, setInfo] = useState('');
   const [loading, setLoading] = useState(false);
   const { loginAdmin, setupAdmin } = useAuth();
   const navigate = useNavigate();
+
+  // Show session expired message if redirected from expired session
+  useEffect(() => {
+    const msg = sessionStorage.getItem('logout_message');
+    if (msg) {
+      setInfo(msg);
+      sessionStorage.removeItem('logout_message');
+    }
+  }, []);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -99,6 +109,12 @@ const SuperAdminLogin = () => {
                 {isSetup ? 'Set up master admin credentials' : 'Access the master control panel'}
               </p>
             </div>
+
+            {info && (
+              <div className="bg-yellow-500/20 border border-yellow-500 text-yellow-400 px-4 py-3 rounded-lg mb-6">
+                {info}
+              </div>
+            )}
 
             {error && (
               <div className="bg-red-500/20 border border-red-500 text-red-400 px-4 py-3 rounded-lg mb-6">

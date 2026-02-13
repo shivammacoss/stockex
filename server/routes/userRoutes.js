@@ -1348,6 +1348,54 @@ router.post('/nifty-number/bet', protectUser, async (req, res) => {
   }
 });
 
+// Modify a pending Nifty Number bet amount
+router.put('/nifty-number/bet/:id', protectUser, async (req, res) => {
+  try {
+    const { newAmount } = req.body;
+    const betId = req.params.id;
+    const userId = req.user._id;
+
+    const bet = await NiftyNumberBet.findOne({ _id: betId, user: userId });
+    if (!bet) return res.status(404).json({ message: 'Bet not found' });
+    if (bet.status !== 'pending') return res.status(400).json({ message: 'Can only modify pending bets' });
+
+    const settings = await GameSettings.getSettings();
+    const gameConfig = settings.games?.niftyNumber;
+
+    const amount = parseFloat(newAmount);
+    if (isNaN(amount) || amount <= 0) return res.status(400).json({ message: 'Invalid amount' });
+    if (amount < (gameConfig?.minBet || 100)) return res.status(400).json({ message: `Minimum bet is ₹${gameConfig?.minBet || 100}` });
+    if (amount > (gameConfig?.maxBet || 10000)) return res.status(400).json({ message: `Maximum bet is ₹${gameConfig?.maxBet || 10000}` });
+
+    const oldAmount = bet.amount;
+    const diff = amount - oldAmount;
+
+    const user = await User.findById(userId);
+    if (!user) return res.status(404).json({ message: 'User not found' });
+
+    if (diff > 0 && user.gamesWallet.balance < diff) {
+      return res.status(400).json({ message: `Insufficient balance. Need ₹${diff} more` });
+    }
+
+    // Adjust wallet
+    user.gamesWallet.balance -= diff;
+    user.gamesWallet.usedMargin += diff;
+    await user.save();
+
+    bet.amount = amount;
+    await bet.save();
+
+    res.json({
+      message: `Bet updated to ₹${amount}`,
+      bet: { _id: bet._id, selectedNumber: bet.selectedNumber, amount: bet.amount, status: bet.status },
+      newBalance: user.gamesWallet.balance
+    });
+  } catch (error) {
+    console.error('Nifty Number modify bet error:', error);
+    res.status(500).json({ message: error.message });
+  }
+});
+
 // Get today's bets for current user
 router.get('/nifty-number/today', protectUser, async (req, res) => {
   try {

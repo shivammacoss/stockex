@@ -95,12 +95,12 @@ const UserGames = () => {
     {
       id: 'niftynumber',
       name: 'Nifty Number',
-      description: 'Pick the decimal (.00-.99) of Nifty closing price & win ₹4,000',
+      description: 'Pick the decimal (.00-.99) of Nifty closing price & win tickets',
       icon: Hash,
       color: 'from-purple-600 to-indigo-600',
       bgColor: 'bg-purple-900/20',
       borderColor: 'border-purple-500/30',
-      prize: '₹4,000 Profit',
+      prize: 'Ticket Profit',
       players: '850',
       timeframe: '1 Day'
     },
@@ -124,7 +124,7 @@ const UserGames = () => {
       color: 'from-yellow-500 to-orange-500',
       bgColor: 'bg-yellow-900/20',
       borderColor: 'border-yellow-500/30',
-      prize: 'Up to ₹3,000',
+      prize: 'Top Prizes',
       players: '2.5K',
       timeframe: '1 Day'
     }
@@ -149,6 +149,7 @@ const UserGames = () => {
           user={user}
           refreshBalance={fetchGamesBalance}
           settings={gameSettings?.games?.[GAME_SETTINGS_KEY[activeGame]] || null}
+          tokenValue={gameSettings?.tokenValue || 300}
         />
       );
     }
@@ -161,6 +162,7 @@ const UserGames = () => {
           user={user}
           refreshBalance={fetchGamesBalance}
           settings={gameSettings?.games?.[GAME_SETTINGS_KEY[activeGame]] || null}
+          tokenValue={gameSettings?.tokenValue || 300}
         />
       );
     }
@@ -173,6 +175,7 @@ const UserGames = () => {
           user={user}
           refreshBalance={fetchGamesBalance}
           settings={gameSettings?.games?.[GAME_SETTINGS_KEY[activeGame]] || null}
+          tokenValue={gameSettings?.tokenValue || 300}
         />
       );
     }
@@ -184,6 +187,7 @@ const UserGames = () => {
         user={user}
         refreshBalance={fetchGamesBalance}
         settings={gameSettings?.games?.[GAME_SETTINGS_KEY[activeGame]] || null}
+        tokenValue={gameSettings?.tokenValue || 300}
       />
     );
   }
@@ -213,7 +217,8 @@ const UserGames = () => {
             </div>
             <div className="bg-dark-700 rounded-lg px-4 py-2">
               <div className="text-xs text-gray-400">Balance</div>
-              <div className="font-bold text-purple-400">₹{gamesBalance.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</div>
+              <div className="font-bold text-purple-400">{(gamesBalance / (gameSettings?.tokenValue || 300)).toFixed(2)} Tickets</div>
+              <div className="text-[10px] text-gray-500">₹{gamesBalance.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</div>
             </div>
           </div>
         </div>
@@ -887,11 +892,13 @@ const TradingChart = ({ gameId, fullHeight = false, onPriceUpdate }) => {
 };
 
 // Individual Game Screen Component
-const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings }) => {
+const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tokenValue = 300 }) => {
+  const isBTC = game.id === 'btcupdown';
+  const btcAlwaysOpen = { status: 'open', message: 'Trading Open 24/7', canTrade: true, countdown: 0, windowNumber: 1, windowStart: '00:00', windowEnd: '23:59', resultTime: '' };
   const [betAmount, setBetAmount] = useState('');
   const [prediction, setPrediction] = useState(null);
   const [showInstructions, setShowInstructions] = useState(false);
-  const [windowInfo, setWindowInfo] = useState(getTradingWindowInfo());
+  const [windowInfo, setWindowInfo] = useState(isBTC ? btcAlwaysOpen : getTradingWindowInfo());
   const [activeTrades, setActiveTrades] = useState([]); // pending trades waiting for result
   const [tradeHistory, setTradeHistory] = useState([]);
   const currentPriceRef = useRef(null);
@@ -900,22 +907,30 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings }) =
   // Admin-configured settings with fallbacks
   const winMultiplier = settings?.winMultiplier || 1.95;
   const brokeragePercent = settings?.brokeragePercent || 5;
-  const minBet = settings?.minBet || 100;
-  const maxBet = settings?.maxBet || 50000;
+  const minBetRs = settings?.minBet || 100;
+  const maxBetRs = settings?.maxBet || 50000;
   const gameEnabled = settings?.enabled !== false;
+
+  // Ticket conversion helpers
+  const toTokens = (rs) => parseFloat((rs / tokenValue).toFixed(2));
+  const toRupees = (tokens) => parseFloat((tokens * tokenValue).toFixed(2));
+  const balanceTokens = toTokens(balance);
+  const minBetTokens = toTokens(minBetRs);
+  const maxBetTokens = toTokens(maxBetRs);
 
   // Track live price from chart
   const handlePriceUpdate = useCallback((price) => {
     currentPriceRef.current = price;
   }, []);
 
-  // Update trading window info every second
+  // Update trading window info every second (skip for BTC - always open)
   useEffect(() => {
+    if (isBTC) return;
     const interval = setInterval(() => {
       setWindowInfo(getTradingWindowInfo());
     }, 1000);
     return () => clearInterval(interval);
-  }, []);
+  }, [isBTC]);
 
   // Resolve all active trades when window transitions from open → gap
   useEffect(() => {
@@ -972,24 +987,25 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings }) =
     }
   }, [windowInfo.status, activeTrades]);
 
-  const quickAmounts = [100, 500, 1000, 5000];
+  const quickAmounts = [1, 2, 5, 10];
 
   const handlePlaceBet = async () => {
     if (!betAmount || parseFloat(betAmount) <= 0 || !prediction) return;
-    const amt = parseFloat(betAmount);
-    if (amt < minBet) {
-      alert(`Minimum bet is ₹${minBet.toLocaleString()}`);
+    const tokenAmt = parseFloat(betAmount);
+    const amt = toRupees(tokenAmt);
+    if (tokenAmt < minBetTokens) {
+      alert(`Minimum bet is ${minBetTokens} tickets`);
       return;
     }
-    if (amt > maxBet) {
-      alert(`Maximum bet is ₹${maxBet.toLocaleString()}`);
+    if (tokenAmt > maxBetTokens) {
+      alert(`Maximum bet is ${maxBetTokens} tickets`);
       return;
     }
     if (amt > balance) {
       alert('Insufficient balance');
       return;
     }
-    if (!windowInfo.canTrade) {
+    if (!isBTC && !windowInfo.canTrade) {
       alert('Trading window is closed. Please wait for the next window.');
       return;
     }
@@ -1129,7 +1145,7 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings }) =
               </button>
               <div className="bg-dark-700 rounded-lg px-3 py-1.5">
                 <div className="text-xs text-gray-400">Balance</div>
-                <div className="font-bold text-purple-400">₹{balance.toLocaleString()}</div>
+                <div className="font-bold text-purple-400">{balanceTokens} Tkt</div>
               </div>
             </div>
           </div>
@@ -1142,7 +1158,17 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings }) =
 
           {/* LEFT COLUMN - Trading Window Status */}
           <div className="lg:w-[240px] flex-shrink-0 order-1 lg:order-1 overflow-y-auto">
-            <WindowStatusBadge />
+            {isBTC ? (
+              <div className="bg-green-900/30 border border-green-500/40 rounded-xl p-4 mb-4">
+                <div className="flex items-center gap-2">
+                  <div className="w-2.5 h-2.5 bg-green-500 rounded-full animate-pulse"></div>
+                  <span className="text-green-400 font-bold text-sm">24/7 TRADING OPEN</span>
+                </div>
+                <p className="text-gray-400 text-xs mt-1">BTC market never closes</p>
+              </div>
+            ) : (
+              <WindowStatusBadge />
+            )}
 
             {/* Game Info Card */}
             <div className="bg-dark-800 rounded-xl p-4 border border-dark-600">
@@ -1166,11 +1192,15 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings }) =
                 </div>
                 <div className="flex justify-between py-1 border-b border-dark-600">
                   <span className="text-gray-400">Min Bet</span>
-                  <span className="font-medium">₹{minBet.toLocaleString()}</span>
+                  <span className="font-medium">{minBetTokens} Tickets</span>
                 </div>
                 <div className="flex justify-between py-1 border-b border-dark-600">
                   <span className="text-gray-400">Max Bet</span>
-                  <span className="font-medium">₹{maxBet.toLocaleString()}</span>
+                  <span className="font-medium">{maxBetTokens} Tickets</span>
+                </div>
+                <div className="flex justify-between py-1 border-b border-dark-600">
+                  <span className="text-gray-400">1 Ticket</span>
+                  <span className="font-medium">₹{tokenValue}</span>
                 </div>
                 <div className="flex justify-between py-1">
                   <span className="text-gray-400">Players</span>
@@ -1178,7 +1208,7 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings }) =
                 </div>
               </div>
               <div className="mt-2 bg-dark-700/50 rounded-lg p-2 text-[10px] text-gray-500">
-                Win ₹100 bet → ₹{(100 * winMultiplier).toFixed(0)} gross - ₹{((100 * winMultiplier - 100) * brokeragePercent / 100).toFixed(0)} fee = <span className="text-green-400 font-medium">₹{(100 * winMultiplier - 100 - (100 * winMultiplier - 100) * brokeragePercent / 100).toFixed(0)} profit</span>
+                Win 1 Ticket bet → {winMultiplier} T gross - {((winMultiplier - 1) * brokeragePercent / 100).toFixed(2)} T fee = <span className="text-green-400 font-medium">{(winMultiplier - 1 - (winMultiplier - 1) * brokeragePercent / 100).toFixed(2)} T profit</span>
               </div>
               <button
                 onClick={() => setShowInstructions(true)}
@@ -1201,17 +1231,18 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings }) =
             <div className="space-y-3 flex-shrink-0">
               {/* Bet Amount */}
               <div className="bg-dark-800 rounded-xl p-4 border border-dark-600">
-                <label className="block text-sm text-gray-400 mb-2">Enter Amount</label>
+                <label className="block text-sm text-gray-400 mb-2">Enter Tickets</label>
                 <input
                   type="number"
                   value={betAmount}
                   onChange={e => setBetAmount(e.target.value)}
-                  placeholder={`₹${minBet} - ₹${maxBet.toLocaleString()}`}
-                  min={minBet}
-                  max={maxBet}
+                  placeholder={`${minBetTokens} - ${maxBetTokens} Tickets`}
+                  min={minBetTokens}
+                  max={maxBetTokens}
+                  step="0.01"
                   className="w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2.5 text-xl font-bold text-center focus:border-purple-500 focus:outline-none"
                 />
-                <div className="text-[10px] text-gray-500 mt-1 text-center">Min ₹{minBet.toLocaleString()} • Max ₹{maxBet.toLocaleString()}</div>
+                <div className="text-[10px] text-gray-500 mt-1 text-center">Min {minBetTokens} • Max {maxBetTokens} Tickets (1Tkt = ₹{tokenValue})</div>
                 <div className="grid grid-cols-4 gap-1.5 mt-2">
                   {quickAmounts.map(amt => (
                     <button
@@ -1219,7 +1250,7 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings }) =
                       onClick={() => setBetAmount(amt.toString())}
                       className="py-1.5 bg-dark-700 hover:bg-dark-600 rounded-lg text-xs font-medium transition"
                     >
-                      ₹{amt}
+                      {amt} T
                     </button>
                   ))}
                 </div>
@@ -1273,7 +1304,7 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings }) =
                 {!windowInfo.canTrade 
                   ? 'Trading Window Closed' 
                   : betAmount && prediction 
-                    ? `Place Trade - ₹${parseFloat(betAmount).toLocaleString()}` 
+                    ? `Place Trade - ${parseFloat(betAmount)} Tickets` 
                     : 'Select Amount & Prediction'}
               </button>
             </div>
@@ -1297,7 +1328,7 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings }) =
                         }`}>
                           {trade.prediction}
                         </span>
-                        <span className="text-[10px] text-gray-400">₹{trade.amount.toLocaleString()}</span>
+                        <span className="text-[10px] text-gray-400">{toTokens(trade.amount)} T</span>
                       </div>
                       <div className="text-[10px] text-gray-500">
                         @ {game.id === 'btcupdown' ? '$' : '₹'}{trade.entryPrice.toLocaleString()} • {trade.time}
@@ -1331,7 +1362,7 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings }) =
                       <span className={`font-bold ${
                         tradeHistory.reduce((sum, t) => sum + t.pnl, 0) >= 0 ? 'text-green-400' : 'text-red-400'
                       }`}>
-                        {tradeHistory.reduce((sum, t) => sum + t.pnl, 0) >= 0 ? '+' : ''}₹{tradeHistory.reduce((sum, t) => sum + t.pnl, 0).toLocaleString()}
+                        {tradeHistory.reduce((sum, t) => sum + t.pnl, 0) >= 0 ? '+' : ''}{toTokens(tradeHistory.reduce((sum, t) => sum + t.pnl, 0))} T
                       </span>
                     </div>
                     <div className="text-[11px]">
@@ -1356,11 +1387,11 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings }) =
                           <span className="text-[10px] text-gray-500">#{trade.windowNumber}</span>
                         </div>
                         <span className={`text-xs font-bold ${trade.won ? 'text-green-400' : 'text-red-400'}`}>
-                          {trade.pnl >= 0 ? '+' : ''}₹{trade.pnl.toLocaleString()}
+                          {trade.pnl >= 0 ? '+' : ''}{toTokens(trade.pnl)} T
                         </span>
                       </div>
                       <div className="flex items-center justify-between text-[10px] text-gray-500">
-                        <span>₹{trade.amount.toLocaleString()} • {trade.time}</span>
+                        <span>{toTokens(trade.amount)} T • {trade.time}</span>
                         <span>
                           {game.id === 'btcupdown' ? '$' : ''}{trade.entryPrice.toLocaleString()} → {game.id === 'btcupdown' ? '$' : ''}{trade.exitPrice.toLocaleString()}
                         </span>
@@ -1384,7 +1415,7 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings }) =
 };
 
 // ==================== NIFTY NUMBER SCREEN ====================
-const NiftyNumberScreen = ({ game, balance, onBack, user, refreshBalance, settings }) => {
+const NiftyNumberScreen = ({ game, balance, onBack, user, refreshBalance, settings, tokenValue = 300 }) => {
   const [selectedNumbers, setSelectedNumbers] = useState([]);
   const [betAmount, setBetAmount] = useState('');
   const [todayBets, setTodayBets] = useState([]);
@@ -1394,8 +1425,11 @@ const NiftyNumberScreen = ({ game, balance, onBack, user, refreshBalance, settin
   const [placing, setPlacing] = useState(false);
   const [loadingBet, setLoadingBet] = useState(true);
   const [message, setMessage] = useState(null);
+  const [editingBetId, setEditingBetId] = useState(null);
+  const [editAmount, setEditAmount] = useState('');
+  const [modifying, setModifying] = useState(false);
 
-  // Admin-configured settings with fallbacks
+  // Admin-configured settings with fallbacks (₹ amounts directly)
   const fixedProfit = settings?.fixedProfit || 4000;
   const minBet = settings?.minBet || 100;
   const maxBet = settings?.maxBet || 10000;
@@ -1436,7 +1470,7 @@ const NiftyNumberScreen = ({ game, balance, onBack, user, refreshBalance, settin
   };
 
   const toggleNumber = (num) => {
-    if (todayNumbers.includes(num)) return; // already bet
+    if (todayNumbers.includes(num)) return;
     setSelectedNumbers(prev => {
       if (prev.includes(num)) return prev.filter(n => n !== num);
       if (prev.length >= remaining) {
@@ -1452,7 +1486,7 @@ const NiftyNumberScreen = ({ game, balance, onBack, user, refreshBalance, settin
     const amt = parseFloat(betAmount);
     const totalCost = amt * selectedNumbers.length;
     if (amt < minBet) { setMessage({ type: 'error', text: `Minimum bet is ₹${minBet} per number` }); return; }
-    if (amt > maxBet) { setMessage({ type: 'error', text: `Maximum bet is ₹${maxBet.toLocaleString()} per number` }); return; }
+    if (amt > maxBet) { setMessage({ type: 'error', text: `Maximum bet is ₹${maxBet} per number` }); return; }
     if (totalCost > balance) { setMessage({ type: 'error', text: `Insufficient balance. Need ₹${totalCost.toLocaleString()} for ${selectedNumbers.length} number(s)` }); return; }
     if (!gameEnabled) { setMessage({ type: 'error', text: 'Game is currently disabled' }); return; }
 
@@ -1468,6 +1502,7 @@ const NiftyNumberScreen = ({ game, balance, onBack, user, refreshBalance, settin
       const nums = selectedNumbers.map(n => `.${n.toString().padStart(2, '0')}`).join(', ');
       setMessage({ type: 'success', text: `${selectedNumbers.length} bet(s) placed! Numbers: ${nums}` });
       setSelectedNumbers([]);
+      setBetAmount('');
       refreshBalance();
       fetchTodayBets();
       fetchHistory();
@@ -1475,6 +1510,32 @@ const NiftyNumberScreen = ({ game, balance, onBack, user, refreshBalance, settin
       setMessage({ type: 'error', text: error.response?.data?.message || 'Failed to place bet' });
     } finally {
       setPlacing(false);
+    }
+  };
+
+  const handleModifyBet = async (betId) => {
+    const newAmt = parseFloat(editAmount);
+    if (isNaN(newAmt) || newAmt <= 0) { setMessage({ type: 'error', text: 'Enter a valid amount' }); return; }
+    if (newAmt < minBet) { setMessage({ type: 'error', text: `Minimum bet is ₹${minBet}` }); return; }
+    if (newAmt > maxBet) { setMessage({ type: 'error', text: `Maximum bet is ₹${maxBet}` }); return; }
+
+    setModifying(true);
+    setMessage(null);
+    try {
+      await axios.put(`/api/user/nifty-number/bet/${betId}`, {
+        newAmount: newAmt
+      }, {
+        headers: { Authorization: `Bearer ${user.token}` }
+      });
+      setMessage({ type: 'success', text: `Bet updated to ₹${newAmt.toLocaleString()}` });
+      setEditingBetId(null);
+      setEditAmount('');
+      refreshBalance();
+      fetchTodayBets();
+    } catch (error) {
+      setMessage({ type: 'error', text: error.response?.data?.message || 'Failed to modify bet' });
+    } finally {
+      setModifying(false);
     }
   };
 
@@ -1504,7 +1565,7 @@ const NiftyNumberScreen = ({ game, balance, onBack, user, refreshBalance, settin
             </div>
             <div className="bg-dark-700 rounded-lg px-3 py-1.5 text-right">
               <div className="text-[10px] text-gray-400">Balance</div>
-              <div className="font-bold text-purple-400">₹{balance.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</div>
+              <div className="font-bold text-purple-400">₹{balance.toLocaleString()}</div>
             </div>
           </div>
         </div>
@@ -1515,7 +1576,7 @@ const NiftyNumberScreen = ({ game, balance, onBack, user, refreshBalance, settin
         <div className="flex flex-col lg:flex-row gap-3 h-full">
 
           {/* LEFT COLUMN - Game Info + Today's Bet Status */}
-          <div className="lg:w-[240px] flex-shrink-0 order-1 lg:order-1 overflow-y-auto">
+          <div className="lg:w-[260px] flex-shrink-0 order-1 lg:order-1 overflow-y-auto">
             {/* Today's Bets Status */}
             {loadingBet ? (
               <div className="flex items-center justify-center py-6">
@@ -1530,22 +1591,52 @@ const NiftyNumberScreen = ({ game, balance, onBack, user, refreshBalance, settin
                   </span>
                   {remaining > 0 && <span className="text-[10px] text-gray-500">{remaining} left</span>}
                 </div>
-                <div className="space-y-1.5 max-h-[200px] overflow-y-auto">
+                <div className="space-y-1.5 max-h-[280px] overflow-y-auto">
                   {todayBets.map((bet, idx) => (
-                    <div key={bet._id || idx} className={`flex items-center justify-between p-2 rounded-lg text-xs ${
+                    <div key={bet._id || idx} className={`p-2 rounded-lg text-xs ${
                       bet.status === 'won' ? 'bg-green-900/20' :
                       bet.status === 'lost' ? 'bg-red-900/20' :
                       'bg-yellow-900/10'
                     }`}>
-                      <div className="flex items-center gap-2">
-                        <span className="text-purple-400 font-bold text-sm">.{bet.selectedNumber.toString().padStart(2, '0')}</span>
-                        <span className="text-gray-400">₹{bet.amount.toLocaleString()}</span>
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <span className="text-purple-400 font-bold text-sm">.{bet.selectedNumber.toString().padStart(2, '0')}</span>
+                          <span className="text-gray-400">₹{bet.amount.toLocaleString()}</span>
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          {bet.status === 'pending' && (
+                            <button
+                              onClick={() => { setEditingBetId(editingBetId === bet._id ? null : bet._id); setEditAmount(bet.amount.toString()); }}
+                              className="text-[10px] text-blue-400 hover:text-blue-300 px-1.5 py-0.5 rounded bg-blue-500/10 hover:bg-blue-500/20 transition"
+                            >
+                              {editingBetId === bet._id ? 'Cancel' : 'Edit'}
+                            </button>
+                          )}
+                          {bet.status === 'pending' && <span className="text-yellow-400 font-medium">Pending</span>}
+                          {bet.status === 'won' && <span className="text-green-400 font-bold">+₹{bet.profit?.toLocaleString()}</span>}
+                          {bet.status === 'lost' && <span className="text-red-400 font-bold">-₹{bet.amount.toLocaleString()}</span>}
+                        </div>
                       </div>
-                      <div>
-                        {bet.status === 'pending' && <span className="text-yellow-400 font-medium">Pending</span>}
-                        {bet.status === 'won' && <span className="text-green-400 font-bold">+₹{bet.profit?.toLocaleString()}</span>}
-                        {bet.status === 'lost' && <span className="text-red-400 font-bold">-₹{bet.amount.toLocaleString()}</span>}
-                      </div>
+                      {/* Inline Edit */}
+                      {editingBetId === bet._id && bet.status === 'pending' && (
+                        <div className="mt-2 flex items-center gap-1.5">
+                          <input
+                            type="number"
+                            value={editAmount}
+                            onChange={e => setEditAmount(e.target.value)}
+                            className="flex-1 bg-dark-700 border border-dark-500 rounded px-2 py-1 text-xs font-bold focus:border-blue-500 focus:outline-none"
+                            min={minBet}
+                            max={maxBet}
+                          />
+                          <button
+                            onClick={() => handleModifyBet(bet._id)}
+                            disabled={modifying}
+                            className="px-2 py-1 bg-blue-600 hover:bg-blue-700 rounded text-[10px] font-bold transition disabled:opacity-50"
+                          >
+                            {modifying ? '...' : 'Save'}
+                          </button>
+                        </div>
+                      )}
                     </div>
                   ))}
                 </div>
@@ -1573,7 +1664,7 @@ const NiftyNumberScreen = ({ game, balance, onBack, user, refreshBalance, settin
                 </div>
                 <div>
                   <h3 className="font-bold">{game.name}</h3>
-                  <p className="text-xs text-gray-400">Pick .00 to .99</p>
+                  <p className="text-xs text-gray-400">Pick .00 to .95 (multiples of 5)</p>
                 </div>
               </div>
               <div className="space-y-1 text-sm">
@@ -1621,12 +1712,12 @@ const NiftyNumberScreen = ({ game, balance, onBack, user, refreshBalance, settin
                     }`}>
                       <div>
                         <div className="text-[10px] text-gray-500">{bet.betDate}</div>
-                        <div className="font-bold">.{bet.selectedNumber.toString().padStart(2, '0')} <span className="text-gray-400 font-normal">₹{bet.amount}</span></div>
+                        <div className="font-bold">.{bet.selectedNumber.toString().padStart(2, '0')} <span className="text-gray-400 font-normal">₹{bet.amount.toLocaleString()}</span></div>
                       </div>
                       <div className="text-right">
                         {bet.status === 'pending' && <span className="text-yellow-400 font-medium">Pending</span>}
-                        {bet.status === 'won' && <span className="text-green-400 font-bold">+₹{bet.profit}</span>}
-                        {bet.status === 'lost' && <span className="text-red-400 font-bold">-₹{bet.amount}</span>}
+                        {bet.status === 'won' && <span className="text-green-400 font-bold">+₹{bet.profit?.toLocaleString()}</span>}
+                        {bet.status === 'lost' && <span className="text-red-400 font-bold">-₹{bet.amount.toLocaleString()}</span>}
                       </div>
                     </div>
                   ))}
@@ -1670,6 +1761,7 @@ const NiftyNumberScreen = ({ game, balance, onBack, user, refreshBalance, settin
                     Total: ₹{todayBets.reduce((s, b) => s + b.amount, 0).toLocaleString()}
                   </div>
                   <div className="text-yellow-400 text-xs font-medium">Result at {settings?.resultTime || '15:30'} IST</div>
+                  <div className="text-[10px] text-gray-500 mt-2">You can still edit pending bet amounts from the left panel</div>
                 </div>
               </div>
             ) : (
@@ -1678,11 +1770,12 @@ const NiftyNumberScreen = ({ game, balance, onBack, user, refreshBalance, settin
                 {/* Number Picker Grid */}
                 <div className="bg-dark-800 rounded-xl p-3 border border-dark-600">
                   <div className="flex items-center justify-between mb-2">
-                    <label className="text-xs text-gray-400 font-medium">Pick Numbers (.00 - .99)</label>
+                    <label className="text-xs text-gray-400 font-medium">Pick Numbers (.00 - .95)</label>
                     <span className="text-[10px] text-purple-400 font-bold">{selectedNumbers.length} selected • {remaining} left</span>
                   </div>
-                  <div className="grid grid-cols-10 gap-1">
-                    {Array.from({ length: 100 }, (_, i) => {
+                  <div className="grid grid-cols-5 gap-1.5">
+                    {Array.from({ length: 20 }, (_, idx) => {
+                      const i = idx * 5;
                       const isSelected = selectedNumbers.includes(i);
                       const isAlreadyBet = todayNumbers.includes(i);
                       return (
@@ -1690,7 +1783,7 @@ const NiftyNumberScreen = ({ game, balance, onBack, user, refreshBalance, settin
                           key={i}
                           onClick={() => toggleNumber(i)}
                           disabled={isAlreadyBet}
-                          className={`py-1.5 rounded text-[10px] font-bold transition-all ${
+                          className={`py-2 rounded text-xs font-bold transition-all ${
                             isAlreadyBet
                               ? 'bg-yellow-900/30 text-yellow-600 cursor-not-allowed ring-1 ring-yellow-500/30'
                               : isSelected
@@ -1719,17 +1812,17 @@ const NiftyNumberScreen = ({ game, balance, onBack, user, refreshBalance, settin
 
                 {/* Bet Amount */}
                 <div className="bg-dark-800 rounded-xl p-3 border border-dark-600">
-                  <label className="block text-xs text-gray-400 mb-1.5">Bet Amount (per number)</label>
+                  <label className="block text-xs text-gray-400 mb-1.5">Amount per number (₹)</label>
                   <input
                     type="number"
                     value={betAmount}
                     onChange={e => setBetAmount(e.target.value)}
-                    placeholder={`₹${minBet} - ₹${maxBet.toLocaleString()}`}
+                    placeholder={`₹${minBet} - ₹${maxBet}`}
                     min={minBet}
                     max={maxBet}
                     className="w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 text-lg font-bold text-center focus:border-purple-500 focus:outline-none"
                   />
-                  <div className="text-[10px] text-gray-500 mt-1 text-center">Min ₹{minBet} • Max ₹{maxBet.toLocaleString()} per number</div>
+                  <div className="text-[10px] text-gray-500 mt-1 text-center">Min ₹{minBet.toLocaleString()} • Max ₹{maxBet.toLocaleString()}</div>
                   <div className="grid grid-cols-3 gap-1.5 mt-1.5">
                     {quickAmounts.map(amt => (
                       <button
@@ -1787,7 +1880,7 @@ const NiftyNumberScreen = ({ game, balance, onBack, user, refreshBalance, settin
 };
 
 // ==================== NIFTY BRACKET SCREEN ====================
-const NiftyBracketScreen = ({ game, balance, onBack, user, refreshBalance, settings }) => {
+const NiftyBracketScreen = ({ game, balance, onBack, user, refreshBalance, settings, tokenValue = 300 }) => {
   const [betAmount, setBetAmount] = useState('');
   const [activeTrades, setActiveTrades] = useState([]);
   const [tradeHistory, setTradeHistory] = useState([]);
@@ -1800,9 +1893,16 @@ const NiftyBracketScreen = ({ game, balance, onBack, user, refreshBalance, setti
   const expiryMinutes = settings?.expiryMinutes || 5;
   const winMultiplier = settings?.winMultiplier || 2;
   const brokeragePercent = settings?.brokeragePercent || 5;
-  const minBet = settings?.minBet || 100;
-  const maxBet = settings?.maxBet || 25000;
+  const minBetRs = settings?.minBet || 100;
+  const maxBetRs = settings?.maxBet || 25000;
   const gameEnabled = settings?.enabled !== false;
+
+  // Ticket conversion helpers
+  const toTokens = (rs) => parseFloat((rs / tokenValue).toFixed(2));
+  const toRupees = (tokens) => parseFloat((tokens * tokenValue).toFixed(2));
+  const balanceTokens = toTokens(balance);
+  const minBetTokens = toTokens(minBetRs);
+  const maxBetTokens = toTokens(maxBetRs);
 
   const upperTarget = currentPrice ? parseFloat((currentPrice + bracketGap).toFixed(2)) : null;
   const lowerTarget = currentPrice ? parseFloat((currentPrice - bracketGap).toFixed(2)) : null;
@@ -1876,9 +1976,10 @@ const NiftyBracketScreen = ({ game, balance, onBack, user, refreshBalance, setti
 
   const handlePlaceTrade = async (prediction) => {
     if (!betAmount || !currentPrice) return;
-    const amt = parseFloat(betAmount);
-    if (amt < minBet) { setMessage({ type: 'error', text: `Minimum bet is ₹${minBet}` }); return; }
-    if (amt > maxBet) { setMessage({ type: 'error', text: `Maximum bet is ₹${maxBet.toLocaleString()}` }); return; }
+    const tokenAmt = parseFloat(betAmount);
+    const amt = toRupees(tokenAmt);
+    if (tokenAmt < minBetTokens) { setMessage({ type: 'error', text: `Minimum bet is ${minBetTokens} tickets` }); return; }
+    if (tokenAmt > maxBetTokens) { setMessage({ type: 'error', text: `Maximum bet is ${maxBetTokens} tickets` }); return; }
     if (amt > balance) { setMessage({ type: 'error', text: 'Insufficient balance' }); return; }
     if (!gameEnabled) { setMessage({ type: 'error', text: 'Game is currently disabled' }); return; }
 
@@ -1903,7 +2004,7 @@ const NiftyBracketScreen = ({ game, balance, onBack, user, refreshBalance, setti
     }
   };
 
-  const quickAmounts = [100, 200, 500, 1000, 2000, 5000];
+  const quickAmounts = [1, 2, 3, 5, 10, 20];
 
   const formatTimeLeft = (expiresAt) => {
     const diff = new Date(expiresAt) - new Date();
@@ -1944,7 +2045,7 @@ const NiftyBracketScreen = ({ game, balance, onBack, user, refreshBalance, setti
               )}
               <div className="bg-dark-700 rounded-lg px-3 py-1.5 text-right">
                 <div className="text-[10px] text-gray-400">Balance</div>
-                <div className="font-bold text-purple-400">₹{balance.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</div>
+                <div className="font-bold text-purple-400">{balanceTokens} Tkt</div>
               </div>
             </div>
           </div>
@@ -2010,11 +2111,15 @@ const NiftyBracketScreen = ({ game, balance, onBack, user, refreshBalance, setti
                 </div>
                 <div className="flex justify-between py-1 border-b border-dark-600">
                   <span className="text-gray-400">Min Bet</span>
-                  <span className="font-medium">₹{minBet.toLocaleString()}</span>
+                  <span className="font-medium">{minBetTokens} Tickets</span>
                 </div>
                 <div className="flex justify-between py-1 border-b border-dark-600">
                   <span className="text-gray-400">Max Bet</span>
-                  <span className="font-medium">₹{maxBet.toLocaleString()}</span>
+                  <span className="font-medium">{maxBetTokens} Tickets</span>
+                </div>
+                <div className="flex justify-between py-1 border-b border-dark-600">
+                  <span className="text-gray-400">1 Ticket</span>
+                  <span className="font-medium">₹{tokenValue}</span>
                 </div>
                 <div className="flex justify-between py-1">
                   <span className="text-gray-400">Expiry</span>
@@ -2022,7 +2127,7 @@ const NiftyBracketScreen = ({ game, balance, onBack, user, refreshBalance, setti
                 </div>
               </div>
               <div className="mt-2 bg-dark-700/50 rounded-lg p-2 text-[10px] text-gray-500">
-                Win ₹100 bet → ₹{(100 * winMultiplier).toFixed(0)} gross - ₹{((100 * winMultiplier - 100) * brokeragePercent / 100).toFixed(0)} fee = <span className="text-green-400 font-medium">₹{(100 * winMultiplier - 100 - (100 * winMultiplier - 100) * brokeragePercent / 100).toFixed(0)} profit</span>
+                Win 1T bet → {winMultiplier} T gross - {((winMultiplier - 1) * brokeragePercent / 100).toFixed(2)} T fee = <span className="text-green-400 font-medium">{(winMultiplier - 1 - (winMultiplier - 1) * brokeragePercent / 100).toFixed(2)} T profit</span>
               </div>
             </div>
 
@@ -2040,7 +2145,7 @@ const NiftyBracketScreen = ({ game, balance, onBack, user, refreshBalance, setti
                         <span className={`font-bold px-1.5 py-0.5 rounded text-[10px] ${
                           trade.prediction === 'BUY' ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'
                         }`}>{trade.prediction}</span>
-                        <span className="text-gray-400">₹{trade.amount.toLocaleString()}</span>
+                        <span className="text-gray-400">{toTokens(trade.amount)} T</span>
                       </div>
                       <div className="flex justify-between text-[10px] text-gray-500">
                         <span>{trade.lowerTarget} ↔ {trade.upperTarget}</span>
@@ -2071,11 +2176,11 @@ const NiftyBracketScreen = ({ game, balance, onBack, user, refreshBalance, setti
                     }`}>
                       <div>
                         <span className={`font-bold text-[10px] ${t.prediction === 'BUY' ? 'text-green-400' : 'text-red-400'}`}>{t.prediction}</span>
-                        <span className="text-gray-400 ml-1">₹{t.amount}</span>
+                        <span className="text-gray-400 ml-1">{toTokens(t.amount)} T</span>
                       </div>
                       <div className="text-right">
-                        {t.status === 'won' && <span className="text-green-400 font-bold">+₹{t.profit?.toFixed(0)}</span>}
-                        {t.status === 'lost' && <span className="text-red-400 font-bold">-₹{t.amount}</span>}
+                        {t.status === 'won' && <span className="text-green-400 font-bold">+{toTokens(t.profit)} T</span>}
+                        {t.status === 'lost' && <span className="text-red-400 font-bold">-{toTokens(t.amount)} T</span>}
                         {t.status === 'expired' && <span className="text-gray-400 font-medium">Refunded</span>}
                       </div>
                     </div>
@@ -2106,17 +2211,18 @@ const NiftyBracketScreen = ({ game, balance, onBack, user, refreshBalance, setti
             <div className="space-y-3 flex-shrink-0">
               {/* Bet Amount */}
               <div className="bg-dark-800 rounded-xl p-4 border border-dark-600">
-                <label className="block text-sm text-gray-400 mb-2">Enter Amount</label>
+                <label className="block text-sm text-gray-400 mb-2">Enter Tickets</label>
                 <input
                   type="number"
                   value={betAmount}
                   onChange={e => setBetAmount(e.target.value)}
-                  placeholder={`₹${minBet} - ₹${maxBet.toLocaleString()}`}
-                  min={minBet}
-                  max={maxBet}
+                  placeholder={`${minBetTokens} - ${maxBetTokens} Tickets`}
+                  min={minBetTokens}
+                  max={maxBetTokens}
+                  step="0.01"
                   className="w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2.5 text-xl font-bold text-center focus:border-cyan-500 focus:outline-none"
                 />
-                <div className="text-[10px] text-gray-500 mt-1 text-center">Min ₹{minBet.toLocaleString()} • Max ₹{maxBet.toLocaleString()}</div>
+                <div className="text-[10px] text-gray-500 mt-1 text-center">Min {minBetTokens} • Max {maxBetTokens} Tickets (1Tkt = ₹{tokenValue})</div>
                 <div className="grid grid-cols-3 gap-1.5 mt-2">
                   {quickAmounts.map(amt => (
                     <button
@@ -2124,7 +2230,7 @@ const NiftyBracketScreen = ({ game, balance, onBack, user, refreshBalance, setti
                       onClick={() => setBetAmount(amt.toString())}
                       className="py-1.5 bg-dark-700 hover:bg-dark-600 rounded-lg text-xs font-medium transition"
                     >
-                      ₹{amt.toLocaleString()}
+                      {amt} T
                     </button>
                   ))}
                 </div>
@@ -2212,7 +2318,7 @@ const NiftyBracketScreen = ({ game, balance, onBack, user, refreshBalance, setti
 };
 
 // ==================== NIFTY JACKPOT SCREEN ====================
-const NiftyJackpotScreen = ({ game, balance, onBack, user, refreshBalance, settings }) => {
+const NiftyJackpotScreen = ({ game, balance, onBack, user, refreshBalance, settings, tokenValue = 300 }) => {
   const [bidAmount, setBidAmount] = useState('');
   const [todayBid, setTodayBid] = useState(null);
   const [hasBid, setHasBid] = useState(false);
@@ -2225,15 +2331,26 @@ const NiftyJackpotScreen = ({ game, balance, onBack, user, refreshBalance, setti
   const [message, setMessage] = useState(null);
 
   // Admin-configured settings with fallbacks
-  const topWinners = settings?.topWinners || 20;
-  const firstPrize = settings?.firstPrize || 3000;
-  const prizeStep = settings?.prizeStep || 20;
-  const minBet = settings?.minBet || 100;
-  const maxBet = settings?.maxBet || 50000;
+  const topWinners = settings?.topWinners || 10;
+  const prizeDistribution = settings?.prizeDistribution || [45000, 10000, 8000, 6000, 5000, 4000, 3000, 2000, 1500, 1000];
+  const brokeragePercent = settings?.brokeragePercent || 5;
+  const minBetRs = settings?.minBet || 100;
+  const maxBetRs = settings?.maxBet || 50000;
   const gameEnabled = settings?.enabled !== false;
 
-  // Calculate prize for a given rank
-  const getPrize = (rank) => rank <= topWinners ? Math.max(0, firstPrize - (rank - 1) * prizeStep) : 0;
+  // Ticket conversion helpers
+  const toTokens = (rs) => parseFloat((rs / tokenValue).toFixed(2));
+  const toRupees = (tokens) => parseFloat((tokens * tokenValue).toFixed(2));
+  const balanceTokens = toTokens(balance);
+  const minBetTokens = toTokens(minBetRs);
+  const maxBetTokens = toTokens(maxBetRs);
+
+  // Calculate prize for a given rank (from prizeDistribution array)
+  const getPrize = (rank) => rank >= 1 && rank <= prizeDistribution.length ? prizeDistribution[rank - 1] : 0;
+  const getNetPrize = (rank) => {
+    const prize = getPrize(rank);
+    return prize - (prize * brokeragePercent / 100);
+  };
 
   useEffect(() => {
     fetchTodayBid();
@@ -2284,9 +2401,10 @@ const NiftyJackpotScreen = ({ game, balance, onBack, user, refreshBalance, setti
 
   const handlePlaceBid = async () => {
     if (!bidAmount) return;
-    const amt = parseFloat(bidAmount);
-    if (amt < minBet) { setMessage({ type: 'error', text: `Minimum bid is ₹${minBet}` }); return; }
-    if (amt > maxBet) { setMessage({ type: 'error', text: `Maximum bid is ₹${maxBet.toLocaleString()}` }); return; }
+    const tokenAmt = parseFloat(bidAmount);
+    const amt = toRupees(tokenAmt);
+    if (tokenAmt < minBetTokens) { setMessage({ type: 'error', text: `Minimum bid is ${minBetTokens} tickets` }); return; }
+    if (tokenAmt > maxBetTokens) { setMessage({ type: 'error', text: `Maximum bid is ${maxBetTokens} tickets` }); return; }
     if (amt > balance) { setMessage({ type: 'error', text: 'Insufficient balance' }); return; }
     if (!gameEnabled) { setMessage({ type: 'error', text: 'Game is currently disabled' }); return; }
 
@@ -2300,7 +2418,7 @@ const NiftyJackpotScreen = ({ game, balance, onBack, user, refreshBalance, setti
       });
       setHasBid(true);
       setTodayBid(data.bid);
-      setMessage({ type: 'success', text: `Bid of ₹${amt.toLocaleString()} placed!` });
+      setMessage({ type: 'success', text: `Bid of ${tokenAmt} tickets placed!` });
       refreshBalance();
       fetchLeaderboard();
       fetchHistory();
@@ -2311,7 +2429,7 @@ const NiftyJackpotScreen = ({ game, balance, onBack, user, refreshBalance, setti
     }
   };
 
-  const quickAmounts = [500, 1000, 2000, 5000, 10000, 25000];
+  const quickAmounts = [2, 5, 10, 20, 50, 100];
 
   // Top 10 for achievements section
   const top10 = leaderboard.slice(0, 10);
@@ -2347,7 +2465,7 @@ const NiftyJackpotScreen = ({ game, balance, onBack, user, refreshBalance, setti
               )}
               <div className="bg-dark-700 rounded-lg px-3 py-1.5 text-right">
                 <div className="text-[10px] text-gray-400">Balance</div>
-                <div className="font-bold text-purple-400">₹{balance.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</div>
+                <div className="font-bold text-purple-400">{balanceTokens} Tkt</div>
               </div>
             </div>
           </div>
@@ -2391,11 +2509,11 @@ const NiftyJackpotScreen = ({ game, balance, onBack, user, refreshBalance, setti
                             <div className={`font-medium ${isMe ? 'text-yellow-400' : 'text-white'}`}>
                               {isMe ? 'You' : entry.name}
                             </div>
-                            <div className="text-[10px] text-gray-500">₹{entry.amount.toLocaleString()}</div>
+                            <div className="text-[10px] text-gray-500">{toTokens(entry.amount)} T</div>
                           </div>
                         </div>
                         <div className="text-right">
-                          <div className="text-green-400 font-bold text-[10px]">₹{entry.prize.toLocaleString()}</div>
+                          <div className="text-green-400 font-bold text-[10px]">{toTokens(entry.prize)} T</div>
                         </div>
                       </div>
                     );
@@ -2411,32 +2529,23 @@ const NiftyJackpotScreen = ({ game, balance, onBack, user, refreshBalance, setti
             <div className="bg-dark-800 rounded-xl p-3 border border-dark-600">
               <h3 className="font-bold text-xs mb-2 flex items-center gap-1.5">
                 <Award size={12} className="text-yellow-400" />
-                Prize Structure
+                Prize Structure ({brokeragePercent}% brokerage)
               </h3>
-              <div className="space-y-1 text-xs">
-                <div className="flex justify-between py-1 border-b border-dark-600">
-                  <span className="text-gray-400">1st Place</span>
-                  <span className="text-green-400 font-bold">₹{firstPrize.toLocaleString()}</span>
-                </div>
-                <div className="flex justify-between py-1 border-b border-dark-600">
-                  <span className="text-gray-400">2nd Place</span>
-                  <span className="text-green-400 font-bold">₹{(firstPrize - prizeStep).toLocaleString()}</span>
-                </div>
-                <div className="flex justify-between py-1 border-b border-dark-600">
-                  <span className="text-gray-400">3rd Place</span>
-                  <span className="text-green-400 font-bold">₹{(firstPrize - 2 * prizeStep).toLocaleString()}</span>
-                </div>
-                <div className="flex justify-between py-1 border-b border-dark-600">
-                  <span className="text-gray-400">Step Decrease</span>
-                  <span className="text-yellow-400 font-medium">-₹{prizeStep} per rank</span>
-                </div>
+              <div className="space-y-1 text-xs max-h-[200px] overflow-y-auto">
+                {prizeDistribution.map((prize, idx) => (
+                  <div key={idx} className="flex justify-between py-1 border-b border-dark-600">
+                    <span className="text-gray-400">#{idx + 1}</span>
+                    <div className="text-right">
+                      <span className="text-green-400 font-bold">{toTokens(getNetPrize(idx + 1))} T</span>
+                      <span className="text-gray-600 text-[10px] ml-1">({toTokens(prize)} - {brokeragePercent}%)</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <div className="space-y-1 text-xs mt-1">
                 <div className="flex justify-between py-1 border-b border-dark-600">
                   <span className="text-gray-400">Top Winners</span>
                   <span className="text-yellow-400 font-bold">{topWinners}</span>
-                </div>
-                <div className="flex justify-between py-1 border-b border-dark-600">
-                  <span className="text-gray-400">Last Prize (#{topWinners})</span>
-                  <span className="text-green-400 font-bold">₹{getPrize(topWinners).toLocaleString()}</span>
                 </div>
                 <div className="flex justify-between py-1">
                   <span className="text-gray-400">Result At</span>
@@ -2463,12 +2572,12 @@ const NiftyJackpotScreen = ({ game, balance, onBack, user, refreshBalance, setti
                     }`}>
                       <div>
                         <div className="text-[10px] text-gray-500">{bid.betDate}</div>
-                        <div className="font-bold">₹{bid.amount.toLocaleString()} {bid.rank ? `#${bid.rank}` : ''}</div>
+                        <div className="font-bold">{toTokens(bid.amount)} T {bid.rank ? `#${bid.rank}` : ''}</div>
                       </div>
                       <div className="text-right">
                         {bid.status === 'pending' && <span className="text-yellow-400 font-medium">Pending</span>}
-                        {bid.status === 'won' && <span className="text-green-400 font-bold">+₹{bid.prize?.toLocaleString()}</span>}
-                        {bid.status === 'lost' && <span className="text-red-400 font-bold">-₹{bid.amount.toLocaleString()}</span>}
+                        {bid.status === 'won' && <span className="text-green-400 font-bold">+{toTokens(bid.prize)} T</span>}
+                        {bid.status === 'lost' && <span className="text-red-400 font-bold">-{toTokens(bid.amount)} T</span>}
                       </div>
                     </div>
                   ))}
@@ -2509,7 +2618,7 @@ const NiftyJackpotScreen = ({ game, balance, onBack, user, refreshBalance, setti
                       {todayBid.status === 'won' && <Trophy size={28} className="text-green-400" />}
                       {todayBid.status === 'lost' && <X size={28} className="text-red-400" />}
                     </div>
-                    <div className="text-2xl font-bold text-yellow-400 mb-1">₹{todayBid.amount.toLocaleString()}</div>
+                    <div className="text-2xl font-bold text-yellow-400 mb-1">{toTokens(todayBid.amount)} Tickets</div>
                     <div className="text-gray-400 text-sm mb-1">Your Bid</div>
                     {myRank && (
                       <div className={`text-lg font-bold ${myRank <= topWinners ? 'text-green-400' : 'text-red-400'}`}>
@@ -2518,14 +2627,14 @@ const NiftyJackpotScreen = ({ game, balance, onBack, user, refreshBalance, setti
                     )}
                     {myRank && myRank <= topWinners && (
                       <div className="text-green-400 text-sm font-medium mt-1">
-                        Prize: ₹{getPrize(myRank).toLocaleString()}
+                        Prize: {toTokens(getNetPrize(myRank))} T <span className="text-gray-500 text-[10px]">(after {brokeragePercent}% fee)</span>
                       </div>
                     )}
                     {todayBid.status === 'pending' && (
                       <div className="text-yellow-400 text-xs font-medium mt-2">Result at {settings?.resultTime || '15:30'} IST</div>
                     )}
                     {todayBid.status === 'won' && todayBid.prize > 0 && (
-                      <div className="text-green-400 text-lg font-bold mt-1">Won ₹{todayBid.prize.toLocaleString()}!</div>
+                      <div className="text-green-400 text-lg font-bold mt-1">Won {toTokens(todayBid.prize)} Tickets!</div>
                     )}
                     {todayBid.status === 'lost' && (
                       <div className="text-red-400 text-sm mt-1">Better luck tomorrow!</div>
@@ -2558,8 +2667,8 @@ const NiftyJackpotScreen = ({ game, balance, onBack, user, refreshBalance, setti
                             <span className={isMe ? 'text-yellow-400 font-bold' : 'text-gray-300'}>{isMe ? 'You' : entry.name}</span>
                           </div>
                           <div className="flex items-center gap-2">
-                            <span className="text-gray-400">₹{entry.amount.toLocaleString()}</span>
-                            {entry.isWinner && <span className="text-green-400 font-bold">₹{entry.prize.toLocaleString()}</span>}
+                            <span className="text-gray-400">{toTokens(entry.amount)} T</span>
+                            {entry.isWinner && <span className="text-green-400 font-bold">{toTokens(entry.prize)} T</span>}
                           </div>
                         </div>
                       );
@@ -2579,24 +2688,25 @@ const NiftyJackpotScreen = ({ game, balance, onBack, user, refreshBalance, setti
                   <ul className="text-[10px] text-gray-400 space-y-1">
                     <li>• Place your bid — higher bids rank higher</li>
                     <li>• Top {topWinners} bidders win prizes</li>
-                    <li>• 1st gets ₹{firstPrize.toLocaleString()}, decreasing by ₹{prizeStep} per rank</li>
+                    <li>• 1st gets {toTokens(getNetPrize(1))} T net (after {brokeragePercent}% fee)</li>
                     <li>• Results declared at {settings?.resultTime || '15:30'} IST</li>
                   </ul>
                 </div>
 
                 {/* Bid Amount */}
                 <div className="bg-dark-800 rounded-xl p-3 border border-dark-600">
-                  <label className="block text-xs text-gray-400 mb-1.5 font-medium">Your Bid Amount</label>
+                  <label className="block text-xs text-gray-400 mb-1.5 font-medium">Your Bid (Tickets)</label>
                   <input
                     type="number"
                     value={bidAmount}
                     onChange={e => setBidAmount(e.target.value)}
-                    placeholder={`₹${minBet} - ₹${maxBet.toLocaleString()}`}
-                    min={minBet}
-                    max={maxBet}
+                    placeholder={`${minBetTokens} - ${maxBetTokens} Tickets`}
+                    min={minBetTokens}
+                    max={maxBetTokens}
+                    step="0.01"
                     className="w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-3 text-xl font-bold text-center focus:border-yellow-500 focus:outline-none"
                   />
-                  <div className="text-[10px] text-gray-500 mt-1 text-center">Min ₹{minBet} • Max ₹{maxBet.toLocaleString()}</div>
+                  <div className="text-[10px] text-gray-500 mt-1 text-center">Min {minBetTokens} • Max {maxBetTokens} Tickets (1Tkt = ₹{tokenValue})</div>
                   <div className="grid grid-cols-3 gap-1.5 mt-2">
                     {quickAmounts.map(amt => (
                       <button
@@ -2604,7 +2714,7 @@ const NiftyJackpotScreen = ({ game, balance, onBack, user, refreshBalance, setti
                         onClick={() => setBidAmount(amt.toString())}
                         className="py-2 bg-dark-700 hover:bg-dark-600 rounded-lg text-xs font-medium transition"
                       >
-                        ₹{amt.toLocaleString()}
+                        {amt} T
                       </button>
                     ))}
                   </div>
@@ -2615,17 +2725,18 @@ const NiftyJackpotScreen = ({ game, balance, onBack, user, refreshBalance, setti
                   <div className="bg-dark-800 rounded-xl p-3 border border-dark-600 text-center">
                     <div className="text-[10px] text-gray-400 mb-1">Estimated Rank</div>
                     {(() => {
-                      const amt = parseFloat(bidAmount);
+                      const tokenAmt = parseFloat(bidAmount);
+                      const amt = toRupees(tokenAmt);
                       const higherCount = leaderboard.filter(e => e.amount > amt).length;
                       const estRank = higherCount + 1;
-                      const estPrize = getPrize(estRank);
+                      const estNetPrize = getNetPrize(estRank);
                       return (
                         <>
                           <div className={`text-2xl font-bold ${estRank <= topWinners ? 'text-green-400' : 'text-red-400'}`}>
                             #{estRank}
                           </div>
                           {estRank <= topWinners ? (
-                            <div className="text-green-400 text-xs font-medium">Est. Prize: ₹{estPrize.toLocaleString()}</div>
+                            <div className="text-green-400 text-xs font-medium">Est. Prize: {toTokens(estNetPrize)} T <span className="text-gray-500">(after {brokeragePercent}% fee)</span></div>
                           ) : (
                             <div className="text-red-400 text-xs">Outside top {topWinners} — increase bid!</div>
                           )}
@@ -2648,7 +2759,7 @@ const NiftyJackpotScreen = ({ game, balance, onBack, user, refreshBalance, setti
                   {placing ? (
                     <span className="flex items-center justify-center gap-2"><RefreshCw size={16} className="animate-spin" /> Placing...</span>
                   ) : bidAmount && parseFloat(bidAmount) > 0 ? (
-                    `Place Bid ₹${parseFloat(bidAmount).toLocaleString()}`
+                    `Place Bid ${parseFloat(bidAmount)} Tokens`
                   ) : (
                     'Enter Bid Amount'
                   )}

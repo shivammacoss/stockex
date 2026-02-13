@@ -18,8 +18,20 @@ const gameSettingsSchema = new mongoose.Schema({
   maintenanceMode: { type: Boolean, default: false },
   maintenanceMessage: { type: String, default: 'Games are under maintenance. Please try again later.' },
   
+  // Token System (1 token = tokenValue in ₹)
+  tokenValue: { type: Number, default: 300 }, // 1 token = ₹300
+  
   // Platform Commission
   platformCommission: { type: Number, default: 5 }, // Global platform fee %
+  
+  // Profit Distribution Hierarchy (% of win/brokerage amount)
+  profitDistribution: {
+    superAdminPercent: { type: Number, default: 40 },
+    adminPercent: { type: Number, default: 30 },
+    brokerPercent: { type: Number, default: 20 },
+    subBrokerPercent: { type: Number, default: 10 }
+    // Remaining (if any) auto goes to Super Admin
+  },
   
   // Min/Max Global Limits
   globalMinBet: { type: Number, default: 10 },
@@ -38,7 +50,10 @@ const gameSettingsSchema = new mongoose.Schema({
       enabled: { type: Boolean, default: true },
       minBet: { type: Number, default: 100 },
       maxBet: { type: Number, default: 50000 },
-      brokeragePercent: { type: Number, default: 5 }
+      brokeragePercent: { type: Number, default: 5 },
+      buySellRatioBrokerage: { type: Number, default: 16.67 },
+      startTime: { type: String, default: '09:15' },
+      endTime: { type: String, default: '15:30' }
     },
     niftyNumber: {
       ...gameConfigSchema.obj,
@@ -50,11 +65,15 @@ const gameSettingsSchema = new mongoose.Schema({
       minBet: { type: Number, default: 100 },
       maxBet: { type: Number, default: 10000 },
       brokeragePercent: { type: Number, default: 10 },
+      buySellRatioBrokerage: { type: Number, default: 16.67 },
       fixedProfit: { type: Number, default: 4000 }, // Fixed profit on win
       adminSharePercent: { type: Number, default: 50 }, // Admin gets this % of losing bets
       superAdminSharePercent: { type: Number, default: 50 }, // SuperAdmin gets this % of losing bets
       resultTime: { type: String, default: '15:30' }, // IST time when result is declared
-      betsPerDay: { type: Number, default: 10 } // Max bets per user per day
+      maxBidTime: { type: String, default: '15:40' }, // Last time users can place bets
+      betsPerDay: { type: Number, default: 10 }, // Max bets per user per day
+      startTime: { type: String, default: '09:15' },
+      endTime: { type: String, default: '15:30' }
     },
     niftyJackpot: {
       ...gameConfigSchema.obj,
@@ -66,13 +85,15 @@ const gameSettingsSchema = new mongoose.Schema({
       minBet: { type: Number, default: 100 },
       maxBet: { type: Number, default: 50000 },
       brokeragePercent: { type: Number, default: 5 },
-      topWinners: { type: Number, default: 20 },
-      firstPrize: { type: Number, default: 3000 },
-      prizeStep: { type: Number, default: 20 },
+      buySellRatioBrokerage: { type: Number, default: 16.67 },
+      topWinners: { type: Number, default: 10 },
+      prizeDistribution: { type: [Number], default: [45000, 10000, 8000, 6000, 5000, 4000, 3000, 2000, 1500, 1000] },
       resultTime: { type: String, default: '15:30' },
       bidsPerDay: { type: Number, default: 1 },
       adminSharePercent: { type: Number, default: 50 },
-      superAdminSharePercent: { type: Number, default: 50 }
+      superAdminSharePercent: { type: Number, default: 50 },
+      startTime: { type: String, default: '09:15' },
+      endTime: { type: String, default: '15:30' }
     },
     niftyBracket: {
       ...gameConfigSchema.obj,
@@ -84,8 +105,11 @@ const gameSettingsSchema = new mongoose.Schema({
       minBet: { type: Number, default: 100 },
       maxBet: { type: Number, default: 25000 },
       brokeragePercent: { type: Number, default: 5 },
+      buySellRatioBrokerage: { type: Number, default: 16.67 },
       bracketGap: { type: Number, default: 20 }, // Points above/below current price
       expiryMinutes: { type: Number, default: 5 }, // Trade expires if neither level hit
+      startTime: { type: String, default: '09:15' },
+      endTime: { type: String, default: '15:30' }
     },
     btcUpDown: {
       ...gameConfigSchema.obj,
@@ -96,7 +120,10 @@ const gameSettingsSchema = new mongoose.Schema({
       enabled: { type: Boolean, default: true },
       minBet: { type: Number, default: 100 },
       maxBet: { type: Number, default: 50000 },
-      brokeragePercent: { type: Number, default: 5 }
+      brokeragePercent: { type: Number, default: 5 },
+      buySellRatioBrokerage: { type: Number, default: 16.67 },
+      startTime: { type: String, default: '00:00' },
+      endTime: { type: String, default: '23:59' }
     }
   },
   

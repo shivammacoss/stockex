@@ -23,7 +23,17 @@ export const AuthProvider = ({ children }) => {
     setAdmin(null);
     localStorage.removeItem('admin');
     sessionStorage.setItem('logout_message', message);
-    window.location.href = '/admin/login';
+    // Redirect to the correct login page based on current path
+    const path = window.location.pathname;
+    if (path.startsWith('/superadmin')) {
+      window.location.href = '/superadmin/login';
+    } else if (path.startsWith('/broker')) {
+      window.location.href = '/broker/login';
+    } else if (path.startsWith('/subbroker')) {
+      window.location.href = '/subbroker/login';
+    } else {
+      window.location.href = '/admin/login';
+    }
   }, []);
 
   useEffect(() => {
@@ -39,18 +49,22 @@ export const AuthProvider = ({ children }) => {
     setLoading(false);
   }, []);
 
-  // Setup axios interceptor for session expired errors
+  // Setup axios interceptor for auth errors (expired/invalid token)
   useEffect(() => {
     const interceptor = axios.interceptors.response.use(
       (response) => response,
       (error) => {
-        if (error.response?.status === 401 && error.response?.data?.code === 'SESSION_EXPIRED_OTHER_DEVICE') {
-          // Check if it's an admin or user request based on the URL
+        if (error.response?.status === 401) {
           const requestUrl = error.config?.url || '';
-          if (requestUrl.includes('/api/admin/')) {
-            handleAdminSessionExpired(error.response.data.message);
-          } else {
-            handleUserSessionExpired(error.response.data.message);
+          // Skip login/setup endpoints - those 401s are just wrong credentials
+          const isAuthEndpoint = requestUrl.includes('/login') || requestUrl.includes('/setup') || requestUrl.includes('/register');
+          if (!isAuthEndpoint) {
+            const message = error.response?.data?.message || 'Session expired. Please login again.';
+            if (requestUrl.includes('/api/admin/')) {
+              handleAdminSessionExpired(message);
+            } else if (requestUrl.includes('/api/user/')) {
+              handleUserSessionExpired(message);
+            }
           }
         }
         return Promise.reject(error);
