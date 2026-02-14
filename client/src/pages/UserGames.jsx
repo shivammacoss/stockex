@@ -360,12 +360,16 @@ const UserGames = () => {
 // Results come 15 minutes after the window closes
 // Market hours: 9:15 AM to 3:30 PM IST
 
-const MARKET_OPEN_HOUR = 9;
-const MARKET_OPEN_MIN = 15;
-const MARKET_CLOSE_HOUR = 15;
-const MARKET_CLOSE_MIN = 30;
+const DEFAULT_MARKET_OPEN = '09:15:15';
+const DEFAULT_MARKET_CLOSE = '15:44:59';
 const WINDOW_DURATION_MIN = 15; // 15-minute trading windows
 const WINDOW_OFFSET_SEC = 15;   // Windows start at :15 seconds
+
+// Parse "HH:MM" or "HH:MM:SS" into total seconds since midnight
+const parseTimeToSec = (timeStr) => {
+  const parts = (timeStr || '').split(':').map(Number);
+  return (parts[0] || 0) * 3600 + (parts[1] || 0) * 60 + (parts[2] || 0);
+};
 
 const getISTNow = () => {
   const now = new Date();
@@ -391,12 +395,16 @@ const formatCountdown = (totalSec) => {
   return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
 };
 
-const getTradingWindowInfo = () => {
+const getTradingWindowInfo = (openTime, closeTime) => {
   const now = getISTNow();
   const currentSec = getTotalSeconds(now);
   
-  const marketOpenSec = MARKET_OPEN_HOUR * 3600 + MARKET_OPEN_MIN * 60;
-  const marketCloseSec = MARKET_CLOSE_HOUR * 3600 + MARKET_CLOSE_MIN * 60;
+  const marketOpenSec = parseTimeToSec(openTime || DEFAULT_MARKET_OPEN);
+  const marketCloseSec = parseTimeToSec(closeTime || DEFAULT_MARKET_CLOSE);
+
+  const openH = Math.floor(marketOpenSec / 3600);
+  const openM = Math.floor((marketOpenSec % 3600) / 60);
+  const openS = marketOpenSec % 60;
   
   // Before market hours
   if (currentSec < marketOpenSec + WINDOW_OFFSET_SEC) {
@@ -404,7 +412,7 @@ const getTradingWindowInfo = () => {
     return {
       status: 'pre_market',
       message: 'Market not yet open',
-      nextWindowStart: formatTime(MARKET_OPEN_HOUR, MARKET_OPEN_MIN, WINDOW_OFFSET_SEC),
+      nextWindowStart: formatTime(openH, openM, openS + WINDOW_OFFSET_SEC),
       countdown: firstWindowStart - currentSec,
       windowNumber: 0,
       canTrade: false
@@ -416,7 +424,7 @@ const getTradingWindowInfo = () => {
     return {
       status: 'post_market',
       message: 'Market closed for today',
-      nextWindowStart: 'Tomorrow 9:15:15 AM',
+      nextWindowStart: `Tomorrow ${formatTime(openH, openM, openS + WINDOW_OFFSET_SEC)}`,
       countdown: 0,
       windowNumber: 0,
       canTrade: false
@@ -898,7 +906,9 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
   const [betAmount, setBetAmount] = useState('');
   const [prediction, setPrediction] = useState(null);
   const [showInstructions, setShowInstructions] = useState(false);
-  const [windowInfo, setWindowInfo] = useState(isBTC ? btcAlwaysOpen : getTradingWindowInfo());
+  const gameStartTime = settings?.startTime;
+  const gameEndTime = settings?.endTime;
+  const [windowInfo, setWindowInfo] = useState(isBTC ? btcAlwaysOpen : getTradingWindowInfo(gameStartTime, gameEndTime));
   const [activeTrades, setActiveTrades] = useState([]); // pending trades waiting for result
   const [tradeHistory, setTradeHistory] = useState([]);
   const currentPriceRef = useRef(null);
@@ -907,16 +917,14 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
   // Admin-configured settings with fallbacks
   const winMultiplier = settings?.winMultiplier || 1.95;
   const brokeragePercent = settings?.brokeragePercent || 5;
-  const minBetRs = settings?.minBet || 100;
-  const maxBetRs = settings?.maxBet || 50000;
   const gameEnabled = settings?.enabled !== false;
 
   // Ticket conversion helpers
   const toTokens = (rs) => parseFloat((rs / tokenValue).toFixed(2));
   const toRupees = (tokens) => parseFloat((tokens * tokenValue).toFixed(2));
   const balanceTokens = toTokens(balance);
-  const minBetTokens = toTokens(minBetRs);
-  const maxBetTokens = toTokens(maxBetRs);
+  const minBetTokens = settings?.minTickets || 1;
+  const maxBetTokens = settings?.maxTickets || 500;
 
   // Track live price from chart
   const handlePriceUpdate = useCallback((price) => {
@@ -927,10 +935,10 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
   useEffect(() => {
     if (isBTC) return;
     const interval = setInterval(() => {
-      setWindowInfo(getTradingWindowInfo());
+      setWindowInfo(getTradingWindowInfo(gameStartTime, gameEndTime));
     }, 1000);
     return () => clearInterval(interval);
-  }, [isBTC]);
+  }, [isBTC, gameStartTime, gameEndTime]);
 
   // Resolve all active trades when window transitions from open → gap
   useEffect(() => {
@@ -1236,7 +1244,6 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
                   type="number"
                   value={betAmount}
                   onChange={e => setBetAmount(e.target.value)}
-                  placeholder={`${minBetTokens} - ${maxBetTokens} Tickets`}
                   min={minBetTokens}
                   max={maxBetTokens}
                   step="0.01"
@@ -1429,10 +1436,12 @@ const NiftyNumberScreen = ({ game, balance, onBack, user, refreshBalance, settin
   const [editAmount, setEditAmount] = useState('');
   const [modifying, setModifying] = useState(false);
 
-  // Admin-configured settings with fallbacks (₹ amounts directly)
+  // Admin-configured settings with fallbacks
   const fixedProfit = settings?.fixedProfit || 4000;
-  const minBet = settings?.minBet || 100;
-  const maxBet = settings?.maxBet || 10000;
+  const minTickets = settings?.minTickets || 1;
+  const maxTickets = settings?.maxTickets || 100;
+  const minBet = minTickets * tokenValue;
+  const maxBet = maxTickets * tokenValue;
   const gameEnabled = settings?.enabled !== false;
 
   // Numbers already bet on today (to disable in grid)
@@ -1674,11 +1683,11 @@ const NiftyNumberScreen = ({ game, balance, onBack, user, refreshBalance, settin
                 </div>
                 <div className="flex justify-between py-1 border-b border-dark-600">
                   <span className="text-gray-400">Min Bet</span>
-                  <span className="font-medium">₹{minBet.toLocaleString()}</span>
+                  <span className="font-medium">{minTickets} Ticket{minTickets > 1 ? 's' : ''} (₹{minBet.toLocaleString()})</span>
                 </div>
                 <div className="flex justify-between py-1 border-b border-dark-600">
                   <span className="text-gray-400">Max Bet</span>
-                  <span className="font-medium">₹{maxBet.toLocaleString()}</span>
+                  <span className="font-medium">{maxTickets} Tickets (₹{maxBet.toLocaleString()})</span>
                 </div>
                 <div className="flex justify-between py-1 border-b border-dark-600">
                   <span className="text-gray-400">Bets/Day</span>
@@ -1690,7 +1699,7 @@ const NiftyNumberScreen = ({ game, balance, onBack, user, refreshBalance, settin
                 </div>
               </div>
               <div className="mt-2 bg-dark-700/50 rounded-lg p-2 text-[10px] text-gray-500">
-                Bet ₹{minBet} → If you win: <span className="text-green-400 font-medium">+₹{fixedProfit.toLocaleString()} profit</span>
+                Bet {minTickets} Ticket (₹{minBet}) → If you win: <span className="text-green-400 font-medium">+₹{fixedProfit.toLocaleString()} profit</span>
               </div>
             </div>
 
@@ -1817,7 +1826,6 @@ const NiftyNumberScreen = ({ game, balance, onBack, user, refreshBalance, settin
                     type="number"
                     value={betAmount}
                     onChange={e => setBetAmount(e.target.value)}
-                    placeholder={`₹${minBet} - ₹${maxBet}`}
                     min={minBet}
                     max={maxBet}
                     className="w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 text-lg font-bold text-center focus:border-purple-500 focus:outline-none"
@@ -1893,16 +1901,14 @@ const NiftyBracketScreen = ({ game, balance, onBack, user, refreshBalance, setti
   const expiryMinutes = settings?.expiryMinutes || 5;
   const winMultiplier = settings?.winMultiplier || 2;
   const brokeragePercent = settings?.brokeragePercent || 5;
-  const minBetRs = settings?.minBet || 100;
-  const maxBetRs = settings?.maxBet || 25000;
   const gameEnabled = settings?.enabled !== false;
 
   // Ticket conversion helpers
   const toTokens = (rs) => parseFloat((rs / tokenValue).toFixed(2));
   const toRupees = (tokens) => parseFloat((tokens * tokenValue).toFixed(2));
   const balanceTokens = toTokens(balance);
-  const minBetTokens = toTokens(minBetRs);
-  const maxBetTokens = toTokens(maxBetRs);
+  const minBetTokens = settings?.minTickets || 1;
+  const maxBetTokens = settings?.maxTickets || 250;
 
   const upperTarget = currentPrice ? parseFloat((currentPrice + bracketGap).toFixed(2)) : null;
   const lowerTarget = currentPrice ? parseFloat((currentPrice - bracketGap).toFixed(2)) : null;
@@ -2216,7 +2222,6 @@ const NiftyBracketScreen = ({ game, balance, onBack, user, refreshBalance, setti
                   type="number"
                   value={betAmount}
                   onChange={e => setBetAmount(e.target.value)}
-                  placeholder={`${minBetTokens} - ${maxBetTokens} Tickets`}
                   min={minBetTokens}
                   max={maxBetTokens}
                   step="0.01"
@@ -2329,21 +2334,22 @@ const NiftyJackpotScreen = ({ game, balance, onBack, user, refreshBalance, setti
   const [placing, setPlacing] = useState(false);
   const [loadingBid, setLoadingBid] = useState(true);
   const [message, setMessage] = useState(null);
+  const [lockedPrice, setLockedPrice] = useState(null);
+  const [priceLocked, setPriceLocked] = useState(false);
+  const [lockedAt, setLockedAt] = useState(null);
 
   // Admin-configured settings with fallbacks
   const topWinners = settings?.topWinners || 10;
   const prizeDistribution = settings?.prizeDistribution || [45000, 10000, 8000, 6000, 5000, 4000, 3000, 2000, 1500, 1000];
   const brokeragePercent = settings?.brokeragePercent || 5;
-  const minBetRs = settings?.minBet || 100;
-  const maxBetRs = settings?.maxBet || 50000;
   const gameEnabled = settings?.enabled !== false;
 
   // Ticket conversion helpers
   const toTokens = (rs) => parseFloat((rs / tokenValue).toFixed(2));
   const toRupees = (tokens) => parseFloat((tokens * tokenValue).toFixed(2));
   const balanceTokens = toTokens(balance);
-  const minBetTokens = toTokens(minBetRs);
-  const maxBetTokens = toTokens(maxBetRs);
+  const minBetTokens = settings?.minTickets || 1;
+  const maxBetTokens = settings?.maxTickets || 500;
 
   // Calculate prize for a given rank (from prizeDistribution array)
   const getPrize = (rank) => rank >= 1 && rank <= prizeDistribution.length ? prizeDistribution[rank - 1] : 0;
@@ -2356,10 +2362,26 @@ const NiftyJackpotScreen = ({ game, balance, onBack, user, refreshBalance, setti
     fetchTodayBid();
     fetchLeaderboard();
     fetchHistory();
+    fetchLockedPrice();
     // Refresh leaderboard every 15 seconds
     const interval = setInterval(fetchLeaderboard, 15000);
-    return () => clearInterval(interval);
+    // Refresh locked price every 30 seconds
+    const priceInterval = setInterval(fetchLockedPrice, 30000);
+    return () => { clearInterval(interval); clearInterval(priceInterval); };
   }, []);
+
+  const fetchLockedPrice = async () => {
+    try {
+      const { data } = await axios.get('/api/user/nifty-jackpot/locked-price', {
+        headers: { Authorization: `Bearer ${user.token}` }
+      });
+      setPriceLocked(data.locked);
+      setLockedPrice(data.lockedPrice);
+      setLockedAt(data.lockedAt);
+    } catch (error) {
+      console.error('Error fetching locked price:', error);
+    }
+  };
 
   const fetchTodayBid = async () => {
     try {
@@ -2456,7 +2478,15 @@ const NiftyJackpotScreen = ({ game, balance, onBack, user, refreshBalance, setti
                 </div>
               </div>
             </div>
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2">
+              {priceLocked && lockedPrice && (
+                <div className="bg-green-900/30 border border-green-500/30 rounded-lg px-3 py-1.5 text-right">
+                  <div className="text-[10px] text-green-400 flex items-center gap-1">
+                    <Lock size={9} /> Locked Price
+                  </div>
+                  <div className="font-bold text-green-400">₹{lockedPrice.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</div>
+                </div>
+              )}
               {myRank && (
                 <div className="bg-yellow-900/30 border border-yellow-500/30 rounded-lg px-3 py-1.5 text-right">
                   <div className="text-[10px] text-yellow-400">Your Rank</div>
@@ -2547,9 +2577,21 @@ const NiftyJackpotScreen = ({ game, balance, onBack, user, refreshBalance, setti
                   <span className="text-gray-400">Top Winners</span>
                   <span className="text-yellow-400 font-bold">{topWinners}</span>
                 </div>
-                <div className="flex justify-between py-1">
+                <div className="flex justify-between py-1 border-b border-dark-600">
+                  <span className="text-gray-400">1 Ticket</span>
+                  <span className="font-medium">₹{tokenValue}</span>
+                </div>
+                <div className="flex justify-between py-1 border-b border-dark-600">
                   <span className="text-gray-400">Result At</span>
                   <span className="font-medium">{settings?.resultTime || '15:30'} IST</span>
+                </div>
+                <div className="flex justify-between py-1">
+                  <span className="text-gray-400">Nifty Price</span>
+                  {priceLocked && lockedPrice ? (
+                    <span className="text-green-400 font-bold flex items-center gap-1"><Lock size={10} /> ₹{lockedPrice.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
+                  ) : (
+                    <span className="text-yellow-400 text-[10px]">Not locked yet</span>
+                  )}
                 </div>
               </div>
             </div>
@@ -2642,6 +2684,21 @@ const NiftyJackpotScreen = ({ game, balance, onBack, user, refreshBalance, setti
                   </div>
                 </div>
 
+                {/* Locked Price Banner */}
+                {priceLocked && lockedPrice && (
+                  <div className="bg-green-900/20 border border-green-500/30 rounded-xl p-3 text-center">
+                    <div className="text-[10px] text-green-400 flex items-center justify-center gap-1 mb-1">
+                      <Lock size={10} /> Nifty Price Locked
+                    </div>
+                    <div className="text-xl font-bold text-green-400">₹{lockedPrice.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</div>
+                    {lockedAt && (
+                      <div className="text-[10px] text-gray-500 mt-1">
+                        Locked at {new Date(lockedAt).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })} IST
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 {/* Live Leaderboard (full) */}
                 <div className="bg-dark-800 rounded-xl p-3 border border-dark-600">
                   <h3 className="font-bold text-xs mb-2 flex items-center gap-1.5">
@@ -2679,6 +2736,21 @@ const NiftyJackpotScreen = ({ game, balance, onBack, user, refreshBalance, setti
             ) : (
               /* Bidding UI */
               <div className="space-y-3 overflow-y-auto flex-1">
+                {/* Locked Price Banner */}
+                {priceLocked && lockedPrice && (
+                  <div className="bg-green-900/20 border border-green-500/30 rounded-xl p-3 text-center">
+                    <div className="text-[10px] text-green-400 flex items-center justify-center gap-1 mb-1">
+                      <Lock size={10} /> Nifty Price Locked
+                    </div>
+                    <div className="text-xl font-bold text-green-400">₹{lockedPrice.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</div>
+                    {lockedAt && (
+                      <div className="text-[10px] text-gray-500 mt-1">
+                        Locked at {new Date(lockedAt).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })} IST
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 {/* How It Works */}
                 <div className="bg-yellow-900/10 border border-yellow-500/20 rounded-xl p-3">
                   <h3 className="text-xs font-bold text-yellow-400 mb-1.5 flex items-center gap-1.5">
@@ -2700,7 +2772,6 @@ const NiftyJackpotScreen = ({ game, balance, onBack, user, refreshBalance, setti
                     type="number"
                     value={bidAmount}
                     onChange={e => setBidAmount(e.target.value)}
-                    placeholder={`${minBetTokens} - ${maxBetTokens} Tickets`}
                     min={minBetTokens}
                     max={maxBetTokens}
                     step="0.01"
@@ -2759,7 +2830,7 @@ const NiftyJackpotScreen = ({ game, balance, onBack, user, refreshBalance, setti
                   {placing ? (
                     <span className="flex items-center justify-center gap-2"><RefreshCw size={16} className="animate-spin" /> Placing...</span>
                   ) : bidAmount && parseFloat(bidAmount) > 0 ? (
-                    `Place Bid ${parseFloat(bidAmount)} Tokens`
+                    `Place Bid ${parseFloat(bidAmount)} Tickets`
                   ) : (
                     'Enter Bid Amount'
                   )}

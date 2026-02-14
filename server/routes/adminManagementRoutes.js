@@ -14,6 +14,8 @@ import PattiSharing from '../models/PattiSharing.js';
 import GameSettings from '../models/GameSettings.js';
 import NiftyNumberBet from '../models/NiftyNumberBet.js';
 import NiftyJackpotBid from '../models/NiftyJackpotBid.js';
+import NiftyJackpotResult from '../models/NiftyJackpotResult.js';
+import { getMarketData } from '../services/zerodhaWebSocket.js';
 import jwt from 'jsonwebtoken';
 
 const router = express.Router();
@@ -4916,6 +4918,88 @@ router.get('/nifty-jackpot/bids', protectAdmin, async (req, res) => {
   }
 });
 
+// Lock Nifty price for Jackpot (admin captures current market price or enters manually)
+router.post('/nifty-jackpot/lock-price', protectAdmin, superAdminOnly, async (req, res) => {
+  try {
+    const { date, manualPrice } = req.body;
+    if (!date) return res.status(400).json({ message: 'Date is required' });
+
+    // Check if already locked for this date
+    const existing = await NiftyJackpotResult.findOne({ resultDate: date });
+    if (existing) {
+      return res.status(400).json({ message: `Price already locked for ${date}: ₹${existing.lockedPrice}` });
+    }
+
+    let lockedPrice = null;
+
+    if (manualPrice && parseFloat(manualPrice) > 0) {
+      // Admin manually entered a price
+      lockedPrice = parseFloat(manualPrice);
+    } else {
+      // Try to get live Nifty price from Zerodha market data
+      const allMarketData = getMarketData();
+      // Nifty 50 instrument token is 99926000
+      const niftyData = allMarketData['99926000'];
+      if (niftyData && niftyData.ltp) {
+        lockedPrice = niftyData.ltp;
+      } else {
+        // Try to find by symbol
+        const niftyBySymbol = Object.values(allMarketData).find(
+          d => d.symbol === 'NIFTY 50' || d.symbol === 'NIFTY'
+        );
+        if (niftyBySymbol && niftyBySymbol.ltp) {
+          lockedPrice = niftyBySymbol.ltp;
+        }
+      }
+    }
+
+    if (!lockedPrice) {
+      return res.status(400).json({ message: 'Could not fetch Nifty price. Please enter manually or ensure Zerodha is connected.' });
+    }
+
+    const result = await NiftyJackpotResult.create({
+      resultDate: date,
+      lockedPrice,
+      lockedAt: new Date(),
+      lockedBy: req.admin._id
+    });
+
+    res.json({
+      message: `Nifty price locked at ₹${lockedPrice} for ${date}`,
+      result: {
+        resultDate: result.resultDate,
+        lockedPrice: result.lockedPrice,
+        lockedAt: result.lockedAt
+      }
+    });
+  } catch (error) {
+    if (error.code === 11000) {
+      return res.status(400).json({ message: 'Price already locked for this date' });
+    }
+    console.error('Lock price error:', error);
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Get locked price for a date (admin)
+router.get('/nifty-jackpot/locked-price', protectAdmin, async (req, res) => {
+  try {
+    const { date } = req.query;
+    if (!date) return res.status(400).json({ message: 'Date is required' });
+
+    const result = await NiftyJackpotResult.findOne({ resultDate: date });
+    res.json({
+      date,
+      locked: !!result,
+      lockedPrice: result?.lockedPrice || null,
+      lockedAt: result?.lockedAt || null,
+      resultDeclared: result?.resultDeclared || false
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
 // Declare Nifty Jackpot result for a date
 router.post('/nifty-jackpot/declare-result', protectAdmin, superAdminOnly, async (req, res) => {
   try {
@@ -4991,9 +5075,18 @@ router.post('/nifty-jackpot/declare-result', protectAdmin, superAdminOnly, async
       await bid.save();
     }
 
+    // Mark NiftyJackpotResult as declared (if price was locked)
+    const jackpotResult = await NiftyJackpotResult.findOne({ resultDate: date });
+    if (jackpotResult) {
+      jackpotResult.resultDeclared = true;
+      jackpotResult.resultDeclaredAt = new Date();
+      await jackpotResult.save();
+    }
+
     res.json({
       message: `Jackpot result declared for ${date}`,
       date,
+      lockedPrice: jackpotResult?.lockedPrice || null,
       summary: {
         totalBids: pendingBids.length,
         winners: winnersCount,

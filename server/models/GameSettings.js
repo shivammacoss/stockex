@@ -2,8 +2,8 @@ import mongoose from 'mongoose';
 
 const gameConfigSchema = new mongoose.Schema({
   enabled: { type: Boolean, default: true },
-  minBet: { type: Number, default: 100 },
-  maxBet: { type: Number, default: 50000 },
+  minTickets: { type: Number, default: 1 },
+  maxTickets: { type: Number, default: 500 },
   winMultiplier: { type: Number, default: 2 }, // e.g., 2x for up/down
   brokeragePercent: { type: Number, default: 5 }, // Platform fee on winnings
   roundDuration: { type: Number, default: 60 }, // seconds
@@ -34,8 +34,8 @@ const gameSettingsSchema = new mongoose.Schema({
   },
   
   // Min/Max Global Limits
-  globalMinBet: { type: Number, default: 10 },
-  globalMaxBet: { type: Number, default: 100000 },
+  globalMinTickets: { type: Number, default: 1 },
+  globalMaxTickets: { type: Number, default: 1000 },
   dailyBetLimit: { type: Number, default: 500000 }, // Max a user can bet in a day
   dailyWinLimit: { type: Number, default: 1000000 }, // Max a user can win in a day
   
@@ -48,12 +48,12 @@ const gameSettingsSchema = new mongoose.Schema({
       winMultiplier: { type: Number, default: 1.95 },
       roundDuration: { type: Number, default: 60 },
       enabled: { type: Boolean, default: true },
-      minBet: { type: Number, default: 100 },
-      maxBet: { type: Number, default: 50000 },
+      minTickets: { type: Number, default: 1 },
+      maxTickets: { type: Number, default: 500 },
       brokeragePercent: { type: Number, default: 5 },
       buySellRatioBrokerage: { type: Number, default: 16.67 },
-      startTime: { type: String, default: '09:15' },
-      endTime: { type: String, default: '15:30' }
+      startTime: { type: String, default: '09:15:15' },
+      endTime: { type: String, default: '15:44:59' }
     },
     niftyNumber: {
       ...gameConfigSchema.obj,
@@ -62,8 +62,8 @@ const gameSettingsSchema = new mongoose.Schema({
       winMultiplier: { type: Number, default: 9 },
       roundDuration: { type: Number, default: 86400 }, // 1 day in seconds
       enabled: { type: Boolean, default: true },
-      minBet: { type: Number, default: 100 },
-      maxBet: { type: Number, default: 10000 },
+      minTickets: { type: Number, default: 1 },
+      maxTickets: { type: Number, default: 100 },
       brokeragePercent: { type: Number, default: 10 },
       buySellRatioBrokerage: { type: Number, default: 16.67 },
       fixedProfit: { type: Number, default: 4000 }, // Fixed profit on win
@@ -72,8 +72,8 @@ const gameSettingsSchema = new mongoose.Schema({
       resultTime: { type: String, default: '15:30' }, // IST time when result is declared
       maxBidTime: { type: String, default: '15:40' }, // Last time users can place bets
       betsPerDay: { type: Number, default: 10 }, // Max bets per user per day
-      startTime: { type: String, default: '09:15' },
-      endTime: { type: String, default: '15:30' }
+      startTime: { type: String, default: '09:15:15' },
+      endTime: { type: String, default: '15:44:59' }
     },
     niftyJackpot: {
       ...gameConfigSchema.obj,
@@ -82,8 +82,8 @@ const gameSettingsSchema = new mongoose.Schema({
       winMultiplier: { type: Number, default: 1.5 },
       roundDuration: { type: Number, default: 86400 },
       enabled: { type: Boolean, default: true },
-      minBet: { type: Number, default: 100 },
-      maxBet: { type: Number, default: 50000 },
+      minTickets: { type: Number, default: 1 },
+      maxTickets: { type: Number, default: 500 },
       brokeragePercent: { type: Number, default: 5 },
       buySellRatioBrokerage: { type: Number, default: 16.67 },
       topWinners: { type: Number, default: 10 },
@@ -92,8 +92,8 @@ const gameSettingsSchema = new mongoose.Schema({
       bidsPerDay: { type: Number, default: 1 },
       adminSharePercent: { type: Number, default: 50 },
       superAdminSharePercent: { type: Number, default: 50 },
-      startTime: { type: String, default: '09:15' },
-      endTime: { type: String, default: '15:30' }
+      startTime: { type: String, default: '09:15:15' },
+      endTime: { type: String, default: '15:44:59' }
     },
     niftyBracket: {
       ...gameConfigSchema.obj,
@@ -102,14 +102,14 @@ const gameSettingsSchema = new mongoose.Schema({
       winMultiplier: { type: Number, default: 2 },
       roundDuration: { type: Number, default: 300 }, // 5 min max wait
       enabled: { type: Boolean, default: true },
-      minBet: { type: Number, default: 100 },
-      maxBet: { type: Number, default: 25000 },
+      minTickets: { type: Number, default: 1 },
+      maxTickets: { type: Number, default: 250 },
       brokeragePercent: { type: Number, default: 5 },
       buySellRatioBrokerage: { type: Number, default: 16.67 },
       bracketGap: { type: Number, default: 20 }, // Points above/below current price
       expiryMinutes: { type: Number, default: 5 }, // Trade expires if neither level hit
-      startTime: { type: String, default: '09:15' },
-      endTime: { type: String, default: '15:30' }
+      startTime: { type: String, default: '09:15:15' },
+      endTime: { type: String, default: '15:44:59' }
     },
     btcUpDown: {
       ...gameConfigSchema.obj,
@@ -118,12 +118,12 @@ const gameSettingsSchema = new mongoose.Schema({
       winMultiplier: { type: Number, default: 1.95 },
       roundDuration: { type: Number, default: 60 },
       enabled: { type: Boolean, default: true },
-      minBet: { type: Number, default: 100 },
-      maxBet: { type: Number, default: 50000 },
+      minTickets: { type: Number, default: 1 },
+      maxTickets: { type: Number, default: 500 },
       brokeragePercent: { type: Number, default: 5 },
       buySellRatioBrokerage: { type: Number, default: 16.67 },
-      startTime: { type: String, default: '00:00' },
-      endTime: { type: String, default: '23:59' }
+      startTime: { type: String, default: '00:00:00' },
+      endTime: { type: String, default: '23:59:59' }
     }
   },
   

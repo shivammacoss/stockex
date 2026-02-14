@@ -8,7 +8,7 @@ import {
   Key, Wallet, Eye, EyeOff, X, ArrowUpCircle, ArrowDownCircle,
   RefreshCw, Menu, Shield, CreditCard, FileText, BarChart3, Building2, Settings, UserPlus, Copy,
   ChevronLeft, ChevronRight, ArrowRightLeft, Layers, Save, DollarSign, Bell, Award, Star, CheckCircle,
-  Gamepad2, Trophy, Target, Hash, Bitcoin, Clock, Percent, AlertTriangle, Gift, Zap, Coins
+  Gamepad2, Trophy, Target, Hash, Bitcoin, Clock, Percent, AlertTriangle, Gift, Zap, Coins, Lock
 } from 'lucide-react';
 
 // Reusable Pagination Component
@@ -11871,6 +11871,14 @@ const GameSettingsManagement = () => {
   const [selectedGame, setSelectedGame] = useState('niftyUpDown');
   const [message, setMessage] = useState({ type: '', text: '' });
 
+  // Nifty Jackpot Price Lock state
+  const [jackpotDate, setJackpotDate] = useState(new Date().toISOString().split('T')[0]);
+  const [manualPrice, setManualPrice] = useState('');
+  const [lockedPriceInfo, setLockedPriceInfo] = useState(null);
+  const [lockingPrice, setLockingPrice] = useState(false);
+  const [declaringResult, setDeclaringResult] = useState(false);
+  const [jackpotMessage, setJackpotMessage] = useState(null);
+
   const gamesList = [
     { id: 'niftyUpDown', name: 'Nifty Up/Down', icon: TrendingUp, color: 'text-green-400' },
     { id: 'btcUpDown', name: 'BTC Up/Down', icon: Bitcoin, color: 'text-orange-400' },
@@ -11895,6 +11903,65 @@ const GameSettingsManagement = () => {
       setLoading(false);
     }
   };
+
+  // Nifty Jackpot Price Lock functions
+  const fetchLockedPrice = async (date) => {
+    try {
+      const { data } = await axios.get(`/api/admin/manage/nifty-jackpot/locked-price?date=${date}`, {
+        headers: { Authorization: `Bearer ${admin.token}` }
+      });
+      setLockedPriceInfo(data);
+    } catch (error) {
+      console.error('Error fetching locked price:', error);
+      setLockedPriceInfo(null);
+    }
+  };
+
+  const handleLockPrice = async () => {
+    setLockingPrice(true);
+    setJackpotMessage(null);
+    try {
+      const { data } = await axios.post('/api/admin/manage/nifty-jackpot/lock-price', {
+        date: jackpotDate,
+        manualPrice: manualPrice || undefined
+      }, {
+        headers: { Authorization: `Bearer ${admin.token}` }
+      });
+      setJackpotMessage({ type: 'success', text: data.message });
+      setManualPrice('');
+      fetchLockedPrice(jackpotDate);
+    } catch (error) {
+      setJackpotMessage({ type: 'error', text: error.response?.data?.message || 'Failed to lock price' });
+    } finally {
+      setLockingPrice(false);
+    }
+  };
+
+  const handleDeclareResult = async () => {
+    if (!confirm(`Are you sure you want to declare Nifty Jackpot result for ${jackpotDate}? This will distribute prizes and cannot be undone.`)) return;
+    setDeclaringResult(true);
+    setJackpotMessage(null);
+    try {
+      const { data } = await axios.post('/api/admin/manage/nifty-jackpot/declare-result', {
+        date: jackpotDate
+      }, {
+        headers: { Authorization: `Bearer ${admin.token}` }
+      });
+      setJackpotMessage({ type: 'success', text: `${data.message} — Winners: ${data.summary.winners}, Losers: ${data.summary.losers}, Paid: ₹${data.summary.totalPaidOut}` });
+      fetchLockedPrice(jackpotDate);
+    } catch (error) {
+      setJackpotMessage({ type: 'error', text: error.response?.data?.message || 'Failed to declare result' });
+    } finally {
+      setDeclaringResult(false);
+    }
+  };
+
+  // Fetch locked price when jackpotDate or selectedGame changes
+  useEffect(() => {
+    if (selectedGame === 'niftyJackpot') {
+      fetchLockedPrice(jackpotDate);
+    }
+  }, [jackpotDate, selectedGame]);
 
   const saveSettings = async () => {
     setSaving(true);
@@ -12060,18 +12127,8 @@ const GameSettingsManagement = () => {
             <h3 className="text-lg font-bold mb-4 flex items-center gap-2">
               <Users className="text-orange-400" size={20} /> Profit Distribution
             </h3>
-            <p className="text-xs text-gray-500 mb-4">When a user wins, the brokerage/commission is split among the hierarchy. Remaining % auto goes to Super Admin.</p>
+            <p className="text-xs text-gray-500 mb-4">Set Admin, Broker & Sub-Broker %. Remaining automatically goes to Super Admin wallet.</p>
             <div className="space-y-3">
-              <div>
-                <label className="block text-sm text-gray-400 mb-1">Super Admin (%)</label>
-                <input
-                  type="number"
-                  value={settings?.profitDistribution?.superAdminPercent ?? 40}
-                  onChange={e => updateNestedSetting('profitDistribution', 'superAdminPercent', parseFloat(e.target.value) || 0)}
-                  className="w-full bg-dark-700 border border-dark-600 rounded px-4 py-2"
-                  min="0" max="100" step="0.01"
-                />
-              </div>
               <div>
                 <label className="block text-sm text-gray-400 mb-1">Admin (%)</label>
                 <input
@@ -12104,29 +12161,26 @@ const GameSettingsManagement = () => {
               </div>
             </div>
             {(() => {
-              const sa = settings?.profitDistribution?.superAdminPercent ?? 40;
               const ad = settings?.profitDistribution?.adminPercent ?? 30;
               const br = settings?.profitDistribution?.brokerPercent ?? 20;
               const sb = settings?.profitDistribution?.subBrokerPercent ?? 10;
-              const total = sa + ad + br + sb;
-              const remaining = Math.max(0, 100 - total);
+              const total = ad + br + sb;
+              const saShare = Math.max(0, 100 - total);
               return (
                 <div className={`mt-4 p-3 rounded-lg text-xs ${total > 100 ? 'bg-red-900/30 border border-red-500/30' : 'bg-dark-700'}`}>
                   <div className="flex justify-between mb-1">
-                    <span className="text-gray-400">Total Allocated</span>
+                    <span className="text-gray-400">Admin + Broker + Sub-Broker</span>
                     <span className={`font-bold ${total > 100 ? 'text-red-400' : 'text-green-400'}`}>{total.toFixed(2)}%</span>
                   </div>
-                  {remaining > 0 && (
-                    <div className="flex justify-between mb-1">
-                      <span className="text-gray-400">Remaining → Super Admin</span>
-                      <span className="text-orange-400 font-bold">+{remaining.toFixed(2)}%</span>
-                    </div>
-                  )}
+                  <div className="flex justify-between mb-1">
+                    <span className="text-gray-400">Super Admin (remaining → wallet)</span>
+                    <span className="text-orange-400 font-bold">{saShare.toFixed(2)}%</span>
+                  </div>
                   {total > 100 && (
-                    <p className="text-red-400 font-medium mt-1">⚠ Total exceeds 100%! Please adjust.</p>
+                    <p className="text-red-400 font-medium mt-1">Total exceeds 100%! Please adjust.</p>
                   )}
                   <div className="mt-2 pt-2 border-t border-dark-600 text-gray-500">
-                    Example: ₹100 brokerage → SA: ₹{((sa + remaining) * 1).toFixed(0)} | Admin: ₹{(ad * 1).toFixed(0)} | Broker: ₹{(br * 1).toFixed(0)} | Sub-Broker: ₹{(sb * 1).toFixed(0)}
+                    Example: ₹100 brokerage → SA: ₹{saShare.toFixed(0)} | Admin: ₹{ad.toFixed(0)} | Broker: ₹{br.toFixed(0)} | Sub-Broker: ₹{sb.toFixed(0)}
                   </div>
                 </div>
               );
@@ -12136,25 +12190,27 @@ const GameSettingsManagement = () => {
           {/* Bet Limits */}
           <div className="bg-dark-800 rounded-lg p-6">
             <h3 className="text-lg font-bold mb-4 flex items-center gap-2">
-              <DollarSign className="text-yellow-400" size={20} /> Global Bet Limits
+              <DollarSign className="text-yellow-400" size={20} /> Global Ticket Limits
             </h3>
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <label className="block text-sm text-gray-400 mb-2">Min Bet (₹)</label>
+                <label className="block text-sm text-gray-400 mb-2">Min Tickets</label>
                 <input
                   type="number"
-                  value={settings?.globalMinBet || 10}
-                  onChange={e => updateGlobalSetting('globalMinBet', parseFloat(e.target.value))}
+                  value={settings?.globalMinTickets || 1}
+                  onChange={e => updateGlobalSetting('globalMinTickets', parseFloat(e.target.value))}
                   className="w-full bg-dark-700 border border-dark-600 rounded px-4 py-2"
+                  min="1"
                 />
               </div>
               <div>
-                <label className="block text-sm text-gray-400 mb-2">Max Bet (₹)</label>
+                <label className="block text-sm text-gray-400 mb-2">Max Tickets</label>
                 <input
                   type="number"
-                  value={settings?.globalMaxBet || 100000}
-                  onChange={e => updateGlobalSetting('globalMaxBet', parseFloat(e.target.value))}
+                  value={settings?.globalMaxTickets || 1000}
+                  onChange={e => updateGlobalSetting('globalMaxTickets', parseFloat(e.target.value))}
                   className="w-full bg-dark-700 border border-dark-600 rounded px-4 py-2"
+                  min="1"
                 />
               </div>
               <div>
@@ -12340,24 +12396,28 @@ const GameSettingsManagement = () => {
 
               {/* Bet Limits */}
               <div className="space-y-4">
-                <h4 className="font-medium text-green-400">Bet Limits</h4>
+                <h4 className="font-medium text-green-400">Ticket Limits</h4>
                 <div>
-                  <label className="block text-sm text-gray-400 mb-2">Minimum Bet (₹)</label>
+                  <label className="block text-sm text-gray-400 mb-2">Minimum Tickets</label>
                   <input
                     type="number"
-                    value={currentGame?.minBet || 100}
-                    onChange={e => updateGameSetting(selectedGame, 'minBet', parseFloat(e.target.value))}
+                    value={currentGame?.minTickets || 1}
+                    onChange={e => updateGameSetting(selectedGame, 'minTickets', parseFloat(e.target.value))}
                     className="w-full bg-dark-700 border border-dark-600 rounded px-4 py-2"
+                    min="1"
                   />
+                  <p className="text-xs text-gray-500 mt-1">= ₹{((currentGame?.minTickets || 1) * (settings?.tokenValue || 300)).toLocaleString()}</p>
                 </div>
                 <div>
-                  <label className="block text-sm text-gray-400 mb-2">Maximum Bet (₹)</label>
+                  <label className="block text-sm text-gray-400 mb-2">Maximum Tickets</label>
                   <input
                     type="number"
-                    value={currentGame?.maxBet || 50000}
-                    onChange={e => updateGameSetting(selectedGame, 'maxBet', parseFloat(e.target.value))}
+                    value={currentGame?.maxTickets || 500}
+                    onChange={e => updateGameSetting(selectedGame, 'maxTickets', parseFloat(e.target.value))}
                     className="w-full bg-dark-700 border border-dark-600 rounded px-4 py-2"
+                    min="1"
                   />
+                  <p className="text-xs text-gray-500 mt-1">= ₹{((currentGame?.maxTickets || 500) * (settings?.tokenValue || 300)).toLocaleString()}</p>
                 </div>
               </div>
 
@@ -12426,7 +12486,8 @@ const GameSettingsManagement = () => {
                     <label className="block text-sm text-gray-400 mb-2">Start Time</label>
                     <input
                       type="time"
-                      value={currentGame?.startTime || '09:15'}
+                      step="1"
+                      value={currentGame?.startTime || '09:15:00'}
                       onChange={e => updateGameSetting(selectedGame, 'startTime', e.target.value)}
                       className="w-full bg-dark-700 border border-dark-600 rounded px-4 py-2"
                     />
@@ -12436,7 +12497,8 @@ const GameSettingsManagement = () => {
                     <label className="block text-sm text-gray-400 mb-2">End Time</label>
                     <input
                       type="time"
-                      value={currentGame?.endTime || '15:30'}
+                      step="1"
+                      value={currentGame?.endTime || '15:30:00'}
                       onChange={e => updateGameSetting(selectedGame, 'endTime', e.target.value)}
                       className="w-full bg-dark-700 border border-dark-600 rounded px-4 py-2"
                     />
@@ -12573,6 +12635,89 @@ const GameSettingsManagement = () => {
                       />
                       <p className="text-xs text-gray-500 mt-1">% of loser bid amounts that go to super admin</p>
                     </div>
+                  </div>
+
+                  {/* Price Lock & Result Declaration */}
+                  <div className="space-y-4 md:col-span-2">
+                    <h4 className="font-medium text-green-400 flex items-center gap-2">
+                      <Lock size={16} /> Price Lock & Result Declaration
+                    </h4>
+
+                    {/* Date Picker */}
+                    <div>
+                      <label className="block text-sm text-gray-400 mb-2">Select Date</label>
+                      <input
+                        type="date"
+                        value={jackpotDate}
+                        onChange={e => setJackpotDate(e.target.value)}
+                        className="w-full bg-dark-700 border border-dark-600 rounded px-4 py-2"
+                      />
+                    </div>
+
+                    {/* Locked Price Status */}
+                    {lockedPriceInfo && (
+                      <div className={`p-4 rounded-lg border ${lockedPriceInfo.locked ? 'bg-green-900/20 border-green-500/30' : 'bg-yellow-900/20 border-yellow-500/30'}`}>
+                        {lockedPriceInfo.locked ? (
+                          <div>
+                            <div className="flex items-center gap-2 mb-2">
+                              <Lock size={14} className="text-green-400" />
+                              <span className="text-green-400 font-bold">Price Locked</span>
+                            </div>
+                            <div className="text-2xl font-bold text-green-400">₹{lockedPriceInfo.lockedPrice?.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</div>
+                            <div className="text-xs text-gray-400 mt-1">
+                              Locked at {lockedPriceInfo.lockedAt ? new Date(lockedPriceInfo.lockedAt).toLocaleString('en-IN') : 'N/A'}
+                            </div>
+                            {lockedPriceInfo.resultDeclared && (
+                              <div className="mt-2 text-xs text-yellow-400 font-medium">✓ Result already declared for this date</div>
+                            )}
+                          </div>
+                        ) : (
+                          <div className="text-yellow-400 text-sm font-medium">No price locked for {jackpotDate}</div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Lock Price Controls */}
+                    {!lockedPriceInfo?.locked && (
+                      <div className="space-y-3">
+                        <div>
+                          <label className="block text-sm text-gray-400 mb-2">Manual Price (optional — leave empty to auto-fetch from Zerodha)</label>
+                          <input
+                            type="number"
+                            value={manualPrice}
+                            onChange={e => setManualPrice(e.target.value)}
+                            placeholder="e.g. 23456.75"
+                            className="w-full bg-dark-700 border border-dark-600 rounded px-4 py-2"
+                            step="0.01"
+                          />
+                        </div>
+                        <button
+                          onClick={handleLockPrice}
+                          disabled={lockingPrice}
+                          className="w-full py-2.5 bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 rounded-lg font-medium flex items-center justify-center gap-2 disabled:opacity-50"
+                        >
+                          {lockingPrice ? <><RefreshCw size={16} className="animate-spin" /> Locking...</> : <><Lock size={16} /> Lock Nifty Price for {jackpotDate}</>}
+                        </button>
+                      </div>
+                    )}
+
+                    {/* Declare Result Button */}
+                    {lockedPriceInfo?.locked && !lockedPriceInfo?.resultDeclared && (
+                      <button
+                        onClick={handleDeclareResult}
+                        disabled={declaringResult}
+                        className="w-full py-2.5 bg-gradient-to-r from-yellow-500 to-orange-500 hover:from-yellow-600 hover:to-orange-600 text-black rounded-lg font-bold flex items-center justify-center gap-2 disabled:opacity-50"
+                      >
+                        {declaringResult ? <><RefreshCw size={16} className="animate-spin" /> Declaring...</> : <><Trophy size={16} /> Declare Result for {jackpotDate}</>}
+                      </button>
+                    )}
+
+                    {/* Jackpot Message */}
+                    {jackpotMessage && (
+                      <div className={`p-3 rounded-lg text-sm font-medium ${jackpotMessage.type === 'success' ? 'bg-green-500/20 text-green-400 border border-green-500/30' : 'bg-red-500/20 text-red-400 border border-red-500/30'}`}>
+                        {jackpotMessage.text}
+                      </div>
+                    )}
                   </div>
                 </>
               )}

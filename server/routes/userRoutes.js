@@ -10,6 +10,7 @@ import GameSettings from '../models/GameSettings.js';
 import NiftyNumberBet from '../models/NiftyNumberBet.js';
 import NiftyBracketTrade from '../models/NiftyBracketTrade.js';
 import NiftyJackpotBid from '../models/NiftyJackpotBid.js';
+import NiftyJackpotResult from '../models/NiftyJackpotResult.js';
 import { protectUser, generateToken, generateSessionToken } from '../middleware/auth.js';
 
 const router = express.Router();
@@ -1108,10 +1109,12 @@ router.get('/game-settings', protectUser, async (req, res) => {
           description: game.description,
           winMultiplier: game.winMultiplier,
           brokeragePercent: game.brokeragePercent,
-          minBet: game.minBet,
-          maxBet: game.maxBet,
+          minTickets: game.minTickets,
+          maxTickets: game.maxTickets,
           roundDuration: game.roundDuration,
           cooldownBetweenRounds: game.cooldownBetweenRounds,
+          startTime: game.startTime,
+          endTime: game.endTime,
           // Nifty Number specific
           ...(game.fixedProfit !== undefined && { fixedProfit: game.fixedProfit }),
           ...(game.resultTime !== undefined && { resultTime: game.resultTime }),
@@ -1163,11 +1166,14 @@ router.post('/game-bet/place', protectUser, async (req, res) => {
     if (isNaN(betAmount) || betAmount <= 0) {
       return res.status(400).json({ message: 'Invalid bet amount' });
     }
-    if (betAmount < (gameConfig.minBet || 100)) {
-      return res.status(400).json({ message: `Minimum bet is ₹${gameConfig.minBet || 100}` });
+    const tValue = settings.tokenValue || 300;
+    const minAmt = (gameConfig.minTickets || 1) * tValue;
+    const maxAmt = (gameConfig.maxTickets || 500) * tValue;
+    if (betAmount < minAmt) {
+      return res.status(400).json({ message: `Minimum bet is ${gameConfig.minTickets || 1} ticket(s) (₹${minAmt})` });
     }
-    if (betAmount > (gameConfig.maxBet || 50000)) {
-      return res.status(400).json({ message: `Maximum bet is ₹${gameConfig.maxBet || 50000}` });
+    if (betAmount > maxAmt) {
+      return res.status(400).json({ message: `Maximum bet is ${gameConfig.maxTickets || 500} ticket(s) (₹${maxAmt})` });
     }
 
     const user = await User.findById(userId);
@@ -1285,11 +1291,14 @@ router.post('/nifty-number/bet', protectUser, async (req, res) => {
     if (isNaN(betAmount) || betAmount <= 0) {
       return res.status(400).json({ message: 'Invalid bet amount' });
     }
-    if (betAmount < (gameConfig.minBet || 100)) {
-      return res.status(400).json({ message: `Minimum bet is ₹${gameConfig.minBet || 100} per number` });
+    const tValue = settings.tokenValue || 300;
+    const minAmt = (gameConfig.minTickets || 1) * tValue;
+    const maxAmt = (gameConfig.maxTickets || 100) * tValue;
+    if (betAmount < minAmt) {
+      return res.status(400).json({ message: `Minimum bet is ${gameConfig.minTickets || 1} ticket(s) (₹${minAmt}) per number` });
     }
-    if (betAmount > (gameConfig.maxBet || 10000)) {
-      return res.status(400).json({ message: `Maximum bet is ₹${gameConfig.maxBet || 10000} per number` });
+    if (betAmount > maxAmt) {
+      return res.status(400).json({ message: `Maximum bet is ${gameConfig.maxTickets || 100} ticket(s) (₹${maxAmt}) per number` });
     }
 
     const totalCost = betAmount * numbers.length;
@@ -1364,8 +1373,11 @@ router.put('/nifty-number/bet/:id', protectUser, async (req, res) => {
 
     const amount = parseFloat(newAmount);
     if (isNaN(amount) || amount <= 0) return res.status(400).json({ message: 'Invalid amount' });
-    if (amount < (gameConfig?.minBet || 100)) return res.status(400).json({ message: `Minimum bet is ₹${gameConfig?.minBet || 100}` });
-    if (amount > (gameConfig?.maxBet || 10000)) return res.status(400).json({ message: `Maximum bet is ₹${gameConfig?.maxBet || 10000}` });
+    const tValue = settings.tokenValue || 300;
+    const minAmt = (gameConfig?.minTickets || 1) * tValue;
+    const maxAmt = (gameConfig?.maxTickets || 100) * tValue;
+    if (amount < minAmt) return res.status(400).json({ message: `Minimum bet is ${gameConfig?.minTickets || 1} ticket(s) (₹${minAmt})` });
+    if (amount > maxAmt) return res.status(400).json({ message: `Maximum bet is ${gameConfig?.maxTickets || 100} ticket(s) (₹${maxAmt})` });
 
     const oldAmount = bet.amount;
     const diff = amount - oldAmount;
@@ -1475,11 +1487,14 @@ router.post('/nifty-bracket/trade', protectUser, async (req, res) => {
     if (isNaN(betAmount) || betAmount <= 0) {
       return res.status(400).json({ message: 'Invalid bet amount' });
     }
-    if (betAmount < (gameConfig.minBet || 100)) {
-      return res.status(400).json({ message: `Minimum bet is ₹${gameConfig.minBet || 100}` });
+    const tValue = settings.tokenValue || 300;
+    const minAmt = (gameConfig.minTickets || 1) * tValue;
+    const maxAmt = (gameConfig.maxTickets || 250) * tValue;
+    if (betAmount < minAmt) {
+      return res.status(400).json({ message: `Minimum bet is ${gameConfig.minTickets || 1} ticket(s) (₹${minAmt})` });
     }
-    if (betAmount > (gameConfig.maxBet || 25000)) {
-      return res.status(400).json({ message: `Maximum bet is ₹${gameConfig.maxBet || 25000}` });
+    if (betAmount > maxAmt) {
+      return res.status(400).json({ message: `Maximum bet is ${gameConfig.maxTickets || 250} ticket(s) (₹${maxAmt})` });
     }
 
     // Validate entryPrice
@@ -1716,11 +1731,14 @@ router.post('/nifty-jackpot/bid', protectUser, async (req, res) => {
     if (isNaN(bidAmount) || bidAmount <= 0) {
       return res.status(400).json({ message: 'Invalid bid amount' });
     }
-    if (bidAmount < (gameConfig.minBet || 100)) {
-      return res.status(400).json({ message: `Minimum bid is ₹${gameConfig.minBet || 100}` });
+    const tValue = settings.tokenValue || 300;
+    const minAmt = (gameConfig.minTickets || 1) * tValue;
+    const maxAmt = (gameConfig.maxTickets || 500) * tValue;
+    if (bidAmount < minAmt) {
+      return res.status(400).json({ message: `Minimum bid is ${gameConfig.minTickets || 1} ticket(s) (₹${minAmt})` });
     }
-    if (bidAmount > (gameConfig.maxBet || 50000)) {
-      return res.status(400).json({ message: `Maximum bid is ₹${gameConfig.maxBet || 50000}` });
+    if (bidAmount > maxAmt) {
+      return res.status(400).json({ message: `Maximum bid is ${gameConfig.maxTickets || 500} ticket(s) (₹${maxAmt})` });
     }
 
     // Check if user already placed a bid today
@@ -1861,6 +1879,23 @@ router.get('/nifty-jackpot/history', protectUser, async (req, res) => {
       prize: b.prize,
       resultDeclaredAt: b.resultDeclaredAt
     })));
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Get locked Nifty price for today (user-facing)
+router.get('/nifty-jackpot/locked-price', protectUser, async (req, res) => {
+  try {
+    const date = req.query.date || getTodayIST();
+    const result = await NiftyJackpotResult.findOne({ resultDate: date });
+    res.json({
+      date,
+      locked: !!result,
+      lockedPrice: result?.lockedPrice || null,
+      lockedAt: result?.lockedAt || null,
+      resultDeclared: result?.resultDeclared || false
+    });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }

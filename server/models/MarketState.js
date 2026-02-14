@@ -94,17 +94,18 @@ marketStateSchema.statics.getState = async function() {
   return state;
 };
 
-// Helper to check if current time is within range
+// Helper to check if current time is within range (supports HH:MM and HH:MM:SS)
 const isTimeInRange = (startTime, endTime) => {
   const now = new Date();
-  const [startHour, startMin] = startTime.split(':').map(Number);
-  const [endHour, endMin] = endTime.split(':').map(Number);
+  const parts = (t) => { const p = t.split(':').map(Number); return [p[0] || 0, p[1] || 0, p[2] || 0]; };
+  const [startH, startM, startS] = parts(startTime);
+  const [endH, endM, endS] = parts(endTime);
   
-  const currentMinutes = now.getHours() * 60 + now.getMinutes();
-  const startMinutes = startHour * 60 + startMin;
-  const endMinutes = endHour * 60 + endMin;
+  const currentSec = now.getHours() * 3600 + now.getMinutes() * 60 + now.getSeconds();
+  const startSec = startH * 3600 + startM * 60 + startS;
+  const endSec = endH * 3600 + endM * 60 + endS;
   
-  return currentMinutes >= startMinutes && currentMinutes <= endMinutes;
+  return currentSec >= startSec && currentSec <= endSec;
 };
 
 // Static method to check if trading is allowed
