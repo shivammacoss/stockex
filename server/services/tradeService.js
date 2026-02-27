@@ -623,42 +623,46 @@ class TradeService {
           distributions.SUPER_ADMIN = remaining; // SuperAdmin gets whatever remains
         }
       } else {
-        // Percentage mode: redistribute missing shares proportionally
-        let totalActiveShare = 0;
-        let activeShares = {};
+        // Percentage mode: missing level's share cascades UP to the next present level
+        // SubBroker → Broker → Admin → SuperAdmin
+        let sbShare = subBrokerShare;
+        let brShare = brokerShare;
+        let adShare = adminShare;
+        let saShare = superAdminShare;
         
-        if (hasSubBroker) {
-          activeShares.SUB_BROKER = subBrokerShare;
-          totalActiveShare += subBrokerShare;
-        }
-        if (hasBroker) {
-          activeShares.BROKER = brokerShare + (hasSubBroker ? 0 : subBrokerShare);
-          totalActiveShare += activeShares.BROKER;
-        } else if (!hasBroker && !hasSubBroker) {
-          // No broker or subbroker - their shares go to admin
-        }
-        if (hasAdmin) {
-          let extraShare = 0;
-          if (!hasBroker) extraShare += brokerShare;
-          if (!hasSubBroker && !hasBroker) extraShare += subBrokerShare;
-          activeShares.ADMIN = adminShare + extraShare;
-          totalActiveShare += activeShares.ADMIN;
-        }
-        if (hasSuperAdmin) {
-          let extraShare = 0;
-          if (!hasAdmin) {
-            extraShare += adminShare;
-            if (!hasBroker) extraShare += brokerShare;
-            if (!hasSubBroker) extraShare += subBrokerShare;
+        // If no SubBroker, their share goes to Broker (or next up)
+        if (!hasSubBroker) {
+          if (hasBroker) {
+            brShare += sbShare;
+          } else if (hasAdmin) {
+            adShare += sbShare;
+          } else {
+            saShare += sbShare;
           }
-          activeShares.SUPER_ADMIN = superAdminShare + extraShare;
-          totalActiveShare += activeShares.SUPER_ADMIN;
+          sbShare = 0;
+        }
+        
+        // If no Broker, their share goes to Admin (or next up)
+        if (!hasBroker) {
+          if (hasAdmin) {
+            adShare += brShare;
+          } else {
+            saShare += brShare;
+          }
+          brShare = 0;
+        }
+        
+        // If no Admin, their share goes to SuperAdmin
+        if (!hasAdmin) {
+          saShare += adShare;
+          adShare = 0;
         }
         
         // Calculate actual amounts
-        for (const [role, share] of Object.entries(activeShares)) {
-          distributions[role] = totalBrokerage * (share / 100);
-        }
+        if (hasSubBroker && sbShare > 0) distributions.SUB_BROKER = totalBrokerage * (sbShare / 100);
+        if (hasBroker && brShare > 0) distributions.BROKER = totalBrokerage * (brShare / 100);
+        if (hasAdmin && adShare > 0) distributions.ADMIN = totalBrokerage * (adShare / 100);
+        if (hasSuperAdmin && saShare > 0) distributions.SUPER_ADMIN = totalBrokerage * (saShare / 100);
       }
       
       // Credit brokerage to each admin in hierarchy

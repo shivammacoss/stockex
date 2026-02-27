@@ -12,6 +12,7 @@ import NiftyBracketTrade from '../models/NiftyBracketTrade.js';
 import NiftyJackpotBid from '../models/NiftyJackpotBid.js';
 import NiftyJackpotResult from '../models/NiftyJackpotResult.js';
 import { protectUser, generateToken, generateSessionToken } from '../middleware/auth.js';
+import { distributeGameProfit } from '../services/gameProfitDistribution.js';
 
 const router = express.Router();
 
@@ -1200,7 +1201,7 @@ router.post('/game-bet/place', protectUser, async (req, res) => {
 // Resolve Up/Down bets (credit/debit gamesWallet based on results)
 router.post('/game-bet/resolve', protectUser, async (req, res) => {
   try {
-    const { trades } = req.body;
+    const { trades, gameId } = req.body;
     // trades = [{ amount, won, pnl, brokerage }]
     if (!Array.isArray(trades) || trades.length === 0) {
       return res.status(400).json({ message: 'No trades to resolve' });
@@ -1209,10 +1210,16 @@ router.post('/game-bet/resolve', protectUser, async (req, res) => {
     const user = await User.findById(req.user._id);
     if (!user) return res.status(404).json({ message: 'User not found' });
 
+    // Map gameId to settings key for per-game profit distribution
+    const gameKey = gameId === 'btcupdown' ? 'btcUpDown' : 'niftyUpDown';
+
     let totalPnl = 0;
+    let totalLoss = 0;
+    let totalBrokerage = 0;
     for (const trade of trades) {
       const amount = parseFloat(trade.amount);
       const pnl = parseFloat(trade.pnl);
+      const brokerage = parseFloat(trade.brokerage || 0);
       const won = trade.won;
 
       // Release used margin
@@ -1223,15 +1230,23 @@ router.post('/game-bet/resolve', protectUser, async (req, res) => {
         user.gamesWallet.balance += amount + pnl;
         user.gamesWallet.realizedPnL += pnl;
         user.gamesWallet.todayRealizedPnL += pnl;
+        totalBrokerage += brokerage;
       } else {
         // Loss — bet already deducted, just track P&L
         user.gamesWallet.realizedPnL -= amount;
         user.gamesWallet.todayRealizedPnL -= amount;
+        totalLoss += amount;
       }
       totalPnl += pnl;
     }
 
     await user.save();
+
+    // Distribute lost amounts + brokerage through admin hierarchy (per-game %)
+    const distributableAmount = totalLoss + totalBrokerage;
+    if (distributableAmount > 0) {
+      await distributeGameProfit(user, distributableAmount, gameKey === 'btcUpDown' ? 'BTC UpDown' : 'Nifty UpDown', null, gameKey);
+    }
 
     res.json({
       message: `${trades.length} trade(s) resolved`,
@@ -1680,7 +1695,6 @@ router.post('/nifty-bracket/resolve', protectUser, async (req, res) => {
     if (user) {
       user.gamesWallet.usedMargin = Math.max(0, user.gamesWallet.usedMargin - trade.amount);
       if (status === 'won') {
-        const payout = trade.amount + profit + brokerageAmount; // refund bet + gross win - brokerage already deducted from profit
         user.gamesWallet.balance += trade.amount + profit;
         user.gamesWallet.realizedPnL += profit;
         user.gamesWallet.todayRealizedPnL += profit;
@@ -1692,6 +1706,13 @@ router.post('/nifty-bracket/resolve', protectUser, async (req, res) => {
         user.gamesWallet.balance += trade.amount;
       }
       await user.save();
+
+      // Distribute profit through admin hierarchy
+      // On win: distribute brokerage; On loss: distribute lost amount
+      const distributableAmount = status === 'won' ? brokerageAmount : (status === 'lost' ? trade.amount : 0);
+      if (distributableAmount > 0) {
+        await distributeGameProfit(user, distributableAmount, 'NiftyBracket', trade._id?.toString(), 'niftyBracket');
+      }
     }
 
     res.json({

@@ -47,7 +47,8 @@ const walletLedgerSchema = new mongoose.Schema({
       'CRYPTO_TRANSFER',    // Transfer between main wallet and crypto wallet
       'MCX_TRANSFER',       // Transfer between main wallet and MCX wallet
       'INTERNAL_TRANSFER',  // Internal transfer between wallets
-      'GAMES_TRANSFER'      // Transfer between main wallet and games wallet
+      'GAMES_TRANSFER',     // Transfer between main wallet and games wallet
+      'GAME_PROFIT'         // Game profit share distributed through hierarchy
     ],
     required: true
   },

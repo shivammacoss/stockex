@@ -16,6 +16,7 @@ import NiftyNumberBet from '../models/NiftyNumberBet.js';
 import NiftyJackpotBid from '../models/NiftyJackpotBid.js';
 import NiftyJackpotResult from '../models/NiftyJackpotResult.js';
 import { getMarketData } from '../services/zerodhaWebSocket.js';
+import { distributeGameProfit } from '../services/gameProfitDistribution.js';
 import jwt from 'jsonwebtoken';
 
 const router = express.Router();
@@ -4801,8 +4802,6 @@ router.post('/nifty-number/declare-result', protectAdmin, superAdminOnly, async 
     const settings = await GameSettings.getSettings();
     const gameConfig = settings.games?.niftyNumber;
     const fixedProfit = gameConfig?.fixedProfit || 4000;
-    const adminSharePct = gameConfig?.adminSharePercent || 50;
-    const superAdminSharePct = gameConfig?.superAdminSharePercent || 50;
 
     // Get all pending bets for this date
     const pendingBets = await NiftyNumberBet.find({ betDate: date, status: 'pending' });
@@ -4821,12 +4820,13 @@ router.post('/nifty-number/declare-result', protectAdmin, superAdminOnly, async 
       bet.closingPrice = closingPrice || null;
       bet.resultDeclaredAt = new Date();
 
+      const user = await User.findById(bet.user);
+
       if (won) {
         bet.status = 'won';
         bet.profit = fixedProfit;
 
         // Credit user: refund bet amount + fixed profit
-        const user = await User.findById(bet.user);
         if (user) {
           user.gamesWallet.balance += bet.amount + fixedProfit;
           user.gamesWallet.usedMargin = Math.max(0, user.gamesWallet.usedMargin - bet.amount);
@@ -4840,22 +4840,19 @@ router.post('/nifty-number/declare-result', protectAdmin, superAdminOnly, async 
         bet.status = 'lost';
         bet.profit = -bet.amount;
 
-        // Distribute loss to admin/superadmin
-        const lossAmount = bet.amount;
-        const adminShare = parseFloat((lossAmount * adminSharePct / 100).toFixed(2));
-        const superAdminShare = parseFloat((lossAmount * superAdminSharePct / 100).toFixed(2));
-        bet.distribution = { adminShare, superAdminShare, platformShare: 0 };
-
         // Release used margin
-        const user = await User.findById(bet.user);
         if (user) {
           user.gamesWallet.usedMargin = Math.max(0, user.gamesWallet.usedMargin - bet.amount);
           user.gamesWallet.realizedPnL -= bet.amount;
           user.gamesWallet.todayRealizedPnL -= bet.amount;
           await user.save();
+
+          // Distribute lost amount through admin hierarchy (cascading)
+          const result = await distributeGameProfit(user, bet.amount, 'NiftyNumber', bet._id?.toString(), 'niftyNumber');
+          bet.distribution = result.distributions;
         }
 
-        totalCollected += lossAmount;
+        totalCollected += bet.amount;
         losersCount++;
       }
 
@@ -4872,9 +4869,7 @@ router.post('/nifty-number/declare-result', protectAdmin, superAdminOnly, async 
         winners: winnersCount,
         losers: losersCount,
         totalPaidOut,
-        totalCollected,
-        adminShareTotal: parseFloat((totalCollected * adminSharePct / 100).toFixed(2)),
-        superAdminShareTotal: parseFloat((totalCollected * superAdminSharePct / 100).toFixed(2)),
+        totalCollected
       }
     });
   } catch (error) {
@@ -5012,8 +5007,6 @@ router.post('/nifty-jackpot/declare-result', protectAdmin, superAdminOnly, async
     const topWinners = gc?.topWinners || 20;
     const firstPrize = gc?.firstPrize || 3000;
     const prizeStep = gc?.prizeStep || 20;
-    const adminSharePct = gc?.adminSharePercent || 50;
-    const superAdminSharePct = gc?.superAdminSharePercent || 50;
 
     // Get all pending bids for this date, sorted by amount descending
     const pendingBids = await NiftyJackpotBid.find({ betDate: date, status: 'pending' }).sort({ amount: -1 });
@@ -5032,6 +5025,8 @@ router.post('/nifty-jackpot/declare-result', protectAdmin, superAdminOnly, async
       bid.rank = rank;
       bid.resultDeclaredAt = new Date();
 
+      const user = await User.findById(bid.user);
+
       if (rank <= topWinners) {
         // Winner
         const prize = Math.max(0, firstPrize - (rank - 1) * prizeStep);
@@ -5039,7 +5034,6 @@ router.post('/nifty-jackpot/declare-result', protectAdmin, superAdminOnly, async
         bid.prize = prize;
 
         // Credit user: refund bid amount + prize
-        const user = await User.findById(bid.user);
         if (user) {
           user.gamesWallet.balance += bid.amount + prize;
           user.gamesWallet.usedMargin = Math.max(0, user.gamesWallet.usedMargin - bid.amount);
@@ -5054,21 +5048,19 @@ router.post('/nifty-jackpot/declare-result', protectAdmin, superAdminOnly, async
         bid.status = 'lost';
         bid.prize = 0;
 
-        const lossAmount = bid.amount;
-        const adminShare = parseFloat((lossAmount * adminSharePct / 100).toFixed(2));
-        const superAdminShare = parseFloat((lossAmount * superAdminSharePct / 100).toFixed(2));
-        bid.distribution = { adminShare, superAdminShare, platformShare: 0 };
-
         // Release used margin
-        const user = await User.findById(bid.user);
         if (user) {
           user.gamesWallet.usedMargin = Math.max(0, user.gamesWallet.usedMargin - bid.amount);
           user.gamesWallet.realizedPnL -= bid.amount;
           user.gamesWallet.todayRealizedPnL -= bid.amount;
           await user.save();
+
+          // Distribute lost amount through admin hierarchy (cascading)
+          const result = await distributeGameProfit(user, bid.amount, 'NiftyJackpot', bid._id?.toString(), 'niftyJackpot');
+          bid.distribution = result.distributions;
         }
 
-        totalCollected += lossAmount;
+        totalCollected += bid.amount;
         losersCount++;
       }
 
@@ -5092,9 +5084,7 @@ router.post('/nifty-jackpot/declare-result', protectAdmin, superAdminOnly, async
         winners: winnersCount,
         losers: losersCount,
         totalPaidOut,
-        totalCollected,
-        adminShareTotal: parseFloat((totalCollected * adminSharePct / 100).toFixed(2)),
-        superAdminShareTotal: parseFloat((totalCollected * superAdminSharePct / 100).toFixed(2)),
+        totalCollected
       }
     });
   } catch (error) {

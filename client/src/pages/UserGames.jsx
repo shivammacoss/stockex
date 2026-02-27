@@ -974,6 +974,7 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
       const resolveOnServer = async () => {
         try {
           await axios.post('/api/user/game-bet/resolve', {
+            gameId: game.id,
             trades: resolvedTrades.map(t => ({
               amount: t.amount,
               won: t.won,

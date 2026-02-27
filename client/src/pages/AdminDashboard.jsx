@@ -12421,7 +12421,8 @@ const GameSettingsManagement = () => {
                 </div>
               </div>
 
-              {/* Round Settings */}
+              {/* Round Settings - hidden for Nifty Number */}
+              {selectedGame !== 'niftyNumber' && (
               <div className="space-y-4">
                 <h4 className="font-medium text-yellow-400">Round Settings</h4>
                 <div>
@@ -12443,6 +12444,7 @@ const GameSettingsManagement = () => {
                   />
                 </div>
               </div>
+              )}
 
               {/* Game Info */}
               <div className="space-y-4">
@@ -12506,6 +12508,64 @@ const GameSettingsManagement = () => {
                   </div>
                 </div>
               )}
+
+              {/* Per-Game Profit Distribution */}
+              <div className="space-y-4">
+                <h4 className="font-medium text-orange-400">Brokerage Distribution (%)</h4>
+                <p className="text-xs text-gray-500">Set share for each hierarchy level. Remaining % goes to Super Admin wallet.</p>
+                <div>
+                  <label className="block text-sm text-gray-400 mb-1">Sub-Broker (%)</label>
+                  <input
+                    type="number"
+                    value={currentGame?.profitSubBrokerPercent ?? 10}
+                    onChange={e => updateGameSetting(selectedGame, 'profitSubBrokerPercent', parseFloat(e.target.value) || 0)}
+                    className="w-full bg-dark-700 border border-dark-600 rounded px-4 py-2"
+                    min="0" max="100" step="0.01"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm text-gray-400 mb-1">Broker (%)</label>
+                  <input
+                    type="number"
+                    value={currentGame?.profitBrokerPercent ?? 20}
+                    onChange={e => updateGameSetting(selectedGame, 'profitBrokerPercent', parseFloat(e.target.value) || 0)}
+                    className="w-full bg-dark-700 border border-dark-600 rounded px-4 py-2"
+                    min="0" max="100" step="0.01"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm text-gray-400 mb-1">Admin (%)</label>
+                  <input
+                    type="number"
+                    value={currentGame?.profitAdminPercent ?? 30}
+                    onChange={e => updateGameSetting(selectedGame, 'profitAdminPercent', parseFloat(e.target.value) || 0)}
+                    className="w-full bg-dark-700 border border-dark-600 rounded px-4 py-2"
+                    min="0" max="100" step="0.01"
+                  />
+                </div>
+                {(() => {
+                  const sb = currentGame?.profitSubBrokerPercent ?? 10;
+                  const br = currentGame?.profitBrokerPercent ?? 20;
+                  const ad = currentGame?.profitAdminPercent ?? 30;
+                  const total = sb + br + ad;
+                  const saShare = Math.max(0, 100 - total);
+                  return (
+                    <div className={`p-3 rounded-lg text-xs ${total > 100 ? 'bg-red-900/30 border border-red-500/30' : 'bg-dark-700'}`}>
+                      <div className="flex justify-between mb-1">
+                        <span className="text-gray-400">Sub-Broker + Broker + Admin</span>
+                        <span className={`font-bold ${total > 100 ? 'text-red-400' : 'text-green-400'}`}>{total.toFixed(2)}%</span>
+                      </div>
+                      <div className="flex justify-between mb-1">
+                        <span className="text-gray-400">Super Admin (remaining → wallet)</span>
+                        <span className="text-orange-400 font-bold">{saShare.toFixed(2)}%</span>
+                      </div>
+                      {total > 100 && (
+                        <p className="text-red-400 font-medium mt-1">Total exceeds 100%! Please adjust.</p>
+                      )}
+                    </div>
+                  );
+                })()}
+              </div>
 
               {/* Nifty Bracket Specific Settings */}
               {selectedGame === 'niftyBracket' && (
