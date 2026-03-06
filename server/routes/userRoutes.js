@@ -234,15 +234,8 @@ router.post('/login', async (req, res) => {
     }
 
     if (await user.comparePassword(password)) {
-      // Check if user is already logged in on another device
-      if (user.activeSessionToken) {
-        return res.status(403).json({ 
-          message: 'You are already logged in on another device. Please logout from that device first.',
-          code: 'ALREADY_LOGGED_IN'
-        });
-      }
-      
       // Generate unique session token for single device login
+      // This will invalidate any previous session (force logout from other devices)
       const sessionToken = generateSessionToken();
       
       // Get device info from user agent

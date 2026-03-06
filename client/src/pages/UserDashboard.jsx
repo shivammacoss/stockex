@@ -1878,7 +1878,37 @@ const PositionsPanel = ({ activeTab, setActiveTab, walletData, user, marketData,
       const filteredPending = filterByMode(pendingRes.data);
       const filteredHistory = filterByMode(historyRes.data);
       
-      setPositions(filteredPositions);
+      // Apply netting logic for crypto positions - aggregate by symbol+side
+      const netPositions = (positions) => {
+        if (!cryptoOnly) return positions; // Only net crypto positions
+        
+        const netted = {};
+        for (const pos of positions) {
+          const key = `${pos.symbol}_${pos.side}`;
+          if (!netted[key]) {
+            netted[key] = {
+              ...pos,
+              _ids: [pos._id], // Track all position IDs for closing
+              totalValue: pos.quantity * pos.entryPrice,
+              quantity: pos.quantity,
+              commission: pos.commission || 0,
+            };
+          } else {
+            // Aggregate: combine quantities, calculate weighted avg entry price
+            const existing = netted[key];
+            const newTotalQty = existing.quantity + pos.quantity;
+            const newTotalValue = existing.totalValue + (pos.quantity * pos.entryPrice);
+            existing._ids.push(pos._id);
+            existing.quantity = newTotalQty;
+            existing.totalValue = newTotalValue;
+            existing.entryPrice = newTotalValue / newTotalQty; // Weighted average
+            existing.commission = (existing.commission || 0) + (pos.commission || 0);
+          }
+        }
+        return Object.values(netted);
+      };
+      
+      setPositions(netPositions(filteredPositions));
       setPendingOrders(filteredPending);
       setHistory(filteredHistory);
       
@@ -1909,13 +1939,17 @@ const PositionsPanel = ({ activeTab, setActiveTab, walletData, user, marketData,
         askPrice = liveData.ask || liveData.ltp || position?.currentPrice || position?.entryPrice;
       }
       
-      await axios.post(`/api/trading/close/${tradeId}`, {
-        bidPrice,
-        askPrice,
-        isCrypto
-      }, {
-        headers: { Authorization: `Bearer ${user.token}` }
-      });
+      // Handle netted positions (multiple _ids) - close all underlying positions
+      const idsToClose = position?._ids || [tradeId];
+      for (const id of idsToClose) {
+        await axios.post(`/api/trading/close/${id}`, {
+          bidPrice,
+          askPrice,
+          isCrypto
+        }, {
+          headers: { Authorization: `Bearer ${user.token}` }
+        });
+      }
       fetchPositions();
     } catch (error) {
       alert(error.response?.data?.message || 'Error closing position');
@@ -4203,7 +4237,35 @@ const MobilePositionsPanel = ({ activeTab, user, marketData, cryptoOnly = false,
       const allPending = filterByMode(pendingRes.data);
       const allHistory = filterByMode(historyRes.data);
       
-      setPositions(allPositions);
+      // Apply netting logic for crypto positions - aggregate by symbol+side
+      const netPositions = (positions) => {
+        if (!cryptoOnly) return positions;
+        const netted = {};
+        for (const pos of positions) {
+          const key = `${pos.symbol}_${pos.side}`;
+          if (!netted[key]) {
+            netted[key] = {
+              ...pos,
+              _ids: [pos._id],
+              totalValue: pos.quantity * pos.entryPrice,
+              quantity: pos.quantity,
+              commission: pos.commission || 0,
+            };
+          } else {
+            const existing = netted[key];
+            const newTotalQty = existing.quantity + pos.quantity;
+            const newTotalValue = existing.totalValue + (pos.quantity * pos.entryPrice);
+            existing._ids.push(pos._id);
+            existing.quantity = newTotalQty;
+            existing.totalValue = newTotalValue;
+            existing.entryPrice = newTotalValue / newTotalQty;
+            existing.commission = (existing.commission || 0) + (pos.commission || 0);
+          }
+        }
+        return Object.values(netted);
+      };
+      
+      setPositions(netPositions(allPositions));
       setPendingOrders(allPending.filter(o => o.status === 'PENDING'));
       setCancelledOrders(allHistory.filter(o => o.status === 'CANCELLED' || o.closeReason === 'REJECTED'));
       setHistory(allHistory.filter(o => o.status === 'CLOSED'));
@@ -4237,10 +4299,15 @@ const MobilePositionsPanel = ({ activeTab, user, marketData, cryptoOnly = false,
       const bidPrice = liveData.bid || liveData.ltp || item?.currentPrice;
       const askPrice = liveData.ask || liveData.ltp || item?.currentPrice;
       
-      await axios.post(`/api/trading/close/${id}`, {
-        bidPrice,
-        askPrice
-      }, { headers: { Authorization: `Bearer ${user.token}` } });
+      // Handle netted positions (multiple _ids) - close all underlying positions
+      const idsToClose = item?._ids || [id];
+      for (const posId of idsToClose) {
+        await axios.post(`/api/trading/close/${posId}`, {
+          bidPrice,
+          askPrice,
+          isCrypto: item?.isCrypto
+        }, { headers: { Authorization: `Bearer ${user.token}` } });
+      }
       fetchAllData();
     } catch (error) {
       alert(error.response?.data?.message || 'Error');
@@ -6091,15 +6158,21 @@ const WalletModal = ({ onClose, walletData, user, onRefresh }) => {
 };
 
 const BuySellModal = ({ instrument, orderType, setOrderType, onClose, walletData, user, marketData = {}, onRefreshWallet, onRefreshPositions }) => {
-  const [quantity, setQuantity] = useState('1');
+  const [quantity, setQuantity] = useState('0.01');
   const [limitPrice, setLimitPrice] = useState('');
   const [productType, setProductType] = useState('MIS');
   const [orderPriceType, setOrderPriceType] = useState('MARKET');
-  const [leverage, setLeverage] = useState(1);
+  const [leverage, setLeverage] = useState(100);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [marginPreview, setMarginPreview] = useState(null);
+  const [showTakeProfit, setShowTakeProfit] = useState(false);
+  const [showStopLoss, setShowStopLoss] = useState(false);
+  const [takeProfit, setTakeProfit] = useState('');
+  const [stopLoss, setStopLoss] = useState('');
+  const [inputMode, setInputMode] = useState('usd'); // 'usd' or 'units'
+  const [activeOrderTab, setActiveOrderTab] = useState('market'); // 'market' or 'pending'
 
   // Determine if crypto
   const isCrypto = instrument?.isCrypto || instrument?.segment === 'CRYPTO' || instrument?.exchange === 'BINANCE';
@@ -6146,10 +6219,23 @@ const BuySellModal = ({ instrument, orderType, setOrderType, onClose, walletData
     setError(`Lot size missing for ${instrument?.symbol || 'instrument'}`);
     return null;
   }
-  const totalQuantity = isLotBased ? parseFloat(quantity || 1) * lotSize : parseFloat(quantity || 1);
+  
+  // For crypto: quantity is in units (BTC, ETH, etc.)
+  const totalQuantity = isCrypto ? parseFloat(quantity || 0.01) : (isLotBased ? parseFloat(quantity || 1) * lotSize : parseFloat(quantity || 1));
   const orderValue = ltp * totalQuantity;
+  
+  // Calculate margin required with leverage
+  const marginRequired = isCrypto ? (orderValue / leverage) : orderValue;
+  const buyingPower = activeWallet.available * leverage;
+  
+  // Commission calculation (example: $10 per lot for crypto)
+  const commissionPerLot = 10;
+  const totalCommission = parseFloat(quantity || 0.01) * commissionPerLot;
 
-  // Fetch margin preview when inputs change - same as desktop
+  // Leverage options for crypto
+  const leverageOptions = [1, 5, 10, 25, 50, 100];
+
+  // Fetch margin preview when inputs change
   useEffect(() => {
     const fetchMarginPreview = async () => {
       if (!instrument || !quantity || !ltp) return;
@@ -6166,7 +6252,7 @@ const BuySellModal = ({ instrument, orderType, setOrderType, onClose, walletData
           productType,
           side: orderType.toUpperCase(),
           quantity: totalQuantity,
-          lots: parseInt(quantity),
+          lots: parseFloat(quantity),
           lotSize: lotSize,
           price: parseFloat(ltp),
           leverage: leverage
@@ -6198,7 +6284,7 @@ const BuySellModal = ({ instrument, orderType, setOrderType, onClose, walletData
         { value: 'CNC', label: 'Delivery', desc: 'Hold in demat' }
       ];
 
-  // Place order handler - same logic as TradingPanel
+  // Place order handler
   const handlePlaceOrder = async () => {
     if (!user?.token) {
       setError('Please login to place orders');
@@ -6213,7 +6299,7 @@ const BuySellModal = ({ instrument, orderType, setOrderType, onClose, walletData
       const orderData = {
         symbol: instrument.symbol,
         token: instrument.token,
-        pair: instrument.pair, // For crypto
+        pair: instrument.pair,
         isCrypto: isCrypto,
         exchange: instrument.exchange || (isCrypto ? 'BINANCE' : 'NSE'),
         segment: isCrypto ? 'CRYPTO' : (instrument.displaySegment || instrument.segment || (instrument.exchange === 'MCX' ? 'MCXFUT' : 'NSEFUT')),
@@ -6231,20 +6317,19 @@ const BuySellModal = ({ instrument, orderType, setOrderType, onClose, walletData
         price: ltp,
         bidPrice: liveBid,
         askPrice: liveAsk,
-        leverage: isCrypto ? 1 : leverage // Use selected leverage when placing order in mobile modal
+        leverage: isCrypto ? leverage : 1,
+        takeProfit: takeProfit ? parseFloat(takeProfit) : null,
+        stopLoss: stopLoss ? parseFloat(stopLoss) : null
       };
 
       if (orderPriceType === 'LIMIT') {
         orderData.limitPrice = parseFloat(limitPrice);
       }
 
-      console.log('Placing order:', orderData);
-
       const { data } = await axios.post('/api/trading/order', orderData, {
         headers: { Authorization: `Bearer ${user.token}` }
       });
 
-      // Show trade executed popup with details
       const trade = data.trade;
       const priceSymbol = isCrypto ? '$' : '₹';
       const statusMsg = trade?.status === 'PENDING' 
@@ -6252,7 +6337,6 @@ const BuySellModal = ({ instrument, orderType, setOrderType, onClose, walletData
         : `✅ TRADE EXECUTED - ${trade?.side} ${instrument.symbol} @ ${priceSymbol}${trade?.entryPrice?.toLocaleString()} | Qty: ${trade?.quantity}`;
       
       setSuccess(statusMsg);
-      // Refresh wallet and positions after successful order
       if (onRefreshWallet) onRefreshWallet();
       if (onRefreshPositions) onRefreshPositions();
       setTimeout(() => {
@@ -6267,6 +6351,251 @@ const BuySellModal = ({ instrument, orderType, setOrderType, onClose, walletData
     }
   };
 
+  // Quick amount buttons for crypto
+  const quickAmounts = [50, 100, 250, 500, 1000];
+
+  // Render crypto-specific UI (TradingView style like sample images)
+  if (isCrypto) {
+    return (
+      <div className="fixed inset-0 bg-black/80 flex items-end md:items-center justify-center z-50">
+        <div className="bg-[#1a1a2e] w-full md:w-[380px] md:rounded-xl rounded-t-xl max-h-[95vh] overflow-y-auto">
+          {/* Header */}
+          <div className="flex items-center justify-between p-4 border-b border-gray-800">
+            <div>
+              <h3 className="font-bold text-lg text-white">{instrument?.symbol || 'BTC'} order</h3>
+              <p className="text-xs text-gray-500">BINANCE • CRYPTO</p>
+            </div>
+            <button onClick={onClose} className="text-gray-400 hover:text-white p-1">
+              <X size={20} />
+            </button>
+          </div>
+
+          {/* Market / Pending Tabs */}
+          <div className="flex border-b border-gray-800">
+            <button
+              onClick={() => { setActiveOrderTab('market'); setOrderPriceType('MARKET'); }}
+              className={`flex-1 py-3 text-sm font-medium transition ${
+                activeOrderTab === 'market' 
+                  ? 'text-white border-b-2 border-white' 
+                  : 'text-gray-500 hover:text-gray-300'
+              }`}
+            >
+              Market
+            </button>
+            <button
+              onClick={() => { setActiveOrderTab('pending'); setOrderPriceType('LIMIT'); }}
+              className={`flex-1 py-3 text-sm font-medium transition ${
+                activeOrderTab === 'pending' 
+                  ? 'text-white border-b-2 border-white' 
+                  : 'text-gray-500 hover:text-gray-300'
+              }`}
+            >
+              Pending
+            </button>
+          </div>
+
+          {/* SELL / BUY Price Buttons */}
+          <div className="flex gap-2 p-3">
+            <button
+              onClick={() => setOrderType('sell')}
+              className={`flex-1 py-3 rounded-lg font-bold transition ${
+                orderType === 'sell' 
+                  ? 'bg-red-600 text-white' 
+                  : 'bg-[#2a2a3e] text-gray-400 hover:bg-[#3a3a4e]'
+              }`}
+            >
+              <div className="text-[10px] uppercase tracking-wide opacity-70">SELL</div>
+              <div className="text-xl font-mono">{ltp?.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2}) || '0.00'}</div>
+            </button>
+            <button
+              onClick={() => setOrderType('buy')}
+              className={`flex-1 py-3 rounded-lg font-bold transition ${
+                orderType === 'buy' 
+                  ? 'bg-blue-600 text-white' 
+                  : 'bg-[#2a2a3e] text-gray-400 hover:bg-[#3a3a4e]'
+              }`}
+            >
+              <div className="text-[10px] uppercase tracking-wide opacity-70">BUY</div>
+              <div className="text-xl font-mono">{ltp?.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2}) || '0.00'}</div>
+            </button>
+          </div>
+
+          {/* Sell Side / Buy Side buttons */}
+          <div className="flex gap-2 px-3 pb-3">
+            <button
+              onClick={() => setOrderType('sell')}
+              className={`flex-1 py-2 rounded border text-sm font-medium transition ${
+                orderType === 'sell'
+                  ? 'border-red-500 text-red-400 bg-red-500/10'
+                  : 'border-gray-700 text-gray-400 hover:border-gray-600'
+              }`}
+            >
+              Sell Side
+            </button>
+            <button
+              onClick={() => setOrderType('buy')}
+              className={`flex-1 py-2 rounded border text-sm font-medium transition ${
+                orderType === 'buy'
+                  ? 'border-blue-500 text-blue-400 bg-blue-500/10'
+                  : 'border-gray-700 text-gray-400 hover:border-gray-600'
+              }`}
+            >
+              Buy Side
+            </button>
+          </div>
+
+          {/* Volume Input */}
+          <div className="px-3 pb-3">
+            <label className="block text-sm text-gray-400 mb-2">Volume</label>
+            <div className="flex items-center bg-[#2a2a3e] rounded-lg border border-gray-700">
+              <button 
+                onClick={() => setQuantity((Math.max(0.01, parseFloat(quantity) - 0.01)).toFixed(2))}
+                className="px-4 py-3 text-gray-400 hover:text-white font-bold text-xl"
+              >
+                −
+              </button>
+              <input
+                type="text"
+                value={quantity}
+                onChange={(e) => setQuantity(e.target.value)}
+                className="flex-1 bg-transparent text-center text-lg font-bold text-white focus:outline-none"
+              />
+              <button 
+                onClick={() => setQuantity((parseFloat(quantity) + 0.01).toFixed(2))}
+                className="px-4 py-3 text-gray-400 hover:text-white font-bold text-xl"
+              >
+                +
+              </button>
+            </div>
+            <div className="text-right text-xs text-gray-500 mt-1">{quantity} lot</div>
+          </div>
+
+          {/* Leverage Dropdown */}
+          <div className="px-3 pb-3">
+            <div className="flex items-center justify-between mb-2">
+              <label className="text-sm text-gray-400">Leverage (Max: 1:100)</label>
+            </div>
+            <div className="flex gap-2">
+              <select
+                value={leverage}
+                onChange={(e) => setLeverage(parseInt(e.target.value))}
+                className="flex-1 bg-[#2a2a3e] border border-gray-700 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-blue-500 appearance-none cursor-pointer"
+              >
+                {leverageOptions.map(lev => (
+                  <option key={lev} value={lev}>1:{lev}</option>
+                ))}
+              </select>
+              <div className="bg-[#2a2a3e] border border-gray-700 rounded-lg px-4 py-3 text-green-400 font-medium min-w-[80px] text-center">
+                ${marginRequired.toFixed(2)}
+              </div>
+            </div>
+            <div className="flex justify-between text-xs text-gray-500 mt-2">
+              <span>Margin Required | Free: ${activeWallet.available.toFixed(2)}</span>
+            </div>
+            <div className="text-xs text-blue-400 mt-1">
+              Buying Power: ${buyingPower.toLocaleString()}
+            </div>
+          </div>
+
+          {/* Take Profit Section */}
+          <div className="px-3 pb-2">
+            <button 
+              onClick={() => setShowTakeProfit(!showTakeProfit)}
+              className="flex items-center justify-between w-full py-2 text-green-400 hover:text-green-300"
+            >
+              <span className="text-sm font-medium">Take profit</span>
+              <Plus size={18} className={`transition-transform ${showTakeProfit ? 'rotate-45' : ''}`} />
+            </button>
+            {showTakeProfit && (
+              <div className="pb-2">
+                <input
+                  type="number"
+                  value={takeProfit}
+                  onChange={(e) => setTakeProfit(e.target.value)}
+                  placeholder="Enter take profit price"
+                  className="w-full bg-[#2a2a3e] border border-gray-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-green-500"
+                />
+              </div>
+            )}
+          </div>
+
+          {/* Stop Loss Section */}
+          <div className="px-3 pb-3">
+            <button 
+              onClick={() => setShowStopLoss(!showStopLoss)}
+              className="flex items-center justify-between w-full py-2 text-red-400 hover:text-red-300"
+            >
+              <span className="text-sm font-medium">Stop loss</span>
+              <Plus size={18} className={`transition-transform ${showStopLoss ? 'rotate-45' : ''}`} />
+            </button>
+            {showStopLoss && (
+              <div className="pb-2">
+                <input
+                  type="number"
+                  value={stopLoss}
+                  onChange={(e) => setStopLoss(e.target.value)}
+                  placeholder="Enter stop loss price"
+                  className="w-full bg-[#2a2a3e] border border-gray-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-red-500"
+                />
+              </div>
+            )}
+          </div>
+
+          {/* Trading Charges */}
+          <div className="mx-3 mb-3 bg-[#2a2a3e] rounded-lg p-3">
+            <div className="text-sm text-gray-400 font-medium mb-2">Trading Charges</div>
+            <div className="flex justify-between text-sm">
+              <span className="text-gray-500">Commission</span>
+              <span className="text-white">${totalCommission.toFixed(2)} (${commissionPerLot}/lot)</span>
+            </div>
+          </div>
+
+          {/* Margin Required */}
+          <div className="px-3 pb-3">
+            <div className="flex justify-between items-center">
+              <span className="text-gray-400 text-sm">Margin Required</span>
+              <span className="text-2xl font-bold text-green-400">${marginRequired.toFixed(2)}</span>
+            </div>
+          </div>
+
+          {/* Error/Success Messages */}
+          {error && (
+            <div className="mx-3 mb-3 bg-red-500/20 border border-red-500 text-red-400 px-3 py-2 rounded text-sm">
+              {error}
+            </div>
+          )}
+          {success && (
+            <div className="mx-3 mb-3 bg-green-500/20 border border-green-500 text-green-400 px-3 py-2 rounded text-sm">
+              {success}
+            </div>
+          )}
+
+          {/* Submit Button */}
+          <div className="p-3 pt-0">
+            <button
+              onClick={handlePlaceOrder}
+              disabled={loading || marginRequired > activeWallet.available}
+              className={`w-full py-4 rounded-lg font-bold text-lg transition ${
+                orderType === 'buy' 
+                  ? 'bg-blue-600 hover:bg-blue-700 disabled:bg-blue-800 disabled:opacity-50' 
+                  : 'bg-red-600 hover:bg-red-700 disabled:bg-red-800 disabled:opacity-50'
+              }`}
+            >
+              {loading ? 'Placing Order...' : `Open ${orderType.toUpperCase()} Order`}
+            </button>
+          </div>
+
+          {/* Order Summary */}
+          <div className="px-3 pb-3 text-center text-xs text-gray-500">
+            <div>{quantity} lots @ {ltp?.toLocaleString()}</div>
+            <div className="mt-1 text-gray-600">Standard • {Date.now()} • <span className="text-green-400">●</span> Live</div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Non-crypto UI (original)
   return (
     <div className="fixed inset-0 bg-black/70 flex items-end md:items-center justify-center z-50">
       <div className="bg-dark-800 w-full md:w-[420px] md:rounded-xl rounded-t-xl max-h-[90vh] overflow-y-auto">
@@ -6294,8 +6623,8 @@ const BuySellModal = ({ instrument, orderType, setOrderType, onClose, walletData
                 : 'bg-dark-700 text-gray-400 hover:bg-dark-600'
             }`}
           >
-            <div className="text-xs opacity-70">{isCrypto ? 'Price' : 'Bid Price'}</div>
-            <div className="text-xl">{isCrypto ? '$' : '₹'}{liveBid?.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2}) || '--'}</div>
+            <div className="text-xs opacity-70">Bid Price</div>
+            <div className="text-xl">₹{liveBid?.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2}) || '--'}</div>
             <div className="text-sm">SELL</div>
           </button>
           <button
@@ -6306,8 +6635,8 @@ const BuySellModal = ({ instrument, orderType, setOrderType, onClose, walletData
                 : 'bg-dark-700 text-gray-400 hover:bg-dark-600'
             }`}
           >
-            <div className="text-xs opacity-70">{isCrypto ? 'Price' : 'Ask Price'}</div>
-            <div className="text-xl">{isCrypto ? '$' : '₹'}{liveAsk?.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2}) || '--'}</div>
+            <div className="text-xs opacity-70">Ask Price</div>
+            <div className="text-xl">₹{liveAsk?.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2}) || '--'}</div>
             <div className="text-sm">BUY</div>
           </button>
         </div>
@@ -6360,28 +6689,6 @@ const BuySellModal = ({ instrument, orderType, setOrderType, onClose, walletData
           </div>
         </div>
 
-        {/* Leverage Selector - Only for non-crypto - Uses availableLeverages from parent */}
-        {!isCrypto && availableLeverages.length > 0 && (
-          <div className="px-4 pb-3">
-            <label className="block text-sm text-gray-400 mb-2">Leverage</label>
-            <div className="flex gap-2 flex-wrap">
-              {availableLeverages.map(lev => (
-                <button
-                  key={lev}
-                  onClick={() => setLeverage(lev)}
-                  className={`px-4 py-2 rounded-lg text-sm font-medium transition ${
-                    leverage === lev 
-                      ? 'bg-blue-600 text-white' 
-                      : 'bg-dark-700 text-gray-400 hover:bg-dark-600'
-                  }`}
-                >
-                  {lev}x
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-
         {/* Form */}
         <div className="p-4 pt-0 space-y-4">
           {/* Lots/Quantity */}
@@ -6431,69 +6738,40 @@ const BuySellModal = ({ instrument, orderType, setOrderType, onClose, walletData
           <div className="bg-dark-700 rounded-lg p-3">
             <div className="flex justify-between items-center">
               <span className="text-gray-400 text-sm">Last Traded Price</span>
-              <span className="text-xl font-bold">
-                {isCrypto ? '$' : '₹'}{ltp?.toLocaleString() || '--'}
-              </span>
+              <span className="text-xl font-bold">₹{ltp?.toLocaleString() || '--'}</span>
             </div>
           </div>
 
-          {/* Balance Info - Different for Crypto, MCX, and Indian Trading */}
+          {/* Balance Info - Indian/MCX Trading */}
           <div className="bg-dark-700 rounded-lg p-3 space-y-2">
-            {isCrypto ? (
-              /* Crypto Wallet - No margin system */
-              <>
-                <div className="flex justify-between text-sm">
-                  <span className="text-gray-400">Crypto Wallet</span>
-                  <span className="text-orange-400 font-medium">${activeWallet.balance.toFixed(2)}</span>
-                </div>
-                <div className="flex justify-between text-sm">
-                  <span className="text-gray-400">Trade Cost</span>
-                  <span className={`font-medium ${marginPreview?.canPlace === false ? 'text-red-400' : ''}`}>
-                    ${(ltp * parseFloat(quantity || 1)).toFixed(2)}
-                  </span>
-                </div>
-                <div className="flex justify-between text-sm border-t border-dark-600 pt-2">
-                  <span className="text-gray-400">Available</span>
-                  <span className="text-green-400 font-medium">${activeWallet.available.toFixed(2)}</span>
-                </div>
-              </>
-            ) : (
-              /* Indian/MCX Trading - Margin based system */
-              <>
-                <div className="flex justify-between text-sm">
-                  <span className="text-gray-400">{isMCX ? 'MCX Balance' : 'Trading Balance'}</span>
-                  <span className={`font-medium ${isMCX ? 'text-yellow-400' : 'text-green-400'}`}>₹{activeWallet.balance.toLocaleString()}</span>
-                </div>
-                <div className="flex justify-between text-sm">
-                  <span className="text-gray-400">Used Margin</span>
-                  <span className="text-yellow-400">₹{activeWallet.usedMargin.toLocaleString()}</span>
-                </div>
-                <div className="flex justify-between text-sm">
-                  <span className="text-gray-400">Leverage</span>
-                  <span className="text-blue-400 font-medium">{marginPreview?.leverage || leverage}x</span>
-                </div>
-                <div className="flex justify-between text-sm">
-                  <span className="text-gray-400">Available</span>
-                  <span className="text-green-400 font-medium">₹{activeWallet.available.toLocaleString()}</span>
-                </div>
-                <div className="flex justify-between text-sm">
-                  <span className="text-gray-400">Required Margin</span>
-                  <span className={`font-medium ${marginPreview?.canPlace === false ? 'text-red-400' : ''}`}>
-                    ₹{marginPreview?.marginRequired?.toLocaleString() || '--'}
-                  </span>
-                </div>
-                {marginPreview?.canPlace === false && (
-                  <div className="text-xs text-red-400 flex items-center gap-1">
-                    <span>⚠</span>
-                    <span>Insufficient funds. Need ₹{((marginPreview?.marginRequired || 0) - activeWallet.available).toLocaleString()} more</span>
-                  </div>
-                )}
-                <div className="flex justify-between text-sm border-t border-dark-600 pt-2">
-                  <span className="text-gray-400">Order Value</span>
-                  <span className="font-medium">₹{orderValue.toLocaleString()}</span>
-                </div>
-              </>
+            <div className="flex justify-between text-sm">
+              <span className="text-gray-400">{isMCX ? 'MCX Balance' : 'Trading Balance'}</span>
+              <span className={`font-medium ${isMCX ? 'text-yellow-400' : 'text-green-400'}`}>₹{activeWallet.balance.toLocaleString()}</span>
+            </div>
+            <div className="flex justify-between text-sm">
+              <span className="text-gray-400">Used Margin</span>
+              <span className="text-yellow-400">₹{activeWallet.usedMargin.toLocaleString()}</span>
+            </div>
+            <div className="flex justify-between text-sm">
+              <span className="text-gray-400">Available</span>
+              <span className="text-green-400 font-medium">₹{activeWallet.available.toLocaleString()}</span>
+            </div>
+            <div className="flex justify-between text-sm">
+              <span className="text-gray-400">Required Margin</span>
+              <span className={`font-medium ${marginPreview?.canPlace === false ? 'text-red-400' : ''}`}>
+                ₹{marginPreview?.marginRequired?.toLocaleString() || '--'}
+              </span>
+            </div>
+            {marginPreview?.canPlace === false && (
+              <div className="text-xs text-red-400 flex items-center gap-1">
+                <span>⚠</span>
+                <span>Insufficient funds. Need ₹{((marginPreview?.marginRequired || 0) - activeWallet.available).toLocaleString()} more</span>
+              </div>
             )}
+            <div className="flex justify-between text-sm border-t border-dark-600 pt-2">
+              <span className="text-gray-400">Order Value</span>
+              <span className="font-medium">₹{orderValue.toLocaleString()}</span>
+            </div>
           </div>
 
           {/* Error/Success Messages */}

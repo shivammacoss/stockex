@@ -36,8 +36,6 @@ const niftyJackpotResultSchema = new mongoose.Schema({
   timestamps: true
 });
 
-niftyJackpotResultSchema.index({ resultDate: 1 });
-
 const NiftyJackpotResult = mongoose.model('NiftyJackpotResult', niftyJackpotResultSchema);
 
 export default NiftyJackpotResult;

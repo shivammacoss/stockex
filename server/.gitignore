@@ -1,4 +1,4 @@
-server/.zerodha-session.json
+cserver/.zerodha-session.json
 .zerodha-session.json
 .env
 node_modules
