@@ -960,6 +960,72 @@ router.post('/create-user', protectAdmin, superAdminOnly, async (req, res) => {
   }
 });
 
+// Manage user delivery pledge (Super Admin only)
+router.post('/users/:userId/delivery-pledge', protectAdmin, superAdminOnly, async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const { action, amount } = req.body; // action: 'add', 'deduct', 'set'
+    
+    if (!action || amount === undefined) {
+      return res.status(400).json({ message: 'Action and amount are required' });
+    }
+    
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+    
+    const currentBalance = user.deliveryPledge?.balance || 0;
+    let newBalance;
+    
+    switch (action) {
+      case 'add':
+        newBalance = currentBalance + parseFloat(amount);
+        break;
+      case 'deduct':
+        newBalance = Math.max(0, currentBalance - parseFloat(amount));
+        break;
+      case 'set':
+        newBalance = parseFloat(amount);
+        break;
+      default:
+        return res.status(400).json({ message: 'Invalid action. Use add, deduct, or set' });
+    }
+    
+    await User.updateOne(
+      { _id: userId },
+      { 
+        $set: { 
+          'deliveryPledge.balance': newBalance,
+          'deliveryPledge.lastUpdated': new Date()
+        }
+      }
+    );
+    
+    // Create ledger entry
+    await WalletLedger.create({
+      ownerType: 'USER',
+      ownerId: userId,
+      adminCode: user.adminCode,
+      type: action === 'deduct' ? 'DEBIT' : 'CREDIT',
+      reason: 'DELIVERY_PLEDGE_ADJUSTMENT',
+      amount: parseFloat(amount),
+      balanceAfter: newBalance,
+      description: `Delivery Pledge ${action}: ₹${parseFloat(amount).toLocaleString()} by Admin`,
+      performedBy: req.admin._id
+    });
+    
+    res.json({ 
+      message: `Pledge ${action === 'add' ? 'added' : action === 'deduct' ? 'deducted' : 'set'} successfully`,
+      previousBalance: currentBalance,
+      newBalance
+    });
+  } catch (error) {
+    console.error('Delivery pledge update error:', error);
+    res.status(500).json({ message: error.message });
+  }
+});
+
 // Transfer user to another admin (Super Admin only)
 router.post('/users/:userId/transfer', protectAdmin, superAdminOnly, async (req, res) => {
   try {
@@ -4139,6 +4205,12 @@ router.put('/system-settings', protectAdmin, superAdminOnly, async (req, res) =>
       settings.adminScriptDefaults = req.body.adminScriptDefaults;
     }
     
+    // Update Delivery Pledge Settings
+    if (req.body.deliveryPledgeSettings) {
+      if (!settings.deliveryPledgeSettings) settings.deliveryPledgeSettings = {};
+      settings.deliveryPledgeSettings = { ...settings.deliveryPledgeSettings, ...req.body.deliveryPledgeSettings };
+    }
+    
     settings.updatedBy = req.admin._id;
     settings.markModified('segmentDefaults');
     settings.markModified('instrumentDefaults');
@@ -4146,6 +4218,7 @@ router.put('/system-settings', protectAdmin, superAdminOnly, async (req, res) =>
     settings.markModified('brokerageSharing');
     settings.markModified('adminSegmentDefaults');
     settings.markModified('adminScriptDefaults');
+    settings.markModified('deliveryPledgeSettings');
     await settings.save();
     
     res.json({ message: 'System settings updated successfully', settings });

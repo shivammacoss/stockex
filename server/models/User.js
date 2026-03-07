@@ -208,6 +208,33 @@ const userSchema = new mongoose.Schema({
     }
   },
   
+  // Delivery Pledge - Margin from delivery (CNC) trades that can be used for trading
+  // When user buys in delivery, a % of buy value is added to pledge
+  // When user sells in delivery, a % of sell value is added to pledge
+  // This pledge can be used as margin for trading any instrument
+  deliveryPledge: {
+    // Total pledged amount available as margin
+    balance: {
+      type: Number,
+      default: 0
+    },
+    // Amount currently used as margin for open positions
+    usedMargin: {
+      type: Number,
+      default: 0
+    },
+    // Total value of delivery holdings (for reference)
+    holdingsValue: {
+      type: Number,
+      default: 0
+    },
+    // History of pledge additions
+    lastUpdated: {
+      type: Date,
+      default: Date.now
+    }
+  },
+  
   // Separate MCX Wallet - For MCX Futures and Options trading only
   mcxWallet: {
     // MCX Trading Balance in INR

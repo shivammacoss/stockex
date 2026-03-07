@@ -626,11 +626,19 @@ class TradingService {
       // Regular trades use trading balance with margin system
       const walletBalance = user.wallet?.tradingBalance || user.wallet?.cashBalance || user.wallet?.balance || 0;
       const blockedMargin = user.wallet?.usedMargin || user.wallet?.blocked || 0;
-      availableBalance = walletBalance - blockedMargin;
+      
+      // Include Delivery Pledge as available margin (with haircut applied)
+      const pledgeBalance = user.deliveryPledge?.balance || 0;
+      const pledgeUsedMargin = user.deliveryPledge?.usedMargin || 0;
+      const pledgeSettings = admin?.deliveryPledgeSettings || { haircutPercent: 10 };
+      const haircutPercent = pledgeSettings.haircutPercent || 10;
+      const usablePledge = (pledgeBalance - pledgeUsedMargin) * (1 - haircutPercent / 100);
+      
+      availableBalance = (walletBalance - blockedMargin) + Math.max(0, usablePledge);
       
       // Check if user has enough for margin + commission
       if ((marginRequired + totalCommission) > availableBalance) {
-        throw new Error(`Insufficient funds. Required: ₹${(marginRequired + totalCommission).toLocaleString()}, Available: ₹${availableBalance.toLocaleString()}`);
+        throw new Error(`Insufficient funds. Required: ₹${(marginRequired + totalCommission).toLocaleString()}, Available: ₹${availableBalance.toLocaleString()} (includes ₹${Math.max(0, usablePledge).toLocaleString()} pledge margin)`);
       }
     }
 
@@ -845,6 +853,44 @@ class TradingService {
     // Check margin usage and send warning if > 70% (only for non-crypto trades)
     if (!isCrypto) {
       await checkMarginWarning(user, newUsedMargin, newTradingBalance);
+    }
+
+    // Delivery Pledge Logic - Add pledge when user BUYS in delivery (CNC)
+    // Get pledge settings from admin or system defaults
+    const isDeliveryTrade = orderData.productType === 'CNC' || orderData.productType === 'DELIVERY';
+    if (isDeliveryTrade && orderData.side === 'BUY' && !isCrypto) {
+      try {
+        // Get pledge settings from admin or use defaults
+        const pledgeSettings = admin?.deliveryPledgeSettings || { enabled: true, buyPledgePercent: 50, maxPledgeAmount: 0 };
+        
+        if (pledgeSettings.enabled) {
+          const tradeValue = totalQuantity * effectiveEntryPrice;
+          const pledgeAmount = (tradeValue * (pledgeSettings.buyPledgePercent || 50)) / 100;
+          
+          // Check max pledge limit
+          const currentPledge = user.deliveryPledge?.balance || 0;
+          const maxPledge = pledgeSettings.maxPledgeAmount || 0;
+          let finalPledgeAmount = pledgeAmount;
+          
+          if (maxPledge > 0 && (currentPledge + pledgeAmount) > maxPledge) {
+            finalPledgeAmount = Math.max(0, maxPledge - currentPledge);
+          }
+          
+          if (finalPledgeAmount > 0) {
+            await User.updateOne(
+              { _id: user._id },
+              { 
+                $inc: { 'deliveryPledge.balance': finalPledgeAmount, 'deliveryPledge.holdingsValue': tradeValue },
+                $set: { 'deliveryPledge.lastUpdated': new Date() }
+              }
+            );
+            console.log(`Delivery Pledge: Added ₹${finalPledgeAmount.toLocaleString()} to user ${user.userId} (${pledgeSettings.buyPledgePercent}% of ₹${tradeValue.toLocaleString()})`);
+          }
+        }
+      } catch (pledgeErr) {
+        console.error('Delivery Pledge error:', pledgeErr);
+        // Don't fail the trade if pledge update fails
+      }
     }
 
     return {
@@ -1103,6 +1149,47 @@ class TradingService {
       { $set: updateFields }
     );
     
+    // Delivery Pledge Logic - Add pledge when user SELLS delivery holdings
+    const isDeliveryTrade = trade.productType === 'CNC' || trade.productType === 'DELIVERY';
+    if (isDeliveryTrade && !trade.isCrypto) {
+      try {
+        // Get pledge settings from admin or use defaults
+        const pledgeSettings = admin?.deliveryPledgeSettings || { enabled: true, sellPledgePercent: 50, maxPledgeAmount: 0 };
+        
+        if (pledgeSettings.enabled) {
+          const tradeValue = trade.quantity * exitPrice;
+          const pledgeAmount = (tradeValue * (pledgeSettings.sellPledgePercent || 50)) / 100;
+          
+          // Check max pledge limit
+          const currentPledge = user.deliveryPledge?.balance || 0;
+          const maxPledge = pledgeSettings.maxPledgeAmount || 0;
+          let finalPledgeAmount = pledgeAmount;
+          
+          if (maxPledge > 0 && (currentPledge + pledgeAmount) > maxPledge) {
+            finalPledgeAmount = Math.max(0, maxPledge - currentPledge);
+          }
+          
+          if (finalPledgeAmount > 0) {
+            // Reduce holdings value and add to pledge
+            const holdingsReduction = trade.quantity * trade.entryPrice;
+            await User.updateOne(
+              { _id: user._id },
+              { 
+                $inc: { 'deliveryPledge.balance': finalPledgeAmount },
+                $set: { 
+                  'deliveryPledge.holdingsValue': Math.max(0, (user.deliveryPledge?.holdingsValue || 0) - holdingsReduction),
+                  'deliveryPledge.lastUpdated': new Date() 
+                }
+              }
+            );
+            console.log(`Delivery Pledge (Sell): Added ₹${finalPledgeAmount.toLocaleString()} to user ${user.userId} (${pledgeSettings.sellPledgePercent}% of ₹${tradeValue.toLocaleString()})`);
+          }
+        }
+      } catch (pledgeErr) {
+        console.error('Delivery Pledge (Sell) error:', pledgeErr);
+      }
+    }
+
     // Distribute brokerage through MLM hierarchy (B_BOOK only)
     if (trade.bookType === 'B_BOOK' && admin) {
       // Update admin P&L

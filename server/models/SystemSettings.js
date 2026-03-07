@@ -403,6 +403,21 @@ const systemSettingsSchema = new mongoose.Schema({
     }
   },
   
+  // Delivery Pledge Settings - % of delivery trade value added to pledge margin
+  // When user buys/sells in delivery (CNC), this % of trade value is added to deliveryPledge
+  // User can use deliveryPledge as margin for trading any instrument
+  deliveryPledgeSettings: {
+    enabled: { type: Boolean, default: true },
+    // % of buy value added to pledge (e.g., 50 means 50% of ₹100,000 = ₹50,000 pledge)
+    buyPledgePercent: { type: Number, default: 50 },
+    // % of sell value added to pledge
+    sellPledgePercent: { type: Number, default: 50 },
+    // Maximum pledge amount per user (0 = unlimited)
+    maxPledgeAmount: { type: Number, default: 0 },
+    // Haircut % - reduction in pledge value for margin calculation (e.g., 10% haircut)
+    haircutPercent: { type: Number, default: 10 }
+  },
+
   // Admin Segment Permissions Defaults - SAME structure as Admin.segmentPermissions
   // These are the master defaults that all admins inherit when they haven't set their own
   // Uses the same segment keys as Admin model: NSEFUT, NSEOPT, MCXFUT, MCXOPT, NSE-EQ, BSE-FUT, BSE-OPT, CRYPTO

@@ -213,6 +213,7 @@ const AdminDashboard = () => {
         { path: `${basePath}/market-control`, icon: TrendingUp, label: 'Market Control' },
         { path: `${basePath}/broker-certificates`, icon: Award, label: 'Broker Certificates' },
         { path: `${basePath}/system-settings`, icon: Settings, label: 'Default Settings' },
+        { path: `${basePath}/delivery-pledge`, icon: Layers, label: 'Delivery Pledge' },
         { path: `${basePath}/patti-sharing`, icon: ArrowRightLeft, label: 'Patti Sharing' },
         { path: `${basePath}/game-settings`, icon: Gamepad2, label: 'Game Settings' },
         { path: `${basePath}/bank-management`, icon: Building2, label: 'Bank Settings' },
@@ -409,6 +410,7 @@ const AdminDashboard = () => {
           {isSuperAdmin && <Route path="all-transactions" element={<AllTransactions />} />}
           {isSuperAdmin && <Route path="broker-certificates" element={<BrokerCertificatesManagement />} />}
           {isSuperAdmin && <Route path="system-settings" element={<SystemDefaultSettings />} />}
+          {isSuperAdmin && <Route path="delivery-pledge" element={<DeliveryPledgeManagement />} />}
           {isSuperAdmin && <Route path="patti-sharing" element={<PattiSharingManagement />} />}
           {isSuperAdmin && <Route path="game-settings" element={<GameSettingsManagement />} />}
           {/* Admin Only Routes */}
@@ -10168,6 +10170,14 @@ const SystemDefaultSettings = () => {
       subBrokerShare: 30,
       enabled: true,
       mode: 'PERCENTAGE'
+    },
+    // Delivery Pledge Settings
+    deliveryPledgeSettings: {
+      enabled: true,
+      buyPledgePercent: 50,
+      sellPledgePercent: 50,
+      maxPledgeAmount: 0,
+      haircutPercent: 10
     }
     // Note: Profit/Loss sharing goes only to direct parent admin
     // For P&L sharing between admin levels, use Patti Sharing feature
@@ -10348,6 +10358,9 @@ const SystemDefaultSettings = () => {
         </button>
         <button onClick={() => setMainTab('adminDefaults')} className={`px-5 py-2.5 rounded-t font-medium ${mainTab === 'adminDefaults' ? 'bg-cyan-600 text-white' : 'bg-dark-700 text-gray-400'}`}>
           Admin Segment & Script Defaults
+        </button>
+        <button onClick={() => setMainTab('deliveryPledge')} className={`px-5 py-2.5 rounded-t font-medium ${mainTab === 'deliveryPledge' ? 'bg-purple-600 text-white' : 'bg-dark-700 text-gray-400'}`}>
+          Delivery Pledge
         </button>
         <button onClick={() => setMainTab('notifications')} className={`px-5 py-2.5 rounded-t font-medium ${mainTab === 'notifications' ? 'bg-red-600 text-white' : 'bg-dark-700 text-gray-400'}`}>
           Notifications
@@ -11265,6 +11278,140 @@ const SystemDefaultSettings = () => {
         </>
       )}
 
+      {/* DELIVERY PLEDGE SETTINGS TAB */}
+      {mainTab === 'deliveryPledge' && (
+        <>
+          <div className="mb-4 p-3 bg-purple-500/10 border border-purple-500/30 rounded-lg">
+            <p className="text-sm text-purple-300">
+              <strong>Delivery Pledge:</strong> When a user buys or sells in Delivery (CNC), a percentage of the trade value is added to their Delivery Pledge balance.
+              This pledge can be used as margin for trading any instrument.
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* Pledge Settings */}
+            <div className="bg-dark-800 rounded-lg p-6">
+              <h3 className="text-lg font-bold mb-4 flex items-center gap-2">
+                <TrendingUp size={20} className="text-purple-400" />
+                Pledge Margin Settings
+              </h3>
+              <div className="space-y-4">
+                <div className="flex items-center justify-between p-3 bg-dark-700 rounded">
+                  <div>
+                    <span className="font-medium">Enable Delivery Pledge</span>
+                    <p className="text-xs text-gray-500">Allow users to get pledge margin from delivery trades</p>
+                  </div>
+                  <button
+                    onClick={() => setSettings(prev => ({
+                      ...prev,
+                      deliveryPledgeSettings: { ...prev.deliveryPledgeSettings, enabled: !prev.deliveryPledgeSettings?.enabled }
+                    }))}
+                    className={`w-12 h-6 rounded-full transition ${settings.deliveryPledgeSettings?.enabled ? 'bg-purple-600' : 'bg-dark-600'}`}
+                  >
+                    <div className={`w-5 h-5 bg-white rounded-full transition transform ${settings.deliveryPledgeSettings?.enabled ? 'translate-x-6' : 'translate-x-0.5'}`} />
+                  </button>
+                </div>
+
+                <div>
+                  <label className="block text-sm text-gray-400 mb-1">Buy Pledge Percent (%)</label>
+                  <input
+                    type="number"
+                    min="0"
+                    max="100"
+                    value={settings.deliveryPledgeSettings?.buyPledgePercent || 50}
+                    onChange={e => setSettings(prev => ({
+                      ...prev,
+                      deliveryPledgeSettings: { ...prev.deliveryPledgeSettings, buyPledgePercent: parseFloat(e.target.value) || 0 }
+                    }))}
+                    className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2"
+                  />
+                  <p className="text-xs text-gray-500 mt-1">% of buy value added to pledge (e.g., 50% of ₹1,00,000 = ₹50,000 pledge)</p>
+                </div>
+
+                <div>
+                  <label className="block text-sm text-gray-400 mb-1">Sell Pledge Percent (%)</label>
+                  <input
+                    type="number"
+                    min="0"
+                    max="100"
+                    value={settings.deliveryPledgeSettings?.sellPledgePercent || 50}
+                    onChange={e => setSettings(prev => ({
+                      ...prev,
+                      deliveryPledgeSettings: { ...prev.deliveryPledgeSettings, sellPledgePercent: parseFloat(e.target.value) || 0 }
+                    }))}
+                    className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2"
+                  />
+                  <p className="text-xs text-gray-500 mt-1">% of sell value added to pledge when user sells delivery holdings</p>
+                </div>
+              </div>
+            </div>
+
+            {/* Limits & Haircut */}
+            <div className="bg-dark-800 rounded-lg p-6">
+              <h3 className="text-lg font-bold mb-4 flex items-center gap-2">
+                <Shield size={20} className="text-orange-400" />
+                Limits & Haircut
+              </h3>
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm text-gray-400 mb-1">Max Pledge Amount (₹)</label>
+                  <input
+                    type="number"
+                    min="0"
+                    value={settings.deliveryPledgeSettings?.maxPledgeAmount || 0}
+                    onChange={e => setSettings(prev => ({
+                      ...prev,
+                      deliveryPledgeSettings: { ...prev.deliveryPledgeSettings, maxPledgeAmount: parseFloat(e.target.value) || 0 }
+                    }))}
+                    className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2"
+                  />
+                  <p className="text-xs text-gray-500 mt-1">Maximum pledge amount per user (0 = unlimited)</p>
+                </div>
+
+                <div>
+                  <label className="block text-sm text-gray-400 mb-1">Haircut Percent (%)</label>
+                  <input
+                    type="number"
+                    min="0"
+                    max="50"
+                    value={settings.deliveryPledgeSettings?.haircutPercent || 10}
+                    onChange={e => setSettings(prev => ({
+                      ...prev,
+                      deliveryPledgeSettings: { ...prev.deliveryPledgeSettings, haircutPercent: parseFloat(e.target.value) || 0 }
+                    }))}
+                    className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2"
+                  />
+                  <p className="text-xs text-gray-500 mt-1">Reduction in pledge value for margin calculation (e.g., 10% haircut on ₹50,000 = ₹45,000 usable margin)</p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Example Calculation */}
+          <div className="mt-6 p-4 bg-dark-700 rounded-lg">
+            <h4 className="font-medium mb-3 text-purple-400">Example Calculation:</h4>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+              <div className="bg-dark-800 p-3 rounded">
+                <p className="text-gray-400 mb-2">User BUYS ₹1,00,000 in Delivery:</p>
+                <ul className="space-y-1 text-gray-300">
+                  <li>• Buy Pledge: {settings.deliveryPledgeSettings?.buyPledgePercent || 50}% of ₹1,00,000 = <span className="text-green-400 font-bold">₹{((settings.deliveryPledgeSettings?.buyPledgePercent || 50) * 1000).toLocaleString()}</span></li>
+                  <li>• Haircut: {settings.deliveryPledgeSettings?.haircutPercent || 10}%</li>
+                  <li>• Usable Margin: <span className="text-purple-400 font-bold">₹{(((settings.deliveryPledgeSettings?.buyPledgePercent || 50) * 1000) * (1 - (settings.deliveryPledgeSettings?.haircutPercent || 10) / 100)).toLocaleString()}</span></li>
+                </ul>
+              </div>
+              <div className="bg-dark-800 p-3 rounded">
+                <p className="text-gray-400 mb-2">User SELLS ₹1,00,000 from Delivery:</p>
+                <ul className="space-y-1 text-gray-300">
+                  <li>• Sell Pledge: {settings.deliveryPledgeSettings?.sellPledgePercent || 50}% of ₹1,00,000 = <span className="text-green-400 font-bold">₹{((settings.deliveryPledgeSettings?.sellPledgePercent || 50) * 1000).toLocaleString()}</span></li>
+                  <li>• Added to existing pledge balance</li>
+                  <li>• Can be used for trading any instrument</li>
+                </ul>
+              </div>
+            </div>
+          </div>
+        </>
+      )}
+
       {/* NOTIFICATION SETTINGS TAB */}
       {mainTab === 'notifications' && (
         <>
@@ -11430,6 +11577,445 @@ const SystemDefaultSettings = () => {
             </div>
           </div>
         </>
+      )}
+    </div>
+  );
+};
+
+// Delivery Pledge Management (Super Admin only)
+const DeliveryPledgeManagement = () => {
+  const { admin } = useAuth();
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [users, setUsers] = useState([]);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [message, setMessage] = useState({ type: '', text: '' });
+  const [activeTab, setActiveTab] = useState('settings'); // 'settings' or 'users'
+  const [selectedUser, setSelectedUser] = useState(null);
+  const [pledgeAction, setPledgeAction] = useState({ type: 'add', amount: 0 });
+  
+  const [settings, setSettings] = useState({
+    enabled: true,
+    buyPledgePercent: 50,
+    sellPledgePercent: 50,
+    maxPledgeAmount: 0,
+    haircutPercent: 10
+  });
+
+  useEffect(() => {
+    fetchSettings();
+    fetchUsers();
+  }, []);
+
+  const fetchSettings = async () => {
+    try {
+      const { data } = await axios.get('/api/admin/manage/system-settings', {
+        headers: { Authorization: `Bearer ${admin.token}` }
+      });
+      if (data.deliveryPledgeSettings) {
+        setSettings(prev => ({ ...prev, ...data.deliveryPledgeSettings }));
+      }
+    } catch (error) {
+      console.error('Error fetching settings:', error);
+    }
+  };
+
+  const fetchUsers = async () => {
+    try {
+      setLoading(true);
+      const { data } = await axios.get('/api/admin/manage/users', {
+        headers: { Authorization: `Bearer ${admin.token}` }
+      });
+      setUsers(data.users || data || []);
+    } catch (error) {
+      console.error('Error fetching users:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const saveSettings = async () => {
+    try {
+      setSaving(true);
+      await axios.put('/api/admin/manage/system-settings', {
+        deliveryPledgeSettings: settings
+      }, {
+        headers: { Authorization: `Bearer ${admin.token}` }
+      });
+      setMessage({ type: 'success', text: 'Delivery Pledge settings saved successfully!' });
+      setTimeout(() => setMessage({ type: '', text: '' }), 3000);
+    } catch (error) {
+      setMessage({ type: 'error', text: error.response?.data?.message || 'Failed to save settings' });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const updateUserPledge = async (userId, action, amount) => {
+    try {
+      await axios.post(`/api/admin/manage/users/${userId}/delivery-pledge`, {
+        action, // 'add', 'deduct', 'set'
+        amount: parseFloat(amount)
+      }, {
+        headers: { Authorization: `Bearer ${admin.token}` }
+      });
+      setMessage({ type: 'success', text: `Pledge ${action === 'add' ? 'added' : action === 'deduct' ? 'deducted' : 'set'} successfully!` });
+      fetchUsers();
+      setSelectedUser(null);
+      setPledgeAction({ type: 'add', amount: 0 });
+    } catch (error) {
+      setMessage({ type: 'error', text: error.response?.data?.message || 'Failed to update pledge' });
+    }
+  };
+
+  const filteredUsers = users.filter(u => 
+    u.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    u.email?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    u.userId?.toLowerCase().includes(searchTerm.toLowerCase())
+  );
+
+  // Calculate totals
+  const totalPledgeBalance = users.reduce((sum, u) => sum + (u.deliveryPledge?.balance || 0), 0);
+  const totalHoldingsValue = users.reduce((sum, u) => sum + (u.deliveryPledge?.holdingsValue || 0), 0);
+  const usersWithPledge = users.filter(u => (u.deliveryPledge?.balance || 0) > 0).length;
+
+  return (
+    <div className="p-4 md:p-6">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
+        <div>
+          <h1 className="text-2xl font-bold flex items-center gap-2">
+            <Layers className="text-purple-400" />
+            Delivery Pledge Management
+          </h1>
+          <p className="text-gray-400 text-sm mt-1">Configure pledge settings and manage user pledge balances</p>
+        </div>
+      </div>
+
+      {message.text && (
+        <div className={`mb-4 p-3 rounded ${message.type === 'success' ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}`}>
+          {message.text}
+        </div>
+      )}
+
+      {/* Summary Cards */}
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+        <div className="bg-dark-800 rounded-lg p-4">
+          <p className="text-gray-400 text-sm">Total Pledge Balance</p>
+          <p className="text-2xl font-bold text-purple-400">₹{totalPledgeBalance.toLocaleString()}</p>
+        </div>
+        <div className="bg-dark-800 rounded-lg p-4">
+          <p className="text-gray-400 text-sm">Total Holdings Value</p>
+          <p className="text-2xl font-bold text-blue-400">₹{totalHoldingsValue.toLocaleString()}</p>
+        </div>
+        <div className="bg-dark-800 rounded-lg p-4">
+          <p className="text-gray-400 text-sm">Users with Pledge</p>
+          <p className="text-2xl font-bold text-green-400">{usersWithPledge}</p>
+        </div>
+        <div className="bg-dark-800 rounded-lg p-4">
+          <p className="text-gray-400 text-sm">Usable Margin (after haircut)</p>
+          <p className="text-2xl font-bold text-orange-400">₹{(totalPledgeBalance * (1 - settings.haircutPercent / 100)).toLocaleString()}</p>
+        </div>
+      </div>
+
+      {/* Tabs */}
+      <div className="flex gap-2 mb-6 border-b border-dark-600 pb-4">
+        <button
+          onClick={() => setActiveTab('settings')}
+          className={`px-5 py-2.5 rounded-t font-medium ${activeTab === 'settings' ? 'bg-purple-600 text-white' : 'bg-dark-700 text-gray-400'}`}
+        >
+          Pledge Settings
+        </button>
+        <button
+          onClick={() => setActiveTab('users')}
+          className={`px-5 py-2.5 rounded-t font-medium ${activeTab === 'users' ? 'bg-purple-600 text-white' : 'bg-dark-700 text-gray-400'}`}
+        >
+          User Pledges
+        </button>
+      </div>
+
+      {/* Settings Tab */}
+      {activeTab === 'settings' && (
+        <>
+          <div className="mb-4 p-3 bg-purple-500/10 border border-purple-500/30 rounded-lg">
+            <p className="text-sm text-purple-300">
+              <strong>Delivery Pledge:</strong> When a user buys or sells in Delivery (CNC), a percentage of the trade value is added to their Delivery Pledge balance.
+              This pledge can be used as margin for trading any instrument.
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* Pledge Settings */}
+            <div className="bg-dark-800 rounded-lg p-6">
+              <h3 className="text-lg font-bold mb-4 flex items-center gap-2">
+                <TrendingUp size={20} className="text-purple-400" />
+                Pledge Margin Settings
+              </h3>
+              <div className="space-y-4">
+                <div className="flex items-center justify-between p-3 bg-dark-700 rounded">
+                  <div>
+                    <span className="font-medium">Enable Delivery Pledge</span>
+                    <p className="text-xs text-gray-500">Allow users to get pledge margin from delivery trades</p>
+                  </div>
+                  <button
+                    onClick={() => setSettings(prev => ({ ...prev, enabled: !prev.enabled }))}
+                    className={`w-12 h-6 rounded-full transition ${settings.enabled ? 'bg-purple-600' : 'bg-dark-600'}`}
+                  >
+                    <div className={`w-5 h-5 bg-white rounded-full transition transform ${settings.enabled ? 'translate-x-6' : 'translate-x-0.5'}`} />
+                  </button>
+                </div>
+
+                <div>
+                  <label className="block text-sm text-gray-400 mb-1">Buy Pledge Percent (%)</label>
+                  <input
+                    type="number"
+                    min="0"
+                    max="100"
+                    value={settings.buyPledgePercent}
+                    onChange={e => setSettings(prev => ({ ...prev, buyPledgePercent: parseFloat(e.target.value) || 0 }))}
+                    className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2"
+                  />
+                  <p className="text-xs text-gray-500 mt-1">% of buy value added to pledge (e.g., 50% of ₹1,00,000 = ₹50,000 pledge)</p>
+                </div>
+
+                <div>
+                  <label className="block text-sm text-gray-400 mb-1">Sell Pledge Percent (%)</label>
+                  <input
+                    type="number"
+                    min="0"
+                    max="100"
+                    value={settings.sellPledgePercent}
+                    onChange={e => setSettings(prev => ({ ...prev, sellPledgePercent: parseFloat(e.target.value) || 0 }))}
+                    className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2"
+                  />
+                  <p className="text-xs text-gray-500 mt-1">% of sell value added to pledge when user sells delivery holdings</p>
+                </div>
+              </div>
+            </div>
+
+            {/* Limits & Haircut */}
+            <div className="bg-dark-800 rounded-lg p-6">
+              <h3 className="text-lg font-bold mb-4 flex items-center gap-2">
+                <Shield size={20} className="text-orange-400" />
+                Limits & Haircut
+              </h3>
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm text-gray-400 mb-1">Max Pledge Amount (₹)</label>
+                  <input
+                    type="number"
+                    min="0"
+                    value={settings.maxPledgeAmount}
+                    onChange={e => setSettings(prev => ({ ...prev, maxPledgeAmount: parseFloat(e.target.value) || 0 }))}
+                    className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2"
+                  />
+                  <p className="text-xs text-gray-500 mt-1">Maximum pledge amount per user (0 = unlimited)</p>
+                </div>
+
+                <div>
+                  <label className="block text-sm text-gray-400 mb-1">Haircut Percent (%)</label>
+                  <input
+                    type="number"
+                    min="0"
+                    max="50"
+                    value={settings.haircutPercent}
+                    onChange={e => setSettings(prev => ({ ...prev, haircutPercent: parseFloat(e.target.value) || 0 }))}
+                    className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2"
+                  />
+                  <p className="text-xs text-gray-500 mt-1">Reduction in pledge value for margin calculation (e.g., 10% haircut on ₹50,000 = ₹45,000 usable margin)</p>
+                </div>
+
+                <button
+                  onClick={saveSettings}
+                  disabled={saving}
+                  className="w-full mt-4 px-6 py-3 bg-purple-600 hover:bg-purple-700 rounded font-medium disabled:opacity-50 flex items-center justify-center gap-2"
+                >
+                  {saving ? <RefreshCw className="animate-spin" size={16} /> : <Save size={16} />}
+                  Save Settings
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* Example Calculation */}
+          <div className="mt-6 p-4 bg-dark-700 rounded-lg">
+            <h4 className="font-medium mb-3 text-purple-400">Example Calculation:</h4>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+              <div className="bg-dark-800 p-3 rounded">
+                <p className="text-gray-400 mb-2">User BUYS ₹1,00,000 in Delivery:</p>
+                <ul className="space-y-1 text-gray-300">
+                  <li>• Buy Pledge: {settings.buyPledgePercent}% of ₹1,00,000 = <span className="text-green-400 font-bold">₹{(settings.buyPledgePercent * 1000).toLocaleString()}</span></li>
+                  <li>• Haircut: {settings.haircutPercent}%</li>
+                  <li>• Usable Margin: <span className="text-purple-400 font-bold">₹{((settings.buyPledgePercent * 1000) * (1 - settings.haircutPercent / 100)).toLocaleString()}</span></li>
+                </ul>
+              </div>
+              <div className="bg-dark-800 p-3 rounded">
+                <p className="text-gray-400 mb-2">User SELLS ₹1,00,000 from Delivery:</p>
+                <ul className="space-y-1 text-gray-300">
+                  <li>• Sell Pledge: {settings.sellPledgePercent}% of ₹1,00,000 = <span className="text-green-400 font-bold">₹{(settings.sellPledgePercent * 1000).toLocaleString()}</span></li>
+                  <li>• Added to existing pledge balance</li>
+                  <li>• Can be used for trading any instrument</li>
+                </ul>
+              </div>
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* Users Tab */}
+      {activeTab === 'users' && (
+        <>
+          {/* Search */}
+          <div className="mb-4">
+            <input
+              type="text"
+              placeholder="Search users by name, email, or ID..."
+              value={searchTerm}
+              onChange={e => setSearchTerm(e.target.value)}
+              className="w-full md:w-96 bg-dark-700 border border-dark-600 rounded-lg px-4 py-2"
+            />
+          </div>
+
+          {/* Users Table */}
+          <div className="bg-dark-800 rounded-lg overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead className="bg-dark-700">
+                  <tr>
+                    <th className="text-left px-4 py-3 text-sm font-medium text-gray-400">User</th>
+                    <th className="text-right px-4 py-3 text-sm font-medium text-gray-400">Pledge Balance</th>
+                    <th className="text-right px-4 py-3 text-sm font-medium text-gray-400">Used Margin</th>
+                    <th className="text-right px-4 py-3 text-sm font-medium text-gray-400">Holdings Value</th>
+                    <th className="text-right px-4 py-3 text-sm font-medium text-gray-400">Usable Margin</th>
+                    <th className="text-center px-4 py-3 text-sm font-medium text-gray-400">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-dark-700">
+                  {loading ? (
+                    <tr>
+                      <td colSpan="6" className="text-center py-8 text-gray-400">
+                        <RefreshCw className="animate-spin inline mr-2" size={16} />
+                        Loading users...
+                      </td>
+                    </tr>
+                  ) : filteredUsers.length === 0 ? (
+                    <tr>
+                      <td colSpan="6" className="text-center py-8 text-gray-400">No users found</td>
+                    </tr>
+                  ) : (
+                    filteredUsers.map(user => {
+                      const pledgeBalance = user.deliveryPledge?.balance || 0;
+                      const usedMargin = user.deliveryPledge?.usedMargin || 0;
+                      const holdingsValue = user.deliveryPledge?.holdingsValue || 0;
+                      const usableMargin = (pledgeBalance - usedMargin) * (1 - settings.haircutPercent / 100);
+                      
+                      return (
+                        <tr key={user._id} className="hover:bg-dark-700/50">
+                          <td className="px-4 py-3">
+                            <div>
+                              <p className="font-medium">{user.name}</p>
+                              <p className="text-xs text-gray-500">{user.userId} • {user.email}</p>
+                            </div>
+                          </td>
+                          <td className="px-4 py-3 text-right">
+                            <span className={`font-bold ${pledgeBalance > 0 ? 'text-purple-400' : 'text-gray-500'}`}>
+                              ₹{pledgeBalance.toLocaleString()}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3 text-right">
+                            <span className={`${usedMargin > 0 ? 'text-orange-400' : 'text-gray-500'}`}>
+                              ₹{usedMargin.toLocaleString()}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3 text-right">
+                            <span className="text-blue-400">₹{holdingsValue.toLocaleString()}</span>
+                          </td>
+                          <td className="px-4 py-3 text-right">
+                            <span className={`font-bold ${usableMargin > 0 ? 'text-green-400' : 'text-gray-500'}`}>
+                              ₹{Math.max(0, usableMargin).toLocaleString()}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3 text-center">
+                            <button
+                              onClick={() => setSelectedUser(user)}
+                              className="px-3 py-1 bg-purple-600 hover:bg-purple-700 rounded text-sm"
+                            >
+                              Manage
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* Manage Pledge Modal */}
+      {selectedUser && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
+          <div className="bg-dark-800 rounded-xl w-full max-w-md">
+            <div className="p-4 border-b border-dark-700 flex items-center justify-between">
+              <h3 className="font-bold">Manage Pledge - {selectedUser.name}</h3>
+              <button onClick={() => setSelectedUser(null)} className="text-gray-400 hover:text-white">
+                <X size={20} />
+              </button>
+            </div>
+            <div className="p-4 space-y-4">
+              <div className="bg-dark-700 rounded-lg p-3">
+                <div className="flex justify-between mb-2">
+                  <span className="text-gray-400">Current Balance:</span>
+                  <span className="font-bold text-purple-400">₹{(selectedUser.deliveryPledge?.balance || 0).toLocaleString()}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-gray-400">Used Margin:</span>
+                  <span className="text-orange-400">₹{(selectedUser.deliveryPledge?.usedMargin || 0).toLocaleString()}</span>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm text-gray-400 mb-1">Action</label>
+                <select
+                  value={pledgeAction.type}
+                  onChange={e => setPledgeAction(prev => ({ ...prev, type: e.target.value }))}
+                  className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2"
+                >
+                  <option value="add">Add to Pledge</option>
+                  <option value="deduct">Deduct from Pledge</option>
+                  <option value="set">Set Pledge Balance</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-sm text-gray-400 mb-1">Amount (₹)</label>
+                <input
+                  type="number"
+                  min="0"
+                  value={pledgeAction.amount}
+                  onChange={e => setPledgeAction(prev => ({ ...prev, amount: e.target.value }))}
+                  className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2"
+                />
+              </div>
+
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setSelectedUser(null)}
+                  className="flex-1 px-4 py-2 bg-dark-600 hover:bg-dark-500 rounded"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => updateUserPledge(selectedUser._id, pledgeAction.type, pledgeAction.amount)}
+                  className="flex-1 px-4 py-2 bg-purple-600 hover:bg-purple-700 rounded font-medium"
+                >
+                  {pledgeAction.type === 'add' ? 'Add' : pledgeAction.type === 'deduct' ? 'Deduct' : 'Set'} Pledge
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

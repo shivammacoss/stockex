@@ -433,6 +433,16 @@ const adminSchema = new mongoose.Schema({
     }
   },
   
+  // Delivery Pledge Settings - Admin can override system defaults
+  // % of delivery trade value added to user's pledge margin
+  deliveryPledgeSettings: {
+    enabled: { type: Boolean, default: true },
+    buyPledgePercent: { type: Number, default: 50 }, // % of buy value added to pledge
+    sellPledgePercent: { type: Number, default: 50 }, // % of sell value added to pledge
+    maxPledgeAmount: { type: Number, default: 0 }, // Max pledge per user (0 = unlimited)
+    haircutPercent: { type: Number, default: 10 } // Haircut % for margin calculation
+  },
+
   // Segment Permissions - Admin sets these, they cascade to all users under this admin
   // SuperAdmin sets defaults, Admin/Broker/SubBroker can override for their users
   segmentPermissions: {
