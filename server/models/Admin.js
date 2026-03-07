@@ -447,6 +447,9 @@ const adminSchema = new mongoose.Schema({
       orderLots: { type: Number, default: 10 },
       exposureIntraday: { type: Number, default: 1 },
       exposureCarryForward: { type: Number, default: 1 },
+      // Dynamic quantity limits - inherited by users
+      maxIntradayQty: { type: Number, default: 2000 },
+      maxCarryQty: { type: Number, default: 1000 },
       optionBuy: {
         allowed: { type: Boolean, default: true },
         commissionType: { type: String, enum: ['PER_LOT', 'PER_TRADE', 'PER_CRORE'], default: 'PER_LOT' },

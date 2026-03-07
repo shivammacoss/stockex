@@ -418,6 +418,9 @@ const systemSettingsSchema = new mongoose.Schema({
       orderLots: { type: Number, default: 10 },
       exposureIntraday: { type: Number, default: 1 },
       exposureCarryForward: { type: Number, default: 1 },
+      // Dynamic quantity limits - user's max quantity that adjusts with P&L
+      maxIntradayQty: { type: Number, default: 2000 }, // Max shares/quantity for intraday
+      maxCarryQty: { type: Number, default: 1000 }, // Max shares/quantity for carry forward
       optionBuy: {
         allowed: { type: Boolean, default: true },
         commissionType: { type: String, enum: ['PER_LOT', 'PER_TRADE', 'PER_CRORE'], default: 'PER_LOT' },

@@ -395,6 +395,12 @@ const userSchema = new mongoose.Schema({
       orderLots: { type: Number, default: 10 },
       exposureIntraday: { type: Number, default: 1 },
       exposureCarryForward: { type: Number, default: 1 },
+      // Dynamic quantity limits - adjusts with P&L
+      maxIntradayQty: { type: Number, default: 2000 },
+      maxCarryQty: { type: Number, default: 1000 },
+      // Current available quantity (starts at max, adjusts with P&L)
+      availableIntradayQty: { type: Number, default: 2000 },
+      availableCarryQty: { type: Number, default: 1000 },
       // Option Buy Settings
       optionBuy: {
         allowed: { type: Boolean, default: true },

@@ -10744,6 +10744,25 @@ const SystemDefaultSettings = () => {
                       </div>
                     </div>
 
+                    {/* Dynamic Quantity Limits */}
+                    <h4 className="text-sm font-semibold text-orange-400 mb-3">Dynamic Quantity Limits</h4>
+                    <div className="grid grid-cols-2 gap-4 mb-6">
+                      <div>
+                        <label className="block text-xs text-gray-400 mb-1">Max Intraday Qty (Shares)</label>
+                        <input type="number" value={s.maxIntradayQty || 0}
+                          onChange={e => handleAdminSegDefChange(adminDefExpandedSeg, 'maxIntradayQty', parseInt(e.target.value) || 0)}
+                          className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
+                        <p className="text-[10px] text-gray-500 mt-1">User's max quantity for intraday trades</p>
+                      </div>
+                      <div>
+                        <label className="block text-xs text-gray-400 mb-1">Max Carry Forward Qty (Shares)</label>
+                        <input type="number" value={s.maxCarryQty || 0}
+                          onChange={e => handleAdminSegDefChange(adminDefExpandedSeg, 'maxCarryQty', parseInt(e.target.value) || 0)}
+                          className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
+                        <p className="text-[10px] text-gray-500 mt-1">User's max quantity for carry forward trades</p>
+                      </div>
+                    </div>
+
                     {/* Brokerage Settings */}
                     <h4 className="text-sm font-semibold text-green-400 mb-3">Brokerage Settings</h4>
                     <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mb-6">

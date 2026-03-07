@@ -6284,6 +6284,10 @@ const BuySellModal = ({ instrument, orderType, setOrderType, onClose, walletData
         { value: 'CNC', label: 'Delivery', desc: 'Hold in demat' }
       ];
 
+  // Calculate crypto amounts based on input mode
+  const usdAmountCalc = inputMode === 'usd' ? parseFloat(quantity) || 0 : (parseFloat(quantity) || 0) * ltp;
+  const cryptoUnitsCalc = inputMode === 'usd' ? (ltp > 0 ? usdAmountCalc / ltp : 0) : parseFloat(quantity) || 0;
+
   // Place order handler
   const handlePlaceOrder = async () => {
     if (!user?.token) {
@@ -6296,6 +6300,9 @@ const BuySellModal = ({ instrument, orderType, setOrderType, onClose, walletData
     setSuccess('');
 
     try {
+      // For crypto: use cryptoUnits calculated from USD amount or direct units
+      const cryptoQuantity = isCrypto ? cryptoUnitsCalc : totalQuantity;
+      
       const orderData = {
         symbol: instrument.symbol,
         token: instrument.token,
@@ -6311,7 +6318,7 @@ const BuySellModal = ({ instrument, orderType, setOrderType, onClose, walletData
         productType,
         orderType: orderPriceType,
         side: orderType.toUpperCase(),
-        quantity: totalQuantity,
+        quantity: cryptoQuantity,
         lots: parseFloat(quantity),
         lotSize: lotSize,
         price: ltp,
@@ -6354,17 +6361,19 @@ const BuySellModal = ({ instrument, orderType, setOrderType, onClose, walletData
   // Quick amount buttons for crypto
   const quickAmounts = [50, 100, 250, 500, 1000];
 
-  // Render crypto-specific UI (TradingView style like sample images)
+  // Calculate crypto amounts based on input mode
+  const usdAmount = inputMode === 'usd' ? parseFloat(quantity) || 0 : (parseFloat(quantity) || 0) * ltp;
+  const cryptoUnits = inputMode === 'usd' ? (ltp > 0 ? usdAmount / ltp : 0) : parseFloat(quantity) || 0;
+  const symbolName = instrument?.symbol?.replace('USDT', '') || 'BTC';
+
+  // Render crypto-specific UI (matching XAUUSD sample image exactly)
   if (isCrypto) {
     return (
       <div className="fixed inset-0 bg-black/80 flex items-end md:items-center justify-center z-50">
-        <div className="bg-[#1a1a2e] w-full md:w-[380px] md:rounded-xl rounded-t-xl max-h-[95vh] overflow-y-auto">
+        <div className="bg-[#0d0d0d] w-full md:w-[380px] md:rounded-xl rounded-t-xl max-h-[95vh] overflow-y-auto">
           {/* Header */}
           <div className="flex items-center justify-between p-4 border-b border-gray-800">
-            <div>
-              <h3 className="font-bold text-lg text-white">{instrument?.symbol || 'BTC'} order</h3>
-              <p className="text-xs text-gray-500">BINANCE • CRYPTO</p>
-            </div>
+            <h3 className="font-bold text-lg text-white">{symbolName}USDT order</h3>
             <button onClick={onClose} className="text-gray-400 hover:text-white p-1">
               <X size={20} />
             </button>
@@ -6401,7 +6410,7 @@ const BuySellModal = ({ instrument, orderType, setOrderType, onClose, walletData
               className={`flex-1 py-3 rounded-lg font-bold transition ${
                 orderType === 'sell' 
                   ? 'bg-red-600 text-white' 
-                  : 'bg-[#2a2a3e] text-gray-400 hover:bg-[#3a3a4e]'
+                  : 'bg-[#1a1a1a] text-gray-400 hover:bg-[#252525]'
               }`}
             >
               <div className="text-[10px] uppercase tracking-wide opacity-70">SELL</div>
@@ -6412,7 +6421,7 @@ const BuySellModal = ({ instrument, orderType, setOrderType, onClose, walletData
               className={`flex-1 py-3 rounded-lg font-bold transition ${
                 orderType === 'buy' 
                   ? 'bg-blue-600 text-white' 
-                  : 'bg-[#2a2a3e] text-gray-400 hover:bg-[#3a3a4e]'
+                  : 'bg-[#1a1a1a] text-gray-400 hover:bg-[#252525]'
               }`}
             >
               <div className="text-[10px] uppercase tracking-wide opacity-70">BUY</div>
@@ -6426,8 +6435,8 @@ const BuySellModal = ({ instrument, orderType, setOrderType, onClose, walletData
               onClick={() => setOrderType('sell')}
               className={`flex-1 py-2 rounded border text-sm font-medium transition ${
                 orderType === 'sell'
-                  ? 'border-red-500 text-red-400 bg-red-500/10'
-                  : 'border-gray-700 text-gray-400 hover:border-gray-600'
+                  ? 'border-white text-white'
+                  : 'border-gray-700 text-gray-400 hover:border-gray-500'
               }`}
             >
               Sell Side
@@ -6437,7 +6446,7 @@ const BuySellModal = ({ instrument, orderType, setOrderType, onClose, walletData
               className={`flex-1 py-2 rounded border text-sm font-medium transition ${
                 orderType === 'buy'
                   ? 'border-blue-500 text-blue-400 bg-blue-500/10'
-                  : 'border-gray-700 text-gray-400 hover:border-gray-600'
+                  : 'border-gray-700 text-gray-400 hover:border-gray-500'
               }`}
             >
               Buy Side
@@ -6445,12 +6454,12 @@ const BuySellModal = ({ instrument, orderType, setOrderType, onClose, walletData
           </div>
 
           {/* Volume Input */}
-          <div className="px-3 pb-3">
+          <div className="px-3 pb-2">
             <label className="block text-sm text-gray-400 mb-2">Volume</label>
-            <div className="flex items-center bg-[#2a2a3e] rounded-lg border border-gray-700">
+            <div className="flex items-center bg-[#1a1a1a] rounded-lg border border-gray-700">
               <button 
                 onClick={() => setQuantity((Math.max(0.01, parseFloat(quantity) - 0.01)).toFixed(2))}
-                className="px-4 py-3 text-gray-400 hover:text-white font-bold text-xl"
+                className="px-4 py-3 text-gray-400 hover:text-white font-bold text-xl border-r border-gray-700"
               >
                 −
               </button>
@@ -6458,11 +6467,11 @@ const BuySellModal = ({ instrument, orderType, setOrderType, onClose, walletData
                 type="text"
                 value={quantity}
                 onChange={(e) => setQuantity(e.target.value)}
-                className="flex-1 bg-transparent text-center text-lg font-bold text-white focus:outline-none"
+                className="flex-1 bg-transparent text-center text-lg font-bold text-white focus:outline-none py-3"
               />
               <button 
                 onClick={() => setQuantity((parseFloat(quantity) + 0.01).toFixed(2))}
-                className="px-4 py-3 text-gray-400 hover:text-white font-bold text-xl"
+                className="px-4 py-3 text-gray-400 hover:text-white font-bold text-xl border-l border-gray-700"
               >
                 +
               </button>
@@ -6472,25 +6481,26 @@ const BuySellModal = ({ instrument, orderType, setOrderType, onClose, walletData
 
           {/* Leverage Dropdown */}
           <div className="px-3 pb-3">
-            <div className="flex items-center justify-between mb-2">
-              <label className="text-sm text-gray-400">Leverage (Max: 1:100)</label>
-            </div>
+            <div className="text-sm text-gray-400 mb-2">Leverage (Max: 1:100)</div>
             <div className="flex gap-2">
-              <select
-                value={leverage}
-                onChange={(e) => setLeverage(parseInt(e.target.value))}
-                className="flex-1 bg-[#2a2a3e] border border-gray-700 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-blue-500 appearance-none cursor-pointer"
-              >
-                {leverageOptions.map(lev => (
-                  <option key={lev} value={lev}>1:{lev}</option>
-                ))}
-              </select>
-              <div className="bg-[#2a2a3e] border border-gray-700 rounded-lg px-4 py-3 text-green-400 font-medium min-w-[80px] text-center">
+              <div className="flex-1 relative">
+                <select
+                  value={leverage}
+                  onChange={(e) => setLeverage(parseInt(e.target.value))}
+                  className="w-full bg-[#1a1a1a] border border-gray-700 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-blue-500 appearance-none cursor-pointer"
+                >
+                  {leverageOptions.map(lev => (
+                    <option key={lev} value={lev}>1:{lev}</option>
+                  ))}
+                </select>
+                <ChevronDown size={16} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
+              </div>
+              <div className="bg-[#1a1a1a] border border-gray-700 rounded-lg px-4 py-3 text-green-400 font-medium min-w-[90px] text-center">
                 ${marginRequired.toFixed(2)}
               </div>
             </div>
-            <div className="flex justify-between text-xs text-gray-500 mt-2">
-              <span>Margin Required | Free: ${activeWallet.available.toFixed(2)}</span>
+            <div className="text-xs text-gray-500 mt-2">
+              Margin Required | Free: ${activeWallet.available.toFixed(2)}
             </div>
             <div className="text-xs text-blue-400 mt-1">
               Buying Power: ${buyingPower.toLocaleString()}
@@ -6513,7 +6523,7 @@ const BuySellModal = ({ instrument, orderType, setOrderType, onClose, walletData
                   value={takeProfit}
                   onChange={(e) => setTakeProfit(e.target.value)}
                   placeholder="Enter take profit price"
-                  className="w-full bg-[#2a2a3e] border border-gray-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-green-500"
+                  className="w-full bg-[#1a1a1a] border border-gray-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-green-500"
                 />
               </div>
             )}
@@ -6535,17 +6545,17 @@ const BuySellModal = ({ instrument, orderType, setOrderType, onClose, walletData
                   value={stopLoss}
                   onChange={(e) => setStopLoss(e.target.value)}
                   placeholder="Enter stop loss price"
-                  className="w-full bg-[#2a2a3e] border border-gray-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-red-500"
+                  className="w-full bg-[#1a1a1a] border border-gray-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-red-500"
                 />
               </div>
             )}
           </div>
 
           {/* Trading Charges */}
-          <div className="mx-3 mb-3 bg-[#2a2a3e] rounded-lg p-3">
-            <div className="text-sm text-gray-400 font-medium mb-2">Trading Charges</div>
+          <div className="mx-3 mb-3 bg-[#1a1a1a] rounded-lg p-3">
+            <div className="text-sm text-white font-medium mb-2">Trading Charges</div>
             <div className="flex justify-between text-sm">
-              <span className="text-gray-500">Commission</span>
+              <span className="text-gray-400">Commission</span>
               <span className="text-white">${totalCommission.toFixed(2)} (${commissionPerLot}/lot)</span>
             </div>
           </div>
@@ -6577,18 +6587,17 @@ const BuySellModal = ({ instrument, orderType, setOrderType, onClose, walletData
               disabled={loading || marginRequired > activeWallet.available}
               className={`w-full py-4 rounded-lg font-bold text-lg transition ${
                 orderType === 'buy' 
-                  ? 'bg-blue-600 hover:bg-blue-700 disabled:bg-blue-800 disabled:opacity-50' 
-                  : 'bg-red-600 hover:bg-red-700 disabled:bg-red-800 disabled:opacity-50'
+                  ? 'bg-blue-600 hover:bg-blue-700 disabled:bg-gray-700 disabled:opacity-50' 
+                  : 'bg-red-600 hover:bg-red-700 disabled:bg-gray-700 disabled:opacity-50'
               }`}
             >
               {loading ? 'Placing Order...' : `Open ${orderType.toUpperCase()} Order`}
             </button>
           </div>
 
-          {/* Order Summary */}
-          <div className="px-3 pb-3 text-center text-xs text-gray-500">
+          {/* Footer Info */}
+          <div className="px-3 pb-4 text-center text-xs text-gray-500">
             <div>{quantity} lots @ {ltp?.toLocaleString()}</div>
-            <div className="mt-1 text-gray-600">Standard • {Date.now()} • <span className="text-green-400">●</span> Live</div>
           </div>
         </div>
       </div>

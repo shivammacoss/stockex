@@ -512,6 +512,24 @@ class TradingService {
       console.log('Crypto trade:', { quantity: totalQuantity, price: orderData.price, cryptoAmount: orderData.cryptoAmount });
     }
 
+    // Dynamic Quantity Limit Check - validate user has enough available quantity
+    if (!isCryptoTrade && segmentSettings) {
+      const isIntraday = orderData.productType === 'MIS' || orderData.productType === 'INTRADAY';
+      const maxQty = isIntraday 
+        ? (segmentSettings.maxIntradayQty || 2000) 
+        : (segmentSettings.maxCarryQty || 1000);
+      const availableQty = isIntraday 
+        ? (segmentSettings.availableIntradayQty ?? maxQty) 
+        : (segmentSettings.availableCarryQty ?? maxQty);
+      
+      if (totalQuantity > availableQty) {
+        const qtyType = isIntraday ? 'Intraday' : 'Carry Forward';
+        throw new Error(`Insufficient ${qtyType} quantity limit. Available: ${availableQty}, Requested: ${totalQuantity}. Max allowed: ${maxQty}`);
+      }
+      
+      console.log(`Dynamic Qty Check: ${orderData.segment} ${orderData.productType} - Requested: ${totalQuantity}, Available: ${availableQty}, Max: ${maxQty}`);
+    }
+
     // Calculate spread from user's script settings
     const spreadPoints = TradeService.calculateUserSpread(scriptSettings, orderData.side);
     
@@ -789,6 +807,25 @@ class TradingService {
       updateFields['mcxWallet.usedMargin'] = newMcxUsedMargin;
     }
     
+    // Deduct available quantity when opening a position (non-crypto only)
+    if (!isCrypto && segmentSettings) {
+      const segment = orderData.segment || 'NSEFUT';
+      const isIntradayOrder = orderData.productType === 'MIS' || orderData.productType === 'INTRADAY';
+      const maxQty = isIntradayOrder 
+        ? (segmentSettings.maxIntradayQty || 2000) 
+        : (segmentSettings.maxCarryQty || 1000);
+      const currentAvailableQty = isIntradayOrder 
+        ? (segmentSettings.availableIntradayQty ?? maxQty) 
+        : (segmentSettings.availableCarryQty ?? maxQty);
+      
+      // Deduct the traded quantity from available
+      const newAvailableQty = Math.max(0, currentAvailableQty - totalQuantity);
+      const qtyField = isIntradayOrder ? 'availableIntradayQty' : 'availableCarryQty';
+      updateFields[`segmentPermissions.${segment}.${qtyField}`] = newAvailableQty;
+      
+      console.log(`Dynamic Qty Deduct: ${segment} ${orderData.productType} - Qty: ${totalQuantity}, Available: ${currentAvailableQty} -> ${newAvailableQty}`);
+    }
+    
     await User.updateOne(
       { _id: user._id },
       { $set: updateFields }
@@ -1024,6 +1061,43 @@ class TradingService {
       updateFields['mcxWallet.realizedPnL'] = newMcxRealizedPnL;
     }
     
+    // Dynamic Quantity Adjustment based on P&L
+    // When user profits: add profit to available quantity (capped at max)
+    // When user has loss: reduce available quantity
+    const segment = trade.segment || 'NSEFUT';
+    const productType = trade.productType || 'MIS';
+    const isIntraday = productType === 'MIS';
+    
+    // Get user's segment permissions
+    const segmentPerms = user.segmentPermissions?.get(segment);
+    if (segmentPerms) {
+      const maxQty = isIntraday ? (segmentPerms.maxIntradayQty || 2000) : (segmentPerms.maxCarryQty || 1000);
+      const currentAvailableQty = isIntraday 
+        ? (segmentPerms.availableIntradayQty || maxQty) 
+        : (segmentPerms.availableCarryQty || maxQty);
+      
+      // Adjust available quantity based on P&L
+      // Profit: add back the traded quantity (user can trade more)
+      // Loss: deduct the P&L amount (absolute value) from available qty
+      // Example: Max 2000, traded 1000, loss -800 => Available = 2000 - 800 = 1200
+      let newAvailableQty;
+      if (netPnL >= 0) {
+        // Profit: add back the traded quantity (user can trade more)
+        newAvailableQty = Math.min(maxQty, currentAvailableQty + trade.quantity);
+      } else {
+        // Loss: deduct the P&L amount (absolute value) from available qty
+        // netPnL is negative, so Math.abs(netPnL) gives the loss amount
+        const lossAmount = Math.abs(netPnL);
+        newAvailableQty = Math.max(0, currentAvailableQty - lossAmount);
+      }
+      
+      // Update the segment permission with new available quantity
+      const qtyField = isIntraday ? 'availableIntradayQty' : 'availableCarryQty';
+      updateFields[`segmentPermissions.${segment}.${qtyField}`] = newAvailableQty;
+      
+      console.log(`Dynamic Qty Adjustment: ${segment} ${productType} - P&L: ${netPnL}, Qty: ${trade.quantity}, Available: ${currentAvailableQty} -> ${newAvailableQty} (Max: ${maxQty})`);
+    }
+
     await User.updateOne(
       { _id: user._id },
       { $set: updateFields }
