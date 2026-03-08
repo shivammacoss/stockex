@@ -227,6 +227,35 @@ router.post('/admins', protectAdmin, async (req, res) => {
       return res.status(400).json({ message: 'Sub-broker must be created under a Broker. Please select a parent broker.' });
     }
     
+    // Check restrict mode for broker/sub-broker limits
+    if (actualParent.restrictMode?.enabled && actualParent.role !== 'SUPER_ADMIN') {
+      if (roleToCreate === 'BROKER') {
+        const currentBrokerCount = await Admin.countDocuments({ parentId: actualParent._id, role: 'BROKER' });
+        const maxBrokers = actualParent.restrictMode.maxBrokers || 10;
+        
+        if (currentBrokerCount >= maxBrokers) {
+          return res.status(403).json({ 
+            message: `Broker limit reached for ${actualParent.username}. Maximum ${maxBrokers} brokers allowed. Current: ${currentBrokerCount}`,
+            restrictMode: true,
+            currentBrokers: currentBrokerCount,
+            maxBrokers: maxBrokers
+          });
+        }
+      } else if (roleToCreate === 'SUB_BROKER') {
+        const currentSubBrokerCount = await Admin.countDocuments({ parentId: actualParent._id, role: 'SUB_BROKER' });
+        const maxSubBrokers = actualParent.restrictMode.maxSubBrokers || 20;
+        
+        if (currentSubBrokerCount >= maxSubBrokers) {
+          return res.status(403).json({ 
+            message: `Sub-broker limit reached for ${actualParent.username}. Maximum ${maxSubBrokers} sub-brokers allowed. Current: ${currentSubBrokerCount}`,
+            restrictMode: true,
+            currentSubBrokers: currentSubBrokerCount,
+            maxSubBrokers: maxSubBrokers
+          });
+        }
+      }
+    }
+    
     // Build hierarchy path based on actual parent
     const hierarchyPath = [...(actualParent.hierarchyPath || []), actualParent._id];
     
@@ -861,6 +890,21 @@ router.post('/create-user', protectAdmin, superAdminOnly, async (req, res) => {
       if (!targetAdmin) {
         return res.status(400).json({ message: 'Invalid admin code' });
       }
+      
+      // Check restrict mode for target admin
+      if (targetAdmin.restrictMode?.enabled) {
+        const currentUserCount = await User.countDocuments({ admin: targetAdmin._id });
+        const maxUsers = targetAdmin.restrictMode.maxUsers || 100;
+        
+        if (currentUserCount >= maxUsers) {
+          return res.status(403).json({ 
+            message: `User limit reached for ${targetAdmin.username}. Maximum ${maxUsers} users allowed. Current: ${currentUserCount}`,
+            restrictMode: true,
+            currentUsers: currentUserCount,
+            maxUsers: maxUsers
+          });
+        }
+      }
     }
     
     // Inherit segmentPermissions and scriptSettings from the target admin
@@ -1452,6 +1496,21 @@ router.post('/users', protectAdmin, async (req, res) => {
       isActivated, isReadOnly, isDemo, intradaySquare, blockLimitAboveBelowHighLow, blockLimitBetweenHighLow
     } = req.body;
     
+    // Check restrict mode - if enabled, verify user limit not exceeded
+    if (req.admin.restrictMode?.enabled && req.admin.role !== 'SUPER_ADMIN') {
+      const currentUserCount = await User.countDocuments({ admin: req.admin._id });
+      const maxUsers = req.admin.restrictMode.maxUsers || 100;
+      
+      if (currentUserCount >= maxUsers) {
+        return res.status(403).json({ 
+          message: `User limit reached. Maximum ${maxUsers} users allowed. Current: ${currentUserCount}`,
+          restrictMode: true,
+          currentUsers: currentUserCount,
+          maxUsers: maxUsers
+        });
+      }
+    }
+    
     // Check if user exists
     const exists = await User.findOne({ $or: [{ email }, { username }] });
     if (exists) {
@@ -1498,6 +1557,10 @@ router.post('/users', protectAdmin, async (req, res) => {
       }
     }
     
+    // If creator is a demo broker, user should also be demo user
+    const isDemoUser = req.admin.isDemo === true || isDemo || false;
+    const demoExpiresAt = isDemoUser ? (req.admin.demoExpiresAt || new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)) : null;
+    
     const user = await User.create({
       adminCode: req.admin.adminCode,
       admin: req.admin._id,
@@ -1515,6 +1578,9 @@ router.post('/users', protectAdmin, async (req, res) => {
         blocked: 0
       },
       isActive: isActivated !== false,
+      isDemo: isDemoUser,
+      demoExpiresAt: demoExpiresAt,
+      demoCreatedAt: isDemoUser ? new Date() : null,
       settings: {
         marginType: marginType || 'exposure',
         ledgerBalanceClosePercent: ledgerBalanceClosePercent || 90,
@@ -1522,7 +1588,7 @@ router.post('/users', protectAdmin, async (req, res) => {
         lossTradeHoldSeconds: lossTradeHoldSeconds || 0,
         isActivated: isActivated !== false,
         isReadOnly: isReadOnly || false,
-        isDemo: isDemo || false,
+        isDemo: isDemoUser,
         intradaySquare: intradaySquare || false,
         blockLimitAboveBelowHighLow: blockLimitAboveBelowHighLow || false,
         blockLimitBetweenHighLow: blockLimitBetweenHighLow || false
@@ -2879,6 +2945,131 @@ router.put('/admins/:id/role', protectAdmin, superAdminOnly, async (req, res) =>
         role: admin.role,
         hierarchyLevel: admin.hierarchyLevel
       }
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// ==================== RESTRICT MODE MANAGEMENT ====================
+
+// Update restrict mode settings for admin (Super Admin only)
+// Allows Super Admin to limit max users under Admin/Broker/SubBroker
+router.put('/admins/:id/restrict-mode', protectAdmin, superAdminOnly, async (req, res) => {
+  try {
+    const { enabled, maxUsers, maxBrokers, maxSubBrokers } = req.body;
+    
+    const admin = await Admin.findById(req.params.id);
+    if (!admin) return res.status(404).json({ message: 'Admin not found' });
+    if (admin.role === 'SUPER_ADMIN') return res.status(403).json({ message: 'Cannot set restrict mode for Super Admin' });
+    
+    // Update restrict mode settings
+    if (typeof enabled === 'boolean') {
+      admin.restrictMode.enabled = enabled;
+    }
+    if (typeof maxUsers === 'number' && maxUsers >= 0) {
+      admin.restrictMode.maxUsers = maxUsers;
+    }
+    if (typeof maxBrokers === 'number' && maxBrokers >= 0 && admin.role === 'ADMIN') {
+      admin.restrictMode.maxBrokers = maxBrokers;
+    }
+    if (typeof maxSubBrokers === 'number' && maxSubBrokers >= 0 && (admin.role === 'ADMIN' || admin.role === 'BROKER')) {
+      admin.restrictMode.maxSubBrokers = maxSubBrokers;
+    }
+    
+    admin.markModified('restrictMode');
+    await admin.save();
+    
+    res.json({ 
+      message: `Restrict mode ${admin.restrictMode.enabled ? 'enabled' : 'disabled'} for ${admin.username}`,
+      restrictMode: admin.restrictMode,
+      admin: {
+        _id: admin._id,
+        username: admin.username,
+        name: admin.name,
+        role: admin.role
+      }
+    });
+  } catch (error) {
+    console.error('Restrict mode update error:', error);
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Get restrict mode status for an admin
+router.get('/admins/:id/restrict-mode', protectAdmin, async (req, res) => {
+  try {
+    const admin = await Admin.findById(req.params.id).select('restrictMode username name role stats');
+    if (!admin) return res.status(404).json({ message: 'Admin not found' });
+    
+    // Get actual user count under this admin
+    const actualUserCount = await User.countDocuments({ admin: admin._id });
+    
+    // Get actual broker/sub-broker count if applicable
+    let actualBrokerCount = 0;
+    let actualSubBrokerCount = 0;
+    
+    if (admin.role === 'ADMIN') {
+      actualBrokerCount = await Admin.countDocuments({ parentId: admin._id, role: 'BROKER' });
+      actualSubBrokerCount = await Admin.countDocuments({ parentId: admin._id, role: 'SUB_BROKER' });
+    } else if (admin.role === 'BROKER') {
+      actualSubBrokerCount = await Admin.countDocuments({ parentId: admin._id, role: 'SUB_BROKER' });
+    }
+    
+    // Handle case when restrictMode is undefined (for older admins)
+    const restrictModeData = admin.restrictMode || {
+      enabled: false,
+      maxUsers: 100,
+      maxBrokers: 10,
+      maxSubBrokers: 20
+    };
+    
+    res.json({
+      restrictMode: {
+        enabled: restrictModeData.enabled || false,
+        maxUsers: restrictModeData.maxUsers || 100,
+        maxBrokers: restrictModeData.maxBrokers || 10,
+        maxSubBrokers: restrictModeData.maxSubBrokers || 20,
+        currentUsers: actualUserCount,
+        currentBrokers: actualBrokerCount,
+        currentSubBrokers: actualSubBrokerCount
+      },
+      admin: {
+        _id: admin._id,
+        username: admin.username,
+        name: admin.name,
+        role: admin.role
+      }
+    });
+  } catch (error) {
+    console.error('Get restrict mode error:', error);
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Bulk update restrict mode for multiple admins (Super Admin only)
+router.put('/admins/bulk/restrict-mode', protectAdmin, superAdminOnly, async (req, res) => {
+  try {
+    const { adminIds, enabled, maxUsers, maxBrokers, maxSubBrokers } = req.body;
+    
+    if (!Array.isArray(adminIds) || adminIds.length === 0) {
+      return res.status(400).json({ message: 'Please provide admin IDs' });
+    }
+    
+    const updateData = {};
+    if (typeof enabled === 'boolean') updateData['restrictMode.enabled'] = enabled;
+    if (typeof maxUsers === 'number' && maxUsers >= 0) updateData['restrictMode.maxUsers'] = maxUsers;
+    if (typeof maxBrokers === 'number' && maxBrokers >= 0) updateData['restrictMode.maxBrokers'] = maxBrokers;
+    if (typeof maxSubBrokers === 'number' && maxSubBrokers >= 0) updateData['restrictMode.maxSubBrokers'] = maxSubBrokers;
+    
+    const result = await Admin.updateMany(
+      { _id: { $in: adminIds }, role: { $ne: 'SUPER_ADMIN' } },
+      { $set: updateData }
+    );
+    
+    res.json({ 
+      message: `Restrict mode updated for ${result.modifiedCount} admin(s)`,
+      modifiedCount: result.modifiedCount
     });
   } catch (error) {
     res.status(500).json({ message: error.message });

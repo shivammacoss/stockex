@@ -8,7 +8,7 @@ import {
   Key, Wallet, Eye, EyeOff, X, ArrowUpCircle, ArrowDownCircle,
   RefreshCw, Menu, Shield, CreditCard, FileText, BarChart3, Building2, Settings, UserPlus, Copy,
   ChevronLeft, ChevronRight, ArrowRightLeft, Layers, Save, DollarSign, Bell, Award, Star, CheckCircle,
-  Gamepad2, Trophy, Target, Hash, Bitcoin, Clock, Percent, AlertTriangle, Gift, Zap, Coins, Lock
+  Gamepad2, Trophy, Target, Hash, Bitcoin, Clock, Percent, AlertTriangle, Gift, Zap, Coins, Lock, Play
 } from 'lucide-react';
 
 // Reusable Pagination Component
@@ -200,6 +200,7 @@ const AdminDashboard = () => {
       return [
         ...baseItems,
         { path: `${basePath}/admins`, icon: Shield, label: 'Hierarchy Management' },
+        { path: `${basePath}/demo-brokers`, icon: Play, label: 'Demo Brokers' },
         { path: `${basePath}/all-users`, icon: Users, label: 'All Users' },
         { path: `${basePath}/trading`, icon: TrendingUp, label: 'Market Watch' },
         { path: `${basePath}/all-trades`, icon: FileText, label: 'All Position' },
@@ -241,19 +242,20 @@ const AdminDashboard = () => {
     }
     
     if (isBroker) {
+      const isDemo = admin?.isDemo;
       return [
         ...baseItems,
-        { path: `${basePath}/wallet`, icon: Wallet, label: 'My Wallet' },
-        { path: `${basePath}/admins`, icon: Shield, label: 'Sub Brokers' },
-        { path: `${basePath}/subordinate-fund-requests`, icon: CreditCard, label: 'SubBroker Requests' },
-        { path: `${basePath}/users`, icon: Users, label: 'User Management' },
-        { path: `${basePath}/create-user`, icon: UserPlus, label: 'Create User' },
+        { path: `${basePath}/wallet`, icon: Wallet, label: isDemo ? 'Demo Wallet' : 'My Wallet' },
+        { path: `${basePath}/admins`, icon: Shield, label: isDemo ? 'Demo Sub Brokers' : 'Sub Brokers' },
+        { path: `${basePath}/subordinate-fund-requests`, icon: CreditCard, label: isDemo ? 'Demo SubBroker Requests' : 'SubBroker Requests' },
+        { path: `${basePath}/users`, icon: Users, label: isDemo ? 'Demo User Management' : 'User Management' },
+        { path: `${basePath}/create-user`, icon: UserPlus, label: isDemo ? 'Create Demo User' : 'Create User' },
         { path: `${basePath}/trading`, icon: TrendingUp, label: 'Market Watch' },
-        { path: `${basePath}/trades`, icon: FileText, label: 'Position' },
-        { path: `${basePath}/net-positions`, icon: Layers, label: 'Net Positions' },
-        { path: `${basePath}/fund-requests`, icon: CreditCard, label: 'User Fund Requests' },
+        { path: `${basePath}/trades`, icon: FileText, label: isDemo ? 'Demo Position' : 'Position' },
+        { path: `${basePath}/net-positions`, icon: Layers, label: isDemo ? 'Demo Net Positions' : 'Net Positions' },
+        { path: `${basePath}/fund-requests`, icon: CreditCard, label: isDemo ? 'Demo Fund Requests' : 'User Fund Requests' },
         { path: `${basePath}/bank-accounts`, icon: Building2, label: 'Bank Accounts' },
-        { path: `${basePath}/ledger`, icon: FileText, label: 'Transactions' },
+        { path: `${basePath}/ledger`, icon: FileText, label: isDemo ? 'Demo Transactions' : 'Transactions' },
         { path: `${basePath}/my-settings`, icon: Layers, label: 'My Settings' },
         { path: `${basePath}/profile`, icon: Settings, label: 'Profile' },
       ];
@@ -340,22 +342,27 @@ const AdminDashboard = () => {
           <Link to="/" className="flex items-center gap-2">
             <span className="text-xl font-bold">stockex</span>
           </Link>
-          <p className={`text-xs mt-1 ${isSuperAdmin ? 'text-yellow-400' : 'text-purple-400'}`}>
-            {isSuperAdmin ? 'Super Admin Panel' : 'Admin Panel'}
+          <p className={`text-xs mt-1 ${isSuperAdmin ? 'text-yellow-400' : admin?.isDemo ? 'text-green-400' : 'text-purple-400'}`}>
+            {isSuperAdmin ? 'Super Admin Panel' : admin?.isDemo ? 'Demo Broker Panel' : 'Admin Panel'}
           </p>
         </div>
 
         {/* Admin Info */}
         {!isSuperAdmin && admin?.adminCode && (
-          <div className="px-4 py-3 border-b border-dark-600 bg-dark-700/50">
-            <div className="text-xs text-gray-400">Your Admin Code</div>
-            <div className="text-lg font-mono font-bold text-purple-400">{admin.adminCode}</div>
+          <div className={`px-4 py-3 border-b border-dark-600 ${admin?.isDemo ? 'bg-green-900/20' : 'bg-dark-700/50'}`}>
+            <div className="text-xs text-gray-400">{admin?.isDemo ? 'Your Demo Broker Code' : 'Your Admin Code'}</div>
+            <div className={`text-lg font-mono font-bold ${admin?.isDemo ? 'text-green-400' : 'text-purple-400'}`}>{admin.adminCode}</div>
             <div className={`text-xs mt-1 ${getRoleColor()}`}>
-              Role: {getRoleDisplayName()}
+              Role: {admin?.isDemo ? 'Demo Broker' : getRoleDisplayName()}
             </div>
             <div className="text-xs text-gray-500 mt-1">
               Wallet: ₹{walletBalance.toLocaleString()}
             </div>
+            {admin?.isDemo && admin?.demoExpiresAt && (
+              <div className="text-xs text-yellow-400 mt-1">
+                ⏰ Expires: {new Date(admin.demoExpiresAt).toLocaleDateString()}
+              </div>
+            )}
           </div>
         )}
 
@@ -397,6 +404,7 @@ const AdminDashboard = () => {
           <Route path="dashboard" element={isSuperAdmin ? <SuperAdminDashboard /> : <AdminDashboardHome />} />
           {/* Super Admin Only Routes */}
           {isSuperAdmin && <Route path="admins/*" element={<AdminManagement />} />}
+          {isSuperAdmin && <Route path="demo-brokers" element={<DemoBrokersManagement />} />}
           {isSuperAdmin && <Route path="all-users" element={<AllUsersManagement />} />}
           {isSuperAdmin && <Route path="all-trades" element={<SuperAdminAllTrades />} />}
           {isSuperAdmin && <Route path="all-fund-requests" element={<SuperAdminAllFundRequests />} />}
@@ -969,6 +977,7 @@ const AdminManagement = () => {
   const [showPasswordModal, setShowPasswordModal] = useState(false);
   const [showChargesModal, setShowChargesModal] = useState(false);
   const [showRoleModal, setShowRoleModal] = useState(false);
+  const [showRestrictModal, setShowRestrictModal] = useState(false);
   const [showUsersModal, setShowUsersModal] = useState(false);
   const [adminUsers, setAdminUsers] = useState([]);
   const [loadingUsers, setLoadingUsers] = useState(false);
@@ -1023,7 +1032,7 @@ const AdminManagement = () => {
   const getTitle = () => {
     if (isSuperAdmin) return 'Hierarchy Management';
     if (isAdmin) return 'Broker / Sub Broker Management';
-    if (isBroker) return 'Sub Broker Management';
+    if (isBroker) return admin?.isDemo ? 'Demo Sub Broker Management' : 'Sub Broker Management';
     return 'Management';
   };
   
@@ -1031,7 +1040,7 @@ const AdminManagement = () => {
   const getCreateLabel = () => {
     if (isSuperAdmin) return 'Create Admin/Broker/SubBroker';
     if (isAdmin) return 'Create Broker/SubBroker';
-    if (isBroker) return 'Create Sub Broker';
+    if (isBroker) return admin?.isDemo ? 'Create Demo Sub Broker' : 'Create Sub Broker';
     return 'Create';
   };
 
@@ -1274,12 +1283,23 @@ const AdminManagement = () => {
                   </div>
                   <div className="text-center">
                     <div className="text-xs text-gray-400">Users</div>
-                    <div className="text-lg font-bold">{adm.stats?.totalUsers || adm.userCount || 0}</div>
+                    <div className={`text-lg font-bold ${adm.restrictMode?.enabled ? (adm.stats?.totalUsers >= adm.restrictMode?.maxUsers ? 'text-red-400' : 'text-yellow-400') : ''}`}>
+                      {adm.stats?.totalUsers || adm.userCount || 0}
+                      {adm.restrictMode?.enabled && <span className="text-xs text-gray-500">/{adm.restrictMode.maxUsers}</span>}
+                    </div>
                   </div>
                   <div className="text-center">
                     <div className="text-xs text-gray-400">Brokerage</div>
                     <div className="text-lg font-bold">₹{adm.charges?.brokerage || 20}</div>
                   </div>
+                  {adm.restrictMode?.enabled && (
+                    <div className="text-center">
+                      <div className="text-xs text-gray-400">Limit</div>
+                      <div className="text-lg font-bold text-red-400 flex items-center gap-1">
+                        <Lock size={14} /> ON
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 {/* Actions */}
@@ -1320,6 +1340,19 @@ const AdminManagement = () => {
                       className="px-3 py-2 bg-orange-600 hover:bg-orange-700 rounded text-sm flex items-center gap-1"
                     >
                       <Shield size={16} /> Role
+                    </button>
+                  )}
+                  {isSuperAdmin && (
+                    <button
+                      onClick={() => { setSelectedAdmin(adm); setShowRestrictModal(true); }}
+                      className={`px-3 py-2 rounded text-sm flex items-center gap-1 ${
+                        adm.restrictMode?.enabled 
+                          ? 'bg-red-600 hover:bg-red-700' 
+                          : 'bg-gray-600 hover:bg-gray-700'
+                      }`}
+                      title="Set user/broker limits"
+                    >
+                      <Lock size={16} /> Limits
                     </button>
                   )}
                   {isSuperAdmin && (
@@ -1550,6 +1583,235 @@ const AdminManagement = () => {
           </div>
         </div>
       )}
+
+      {/* Restrict Mode Modal - Super Admin Only */}
+      {showRestrictModal && selectedAdmin && isSuperAdmin && (
+        <RestrictModeModal
+          admin={selectedAdmin}
+          token={admin.token}
+          onClose={() => { setShowRestrictModal(false); setSelectedAdmin(null); }}
+          onSuccess={() => { fetchAdmins(); }}
+        />
+      )}
+    </div>
+  );
+};
+
+// Restrict Mode Modal - Set user/broker limits for an admin
+const RestrictModeModal = ({ admin: targetAdmin, token, onClose, onSuccess }) => {
+  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [restrictData, setRestrictData] = useState({
+    enabled: targetAdmin.restrictMode?.enabled || false,
+    maxUsers: targetAdmin.restrictMode?.maxUsers || 100,
+    maxBrokers: targetAdmin.restrictMode?.maxBrokers || 10,
+    maxSubBrokers: targetAdmin.restrictMode?.maxSubBrokers || 20,
+    currentUsers: 0,
+    currentBrokers: 0,
+    currentSubBrokers: 0
+  });
+
+  useEffect(() => {
+    fetchRestrictMode();
+  }, []);
+
+  const fetchRestrictMode = async () => {
+    setLoading(true);
+    try {
+      const { data } = await axios.get(`/api/admin/manage/admins/${targetAdmin._id}/restrict-mode`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      setRestrictData({
+        enabled: data.restrictMode.enabled,
+        maxUsers: data.restrictMode.maxUsers,
+        maxBrokers: data.restrictMode.maxBrokers,
+        maxSubBrokers: data.restrictMode.maxSubBrokers,
+        currentUsers: data.restrictMode.currentUsers,
+        currentBrokers: data.restrictMode.currentBrokers,
+        currentSubBrokers: data.restrictMode.currentSubBrokers
+      });
+    } catch (error) {
+      console.error('Error fetching restrict mode:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      await axios.put(`/api/admin/manage/admins/${targetAdmin._id}/restrict-mode`, {
+        enabled: restrictData.enabled,
+        maxUsers: restrictData.maxUsers,
+        maxBrokers: restrictData.maxBrokers,
+        maxSubBrokers: restrictData.maxSubBrokers
+      }, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      alert(`Restrict mode ${restrictData.enabled ? 'enabled' : 'disabled'} successfully!`);
+      onSuccess();
+      onClose();
+    } catch (error) {
+      alert(error.response?.data?.message || 'Error updating restrict mode');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const getRoleLabel = (role) => {
+    switch(role) {
+      case 'ADMIN': return 'Admin';
+      case 'BROKER': return 'Broker';
+      case 'SUB_BROKER': return 'Sub Broker';
+      default: return role;
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+      <div className="bg-dark-800 rounded-lg p-6 w-full max-w-lg">
+        <div className="flex justify-between items-center mb-4">
+          <div>
+            <h2 className="text-xl font-bold flex items-center gap-2">
+              <Lock size={20} className="text-red-400" />
+              Restrict Mode
+            </h2>
+            <p className="text-sm text-gray-400 mt-1">
+              Set limits for {targetAdmin.name || targetAdmin.username} ({getRoleLabel(targetAdmin.role)})
+            </p>
+          </div>
+          <button onClick={onClose} className="text-gray-400 hover:text-white">
+            <X size={24} />
+          </button>
+        </div>
+
+        {loading ? (
+          <div className="text-center py-8"><RefreshCw className="animate-spin inline" size={24} /></div>
+        ) : (
+          <div className="space-y-6">
+            {/* Enable/Disable Toggle */}
+            <div className="flex items-center justify-between p-4 bg-dark-700 rounded-lg">
+              <div>
+                <div className="font-medium">Enable Restrict Mode</div>
+                <div className="text-sm text-gray-400">Limit users and subordinates under this {getRoleLabel(targetAdmin.role).toLowerCase()}</div>
+              </div>
+              <button
+                onClick={() => setRestrictData(prev => ({ ...prev, enabled: !prev.enabled }))}
+                className={`w-14 h-7 rounded-full transition-colors ${restrictData.enabled ? 'bg-red-600' : 'bg-dark-500'}`}
+              >
+                <div className={`w-5 h-5 bg-white rounded-full transition-transform mx-1 ${restrictData.enabled ? 'translate-x-7' : ''}`} />
+              </button>
+            </div>
+
+            {restrictData.enabled && (
+              <>
+                {/* Max Users */}
+                <div className="p-4 bg-dark-700 rounded-lg">
+                  <div className="flex items-center justify-between mb-2">
+                    <label className="font-medium flex items-center gap-2">
+                      <Users size={18} className="text-blue-400" />
+                      Max Users
+                    </label>
+                    <span className={`text-sm px-2 py-1 rounded ${
+                      restrictData.currentUsers >= restrictData.maxUsers 
+                        ? 'bg-red-500/20 text-red-400' 
+                        : 'bg-green-500/20 text-green-400'
+                    }`}>
+                      {restrictData.currentUsers} / {restrictData.maxUsers}
+                    </span>
+                  </div>
+                  <input
+                    type="number"
+                    value={restrictData.maxUsers}
+                    onChange={(e) => setRestrictData(prev => ({ ...prev, maxUsers: parseInt(e.target.value) || 0 }))}
+                    className="w-full bg-dark-600 border border-dark-500 rounded-lg px-4 py-2 focus:outline-none focus:border-blue-500"
+                    min="0"
+                  />
+                  <p className="text-xs text-gray-500 mt-1">Maximum users allowed under this {getRoleLabel(targetAdmin.role).toLowerCase()}</p>
+                </div>
+
+                {/* Max Brokers (only for ADMIN) */}
+                {targetAdmin.role === 'ADMIN' && (
+                  <div className="p-4 bg-dark-700 rounded-lg">
+                    <div className="flex items-center justify-between mb-2">
+                      <label className="font-medium flex items-center gap-2">
+                        <Shield size={18} className="text-cyan-400" />
+                        Max Brokers
+                      </label>
+                      <span className={`text-sm px-2 py-1 rounded ${
+                        restrictData.currentBrokers >= restrictData.maxBrokers 
+                          ? 'bg-red-500/20 text-red-400' 
+                          : 'bg-green-500/20 text-green-400'
+                      }`}>
+                        {restrictData.currentBrokers} / {restrictData.maxBrokers}
+                      </span>
+                    </div>
+                    <input
+                      type="number"
+                      value={restrictData.maxBrokers}
+                      onChange={(e) => setRestrictData(prev => ({ ...prev, maxBrokers: parseInt(e.target.value) || 0 }))}
+                      className="w-full bg-dark-600 border border-dark-500 rounded-lg px-4 py-2 focus:outline-none focus:border-cyan-500"
+                      min="0"
+                    />
+                    <p className="text-xs text-gray-500 mt-1">Maximum brokers this admin can create</p>
+                  </div>
+                )}
+
+                {/* Max Sub-Brokers (for ADMIN and BROKER) */}
+                {(targetAdmin.role === 'ADMIN' || targetAdmin.role === 'BROKER') && (
+                  <div className="p-4 bg-dark-700 rounded-lg">
+                    <div className="flex items-center justify-between mb-2">
+                      <label className="font-medium flex items-center gap-2">
+                        <UserPlus size={18} className="text-green-400" />
+                        Max Sub-Brokers
+                      </label>
+                      <span className={`text-sm px-2 py-1 rounded ${
+                        restrictData.currentSubBrokers >= restrictData.maxSubBrokers 
+                          ? 'bg-red-500/20 text-red-400' 
+                          : 'bg-green-500/20 text-green-400'
+                      }`}>
+                        {restrictData.currentSubBrokers} / {restrictData.maxSubBrokers}
+                      </span>
+                    </div>
+                    <input
+                      type="number"
+                      value={restrictData.maxSubBrokers}
+                      onChange={(e) => setRestrictData(prev => ({ ...prev, maxSubBrokers: parseInt(e.target.value) || 0 }))}
+                      className="w-full bg-dark-600 border border-dark-500 rounded-lg px-4 py-2 focus:outline-none focus:border-green-500"
+                      min="0"
+                    />
+                    <p className="text-xs text-gray-500 mt-1">Maximum sub-brokers allowed</p>
+                  </div>
+                )}
+              </>
+            )}
+
+            {/* Warning */}
+            <div className="p-3 bg-yellow-500/10 border border-yellow-500/30 rounded-lg">
+              <p className="text-xs text-yellow-400">
+                ⚠️ When restrict mode is enabled, this {getRoleLabel(targetAdmin.role).toLowerCase()} cannot create more users/subordinates beyond the set limits.
+              </p>
+            </div>
+
+            {/* Actions */}
+            <div className="flex gap-3">
+              <button
+                onClick={onClose}
+                className="flex-1 py-2 bg-dark-600 hover:bg-dark-500 rounded-lg"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSave}
+                disabled={saving}
+                className="flex-1 py-2 bg-red-600 hover:bg-red-700 disabled:opacity-50 rounded-lg font-medium"
+              >
+                {saving ? 'Saving...' : 'Save Limits'}
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 };
@@ -3070,8 +3332,8 @@ const AdminCreateUser = () => {
   return (
     <div className="p-4 md:p-6">
       <div className="mb-6">
-        <h1 className="text-2xl font-bold">Create User</h1>
-        <p className="text-gray-400 text-sm mt-1">Create a new user for your admin account</p>
+        <h1 className="text-2xl font-bold">{admin?.isDemo ? 'Create Demo User' : 'Create User'}</h1>
+        <p className="text-gray-400 text-sm mt-1">{admin?.isDemo ? 'Create a demo user for your demo broker account' : 'Create a new user for your admin account'}</p>
       </div>
 
       {message.text && (
@@ -11582,6 +11844,311 @@ const SystemDefaultSettings = () => {
   );
 };
 
+// Demo Brokers Management (Super Admin only)
+const DemoBrokersManagement = () => {
+  const { admin } = useAuth();
+  const [demoBrokers, setDemoBrokers] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [expiryModal, setExpiryModal] = useState({ show: false, broker: null });
+  const [expiryDays, setExpiryDays] = useState(7);
+
+  useEffect(() => {
+    fetchDemoBrokers();
+  }, []);
+
+  const fetchDemoBrokers = async () => {
+    try {
+      const { data } = await axios.get('/api/admin/demo-brokers', {
+        headers: { Authorization: `Bearer ${admin.token}` }
+      });
+      setDemoBrokers(data);
+    } catch (error) {
+      console.error('Error fetching demo brokers:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleConvertToNormal = async (brokerId, brokerName) => {
+    if (!confirm(`Convert "${brokerName}" to normal broker?\n\nThis will DELETE all demo users under this broker and reset their balance to 0.`)) return;
+    
+    try {
+      const { data } = await axios.post(`/api/admin/convert-demo-broker/${brokerId}`, {}, {
+        headers: { Authorization: `Bearer ${admin.token}` }
+      });
+      alert(`${data.message}`);
+      fetchDemoBrokers();
+    } catch (error) {
+      alert(error.response?.data?.message || 'Error converting broker');
+    }
+  };
+
+  const handleDeleteDemoBroker = async (brokerId, brokerName) => {
+    if (!confirm(`DELETE demo broker "${brokerName}"?\n\nThis will permanently delete the broker and ALL their users.`)) return;
+    
+    try {
+      const { data } = await axios.delete(`/api/admin/demo-broker/${brokerId}`, {
+        headers: { Authorization: `Bearer ${admin.token}` }
+      });
+      alert(data.message);
+      fetchDemoBrokers();
+    } catch (error) {
+      alert(error.response?.data?.message || 'Error deleting broker');
+    }
+  };
+
+  const handleSetExpiry = async (removeExpiry = false) => {
+    if (!expiryModal.broker) return;
+    
+    try {
+      const { data } = await axios.put(`/api/admin/demo-broker/${expiryModal.broker._id}/expiry`, {
+        expiryDays: removeExpiry ? null : expiryDays,
+        removeExpiry
+      }, {
+        headers: { Authorization: `Bearer ${admin.token}` }
+      });
+      alert(data.message);
+      setExpiryModal({ show: false, broker: null });
+      fetchDemoBrokers();
+    } catch (error) {
+      alert(error.response?.data?.message || 'Error setting expiry');
+    }
+  };
+
+  const openExpiryModal = (broker) => {
+    setExpiryModal({ show: true, broker });
+    setExpiryDays(7);
+  };
+
+  const filteredBrokers = demoBrokers.filter(b => 
+    b.username?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    b.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    b.adminCode?.toLowerCase().includes(searchTerm.toLowerCase())
+  );
+
+  const getDaysRemaining = (expiresAt) => {
+    if (!expiresAt) return null; // No expiry set
+    const now = new Date();
+    const expires = new Date(expiresAt);
+    const diff = Math.ceil((expires - now) / (1000 * 60 * 60 * 24));
+    return Math.max(0, diff);
+  };
+
+  return (
+    <div className="p-4 md:p-6">
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-6">
+        <div>
+          <h1 className="text-2xl font-bold flex items-center gap-2">
+            <Play className="text-green-400" size={28} />
+            Demo Brokers
+          </h1>
+          <p className="text-gray-400 text-sm mt-1">Manage demo broker accounts and their users</p>
+        </div>
+        <div className="flex items-center gap-4">
+          <div className="bg-green-500/20 text-green-400 px-4 py-2 rounded-lg">
+            Total: {demoBrokers.length}
+          </div>
+        </div>
+      </div>
+
+      {/* Search */}
+      <div className="relative mb-6">
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={20} />
+        <input
+          type="text"
+          placeholder="Search by name, username, or admin code..."
+          value={searchTerm}
+          onChange={(e) => setSearchTerm(e.target.value)}
+          className="w-full bg-dark-700 border border-dark-600 rounded-lg pl-10 pr-4 py-2 focus:outline-none focus:border-green-500"
+        />
+      </div>
+
+      {/* Stats */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+        <div className="bg-dark-800 rounded-lg p-4">
+          <div className="text-sm text-gray-400">Total Demo Brokers</div>
+          <div className="text-2xl font-bold text-green-400">{demoBrokers.length}</div>
+        </div>
+        <div className="bg-dark-800 rounded-lg p-4">
+          <div className="text-sm text-gray-400">Total Demo Users</div>
+          <div className="text-2xl font-bold text-blue-400">
+            {demoBrokers.reduce((sum, b) => sum + (b.demoUserCount || 0), 0)}
+          </div>
+        </div>
+        <div className="bg-dark-800 rounded-lg p-4">
+          <div className="text-sm text-gray-400">No Expiry Set</div>
+          <div className="text-2xl font-bold text-purple-400">
+            {demoBrokers.filter(b => !b.demoExpiresAt).length}
+          </div>
+        </div>
+        <div className="bg-dark-800 rounded-lg p-4">
+          <div className="text-sm text-gray-400">Expiring Soon (3 days)</div>
+          <div className="text-2xl font-bold text-yellow-400">
+            {demoBrokers.filter(b => {
+              const days = getDaysRemaining(b.demoExpiresAt);
+              return days !== null && days <= 3 && days > 0;
+            }).length}
+          </div>
+        </div>
+      </div>
+
+      {loading ? (
+        <div className="text-center py-8"><RefreshCw className="animate-spin inline" size={24} /></div>
+      ) : filteredBrokers.length === 0 ? (
+        <div className="text-center py-12 bg-dark-800 rounded-lg">
+          <Play size={48} className="mx-auto mb-4 text-gray-600" />
+          <p className="text-gray-400">No demo brokers found</p>
+          <p className="text-sm text-gray-500 mt-2">Demo brokers are created from the Broker Login page</p>
+        </div>
+      ) : (
+        <div className="space-y-4">
+          {filteredBrokers.map(broker => {
+            const daysRemaining = getDaysRemaining(broker.demoExpiresAt);
+            const noExpiry = daysRemaining === null;
+            const isExpired = !noExpiry && daysRemaining === 0;
+            const isExpiringSoon = !noExpiry && daysRemaining <= 3 && daysRemaining > 0;
+            
+            return (
+              <div key={broker._id} className={`bg-dark-800 rounded-lg p-4 border-l-4 ${
+                noExpiry ? 'border-purple-500' : isExpired ? 'border-red-500' : isExpiringSoon ? 'border-yellow-500' : 'border-green-500'
+              }`}>
+                <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+                  {/* Broker Info */}
+                  <div className="flex-1">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="font-bold text-lg">{broker.name || broker.username}</span>
+                      <span className="px-2 py-0.5 rounded text-xs bg-green-500/20 text-green-400">DEMO</span>
+                      {noExpiry && <span className="px-2 py-0.5 rounded text-xs bg-purple-500/20 text-purple-400">NO EXPIRY</span>}
+                      {isExpired && <span className="px-2 py-0.5 rounded text-xs bg-red-500/20 text-red-400">EXPIRED</span>}
+                      {isExpiringSoon && <span className="px-2 py-0.5 rounded text-xs bg-yellow-500/20 text-yellow-400">EXPIRING SOON</span>}
+                    </div>
+                    <div className="text-sm text-gray-400 mt-1">{broker.email}</div>
+                    <div className="flex items-center gap-4 mt-2 flex-wrap">
+                      <span className="text-sm font-mono bg-orange-500/20 text-orange-400 px-2 py-1 rounded">{broker.adminCode}</span>
+                      <span className="text-xs text-gray-500">Created: {new Date(broker.demoCreatedAt || broker.createdAt).toLocaleDateString()}</span>
+                      <span className={`text-xs px-2 py-1 rounded ${
+                        noExpiry ? 'bg-purple-500/20 text-purple-400' :
+                        isExpired ? 'bg-red-500/20 text-red-400' : 
+                        isExpiringSoon ? 'bg-yellow-500/20 text-yellow-400' : 
+                        'bg-green-500/20 text-green-400'
+                      }`}>
+                        {noExpiry ? '∞ No Expiry' : isExpired ? 'Expired' : `${daysRemaining} days left`}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Stats */}
+                  <div className="flex gap-6">
+                    <div className="text-center">
+                      <div className="text-xs text-gray-400">Balance</div>
+                      <div className="text-lg font-bold text-green-400">₹{(broker.wallet?.balance || 0).toLocaleString()}</div>
+                    </div>
+                    <div className="text-center">
+                      <div className="text-xs text-gray-400">Users</div>
+                      <div className="text-lg font-bold text-blue-400">{broker.userCount || 0}</div>
+                    </div>
+                    <div className="text-center">
+                      <div className="text-xs text-gray-400">Demo Users</div>
+                      <div className="text-lg font-bold text-purple-400">{broker.demoUserCount || 0}</div>
+                    </div>
+                  </div>
+
+                  {/* Actions */}
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      onClick={() => openExpiryModal(broker)}
+                      className="px-3 py-2 bg-purple-600 hover:bg-purple-700 rounded text-sm flex items-center gap-1"
+                    >
+                      <Clock size={16} /> Set Expiry
+                    </button>
+                    <button
+                      onClick={() => handleConvertToNormal(broker._id, broker.name || broker.username)}
+                      className="px-3 py-2 bg-blue-600 hover:bg-blue-700 rounded text-sm flex items-center gap-1"
+                    >
+                      <RefreshCw size={16} /> Convert to Normal
+                    </button>
+                    <button
+                      onClick={() => handleDeleteDemoBroker(broker._id, broker.name || broker.username)}
+                      className="px-3 py-2 bg-red-600 hover:bg-red-700 rounded text-sm flex items-center gap-1"
+                    >
+                      <Trash2 size={16} /> Delete
+                    </button>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Expiry Modal */}
+      {expiryModal.show && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
+          <div className="bg-dark-800 rounded-lg p-6 w-full max-w-md">
+            <h3 className="text-xl font-bold mb-4 flex items-center gap-2">
+              <Clock className="text-purple-400" size={24} />
+              Set Demo Expiry
+            </h3>
+            
+            <div className="mb-4 p-3 bg-dark-700 rounded-lg">
+              <div className="text-sm text-gray-400">Broker</div>
+              <div className="font-bold">{expiryModal.broker?.name || expiryModal.broker?.username}</div>
+              <div className="text-xs text-gray-500">{expiryModal.broker?.adminCode}</div>
+              {expiryModal.broker?.demoExpiresAt && (
+                <div className="text-xs text-yellow-400 mt-1">
+                  Current Expiry: {new Date(expiryModal.broker.demoExpiresAt).toLocaleDateString()}
+                </div>
+              )}
+              {!expiryModal.broker?.demoExpiresAt && (
+                <div className="text-xs text-purple-400 mt-1">
+                  Currently: No Expiry Set
+                </div>
+              )}
+            </div>
+
+            <div className="mb-4">
+              <label className="block text-sm text-gray-400 mb-2">Expiry Days (from today)</label>
+              <input
+                type="number"
+                min="1"
+                max="365"
+                value={expiryDays}
+                onChange={(e) => setExpiryDays(parseInt(e.target.value) || 1)}
+                className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 focus:outline-none focus:border-purple-500"
+              />
+              <p className="text-xs text-gray-500 mt-1">
+                Demo will expire on: {new Date(Date.now() + expiryDays * 24 * 60 * 60 * 1000).toLocaleDateString()}
+              </p>
+            </div>
+
+            <div className="flex flex-col gap-2">
+              <button
+                onClick={() => handleSetExpiry(false)}
+                className="w-full py-2 bg-purple-600 hover:bg-purple-700 rounded font-semibold"
+              >
+                Set Expiry ({expiryDays} days)
+              </button>
+              <button
+                onClick={() => handleSetExpiry(true)}
+                className="w-full py-2 bg-green-600 hover:bg-green-700 rounded font-semibold"
+              >
+                Remove Expiry (Never Expire)
+              </button>
+              <button
+                onClick={() => setExpiryModal({ show: false, broker: null })}
+                className="w-full py-2 bg-dark-600 hover:bg-dark-500 rounded"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
 // Delivery Pledge Management (Super Admin only)
 const DeliveryPledgeManagement = () => {
   const { admin } = useAuth();
@@ -17977,7 +18544,7 @@ const UserManagement = () => {
   return (
     <div className="p-4 md:p-6">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
-        <h1 className="text-xl md:text-2xl font-bold">User Management</h1>
+        <h1 className="text-xl md:text-2xl font-bold">{admin?.isDemo ? 'Demo User Management' : 'User Management'}</h1>
         <div className="flex items-center gap-2">
           <button
             onClick={() => setShowNotificationModal(true)}
@@ -17988,10 +18555,10 @@ const UserManagement = () => {
           </button>
           <button
             onClick={() => navigate(`${basePath}/create-user`)}
-            className="flex items-center justify-center gap-2 bg-purple-600 hover:bg-purple-700 px-4 py-2 rounded-lg transition"
+            className={`flex items-center justify-center gap-2 ${admin?.isDemo ? 'bg-green-600 hover:bg-green-700' : 'bg-purple-600 hover:bg-purple-700'} px-4 py-2 rounded-lg transition`}
           >
             <Plus size={20} />
-            <span>Create User</span>
+            <span>{admin?.isDemo ? 'Create Demo User' : 'Create User'}</span>
           </button>
         </div>
       </div>

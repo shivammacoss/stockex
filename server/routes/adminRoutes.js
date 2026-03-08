@@ -101,6 +101,272 @@ router.post('/logout', protectAdmin, async (req, res) => {
 });
 
 // ============================================================================
+// DEMO BROKER REGISTRATION
+// ============================================================================
+
+// Create Demo Broker Account (No auth required - public endpoint)
+router.post('/demo-broker', async (req, res) => {
+  try {
+    const { name, email, phone, password, pin } = req.body;
+    
+    // Validate required fields
+    if (!name || !email || !phone) {
+      return res.status(400).json({ message: 'Name, email and phone are required' });
+    }
+    
+    // Check if email already exists
+    const existingAdmin = await Admin.findOne({ email });
+    if (existingAdmin) {
+      return res.status(400).json({ message: 'Email already registered. Please use a different email.' });
+    }
+    
+    // Generate unique username from name
+    const timestamp = Date.now();
+    const cleanName = name.toLowerCase().replace(/[^a-z0-9]/g, '_').substring(0, 15);
+    const demoUsername = `demo_${cleanName}_${Math.floor(Math.random() * 1000)}`;
+    const demoPassword = password || 'demo1234';
+    const demoPin = pin || '1234';
+    
+    // No automatic expiry - Super Admin will set it manually
+    
+    // Generate admin code for demo broker
+    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+    let adminCode = 'DEMO';
+    for (let i = 0; i < 4; i++) {
+      adminCode += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    
+    // Generate referral code
+    let referralCode = 'DEM';
+    for (let i = 0; i < 5; i++) {
+      referralCode += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    
+    // Create demo broker
+    const demoBroker = await Admin.create({
+      username: demoUsername,
+      name: name,
+      email: email,
+      phone: phone,
+      password: demoPassword,
+      pin: demoPin,
+      role: 'BROKER',
+      status: 'ACTIVE',
+      isActive: true,
+      isDemo: true,
+      demoExpiresAt: null, // No automatic expiry - Super Admin sets manually
+      demoCreatedAt: new Date(),
+      adminCode,
+      referralCode,
+      referralUrl: `/register?ref=${referralCode}`,
+      hierarchyLevel: 2,
+      wallet: {
+        balance: 100000, // Demo balance
+        blocked: 0,
+        totalDeposited: 100000,
+        totalWithdrawn: 0
+      },
+      charges: {
+        brokerage: 20
+      },
+      // Demo broker has restrict mode enabled by default
+      restrictMode: {
+        enabled: true,
+        maxUsers: 10, // Demo broker can only create 10 demo users
+        maxSubBrokers: 2
+      }
+    });
+    
+    // Generate token
+    const token = generateToken(demoBroker._id);
+    
+    res.status(201).json({
+      message: 'Demo broker account created successfully',
+      _id: demoBroker._id,
+      username: demoBroker.username,
+      name: demoBroker.name,
+      email: demoBroker.email,
+      phone: demoBroker.phone,
+      role: demoBroker.role,
+      adminCode: demoBroker.adminCode,
+      referralCode: demoBroker.referralCode,
+      wallet: demoBroker.wallet,
+      isDemo: true,
+      demoExpiresAt,
+      demoPassword: demoPassword,
+      demoPin: demoPin,
+      token
+    });
+  } catch (error) {
+    console.error('Demo broker creation error:', error);
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Set Demo Broker Expiry (Super Admin only)
+router.put('/demo-broker/:id/expiry', protectAdmin, async (req, res) => {
+  try {
+    if (req.admin.role !== 'SUPER_ADMIN') {
+      return res.status(403).json({ message: 'Only Super Admin can set demo broker expiry' });
+    }
+    
+    const { expiryDays, removeExpiry } = req.body;
+    
+    const demoBroker = await Admin.findById(req.params.id);
+    if (!demoBroker) {
+      return res.status(404).json({ message: 'Broker not found' });
+    }
+    
+    if (!demoBroker.isDemo) {
+      return res.status(400).json({ message: 'This broker is not a demo broker' });
+    }
+    
+    if (removeExpiry) {
+      // Remove expiry - demo broker will never expire
+      demoBroker.demoExpiresAt = null;
+      await demoBroker.save();
+      return res.json({
+        message: 'Demo broker expiry removed. Broker will not expire automatically.',
+        broker: {
+          _id: demoBroker._id,
+          name: demoBroker.name,
+          demoExpiresAt: null
+        }
+      });
+    }
+    
+    if (!expiryDays || expiryDays < 1) {
+      return res.status(400).json({ message: 'Please provide valid expiry days (minimum 1 day)' });
+    }
+    
+    // Set expiry from today
+    const demoExpiresAt = new Date();
+    demoExpiresAt.setDate(demoExpiresAt.getDate() + parseInt(expiryDays));
+    
+    demoBroker.demoExpiresAt = demoExpiresAt;
+    await demoBroker.save();
+    
+    res.json({
+      message: `Demo broker expiry set to ${expiryDays} days from now.`,
+      broker: {
+        _id: demoBroker._id,
+        name: demoBroker.name,
+        demoExpiresAt: demoExpiresAt
+      }
+    });
+  } catch (error) {
+    console.error('Set demo broker expiry error:', error);
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Convert Demo Broker to Normal Broker (Super Admin only)
+router.post('/convert-demo-broker/:id', protectAdmin, async (req, res) => {
+  try {
+    if (req.admin.role !== 'SUPER_ADMIN') {
+      return res.status(403).json({ message: 'Only Super Admin can convert demo brokers' });
+    }
+    
+    const demoBroker = await Admin.findById(req.params.id);
+    if (!demoBroker) {
+      return res.status(404).json({ message: 'Broker not found' });
+    }
+    
+    if (!demoBroker.isDemo) {
+      return res.status(400).json({ message: 'This broker is not a demo broker' });
+    }
+    
+    // Delete all demo users under this broker
+    const deletedUsers = await User.deleteMany({ 
+      admin: demoBroker._id,
+      isDemo: true 
+    });
+    
+    // Convert demo broker to normal broker
+    demoBroker.isDemo = false;
+    demoBroker.demoExpiresAt = null;
+    demoBroker.wallet.balance = 0; // Reset balance
+    demoBroker.wallet.totalDeposited = 0;
+    demoBroker.restrictMode.enabled = false; // Remove restrict mode
+    
+    await demoBroker.save();
+    
+    res.json({
+      message: `Demo broker converted to normal broker. ${deletedUsers.deletedCount} demo users deleted.`,
+      broker: {
+        _id: demoBroker._id,
+        username: demoBroker.username,
+        name: demoBroker.name,
+        isDemo: false
+      },
+      deletedUsersCount: deletedUsers.deletedCount
+    });
+  } catch (error) {
+    console.error('Convert demo broker error:', error);
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Get all Demo Brokers (Super Admin only)
+router.get('/demo-brokers', protectAdmin, async (req, res) => {
+  try {
+    if (req.admin.role !== 'SUPER_ADMIN') {
+      return res.status(403).json({ message: 'Only Super Admin can view demo brokers' });
+    }
+    
+    const demoBrokers = await Admin.find({ isDemo: true })
+      .select('username name email adminCode referralCode wallet stats isDemo demoExpiresAt demoCreatedAt status createdAt')
+      .sort({ createdAt: -1 });
+    
+    // Get user counts for each demo broker
+    const brokersWithCounts = await Promise.all(demoBrokers.map(async (broker) => {
+      const userCount = await User.countDocuments({ admin: broker._id });
+      const demoUserCount = await User.countDocuments({ admin: broker._id, isDemo: true });
+      return {
+        ...broker.toObject(),
+        userCount,
+        demoUserCount
+      };
+    }));
+    
+    res.json(brokersWithCounts);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Delete Demo Broker and all its users (Super Admin only)
+router.delete('/demo-broker/:id', protectAdmin, async (req, res) => {
+  try {
+    if (req.admin.role !== 'SUPER_ADMIN') {
+      return res.status(403).json({ message: 'Only Super Admin can delete demo brokers' });
+    }
+    
+    const demoBroker = await Admin.findById(req.params.id);
+    if (!demoBroker) {
+      return res.status(404).json({ message: 'Broker not found' });
+    }
+    
+    if (!demoBroker.isDemo) {
+      return res.status(400).json({ message: 'This broker is not a demo broker. Use permanent delete instead.' });
+    }
+    
+    // Delete all users under this demo broker
+    const deletedUsers = await User.deleteMany({ admin: demoBroker._id });
+    
+    // Delete the demo broker
+    await Admin.findByIdAndDelete(demoBroker._id);
+    
+    res.json({
+      message: `Demo broker and ${deletedUsers.deletedCount} users deleted successfully`,
+      deletedUsersCount: deletedUsers.deletedCount
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// ============================================================================
 // LOGIN AS USER (Super Admin Only)
 // ============================================================================
 

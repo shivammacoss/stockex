@@ -86,6 +86,20 @@ const adminSchema = new mongoose.Schema({
     default: true
   },
   
+  // Demo Broker fields
+  isDemo: {
+    type: Boolean,
+    default: false
+  },
+  demoExpiresAt: {
+    type: Date,
+    default: null
+  },
+  demoCreatedAt: {
+    type: Date,
+    default: null
+  },
+  
   // Session token for single device login - only one active session at a time
   activeSessionToken: {
     type: String,
@@ -393,6 +407,18 @@ const adminSchema = new mongoose.Schema({
       type: Number,
       default: 0 // For sorting on landing page
     }
+  },
+  
+  // Restrict Mode - Limit number of users under this admin
+  // Set by Super Admin for Admin/Broker/SubBroker
+  restrictMode: {
+    enabled: { type: Boolean, default: false },     // Is restrict mode active
+    maxUsers: { type: Number, default: 100 },       // Maximum users allowed (dynamic, set by Super Admin)
+    currentUsers: { type: Number, default: 0 },     // Current user count (auto-updated)
+    maxBrokers: { type: Number, default: 10 },      // Max brokers under this admin (for ADMIN role)
+    currentBrokers: { type: Number, default: 0 },   // Current broker count
+    maxSubBrokers: { type: Number, default: 20 },   // Max sub-brokers (for BROKER role)
+    currentSubBrokers: { type: Number, default: 0 } // Current sub-broker count
   },
   
   // Permission flags - Set by parent admin (SuperAdmin for Admin, Admin for Broker, etc.)

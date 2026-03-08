@@ -1,15 +1,72 @@
 import { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
-import { Briefcase, Eye, EyeOff, Users, TrendingUp, Wallet, Lock } from 'lucide-react';
+import axios from 'axios';
+import { Briefcase, Eye, EyeOff, Users, TrendingUp, Wallet, Lock, Play, Clock, X } from 'lucide-react';
 
 const BrokerLogin = () => {
   const [formData, setFormData] = useState({ email: '', password: '' });
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  const { loginAdmin } = useAuth();
+  const [demoLoading, setDemoLoading] = useState(false);
+  const [showDemoForm, setShowDemoForm] = useState(false);
+  const [showDemoCredentials, setShowDemoCredentials] = useState(false);
+  const [demoCredentials, setDemoCredentials] = useState(null);
+  const [demoFormData, setDemoFormData] = useState({
+    name: '',
+    email: '',
+    phone: '',
+    password: 'demo1234',
+    pin: '1234'
+  });
+  const [demoError, setDemoError] = useState('');
+  const { loginAdmin, setAdmin } = useAuth();
   const navigate = useNavigate();
+
+  // Open Demo Form
+  const handleOpenDemoForm = () => {
+    setShowDemoForm(true);
+    setDemoError('');
+  };
+
+  // Create Demo Broker Account with form data
+  const handleCreateDemo = async (e) => {
+    e.preventDefault();
+    if (!demoFormData.name || !demoFormData.email || !demoFormData.phone) {
+      setDemoError('Please fill all required fields');
+      return;
+    }
+    
+    setDemoLoading(true);
+    setDemoError('');
+    try {
+      const { data } = await axios.post('/api/admin/demo-broker', {
+        name: demoFormData.name,
+        email: demoFormData.email,
+        phone: demoFormData.phone,
+        password: demoFormData.password,
+        pin: demoFormData.pin
+      });
+      setDemoCredentials(data);
+      setShowDemoForm(false);
+      setShowDemoCredentials(true);
+    } catch (err) {
+      setDemoError(err.response?.data?.message || 'Failed to create demo account');
+    } finally {
+      setDemoLoading(false);
+    }
+  };
+
+  // Login with Demo Credentials
+  const handleDemoLogin = () => {
+    if (demoCredentials) {
+      // Store admin data and redirect
+      localStorage.setItem('admin', JSON.stringify(demoCredentials));
+      setAdmin(demoCredentials);
+      navigate('/broker/dashboard');
+    }
+  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -146,7 +203,22 @@ const BrokerLogin = () => {
               </button>
             </form>
 
-            <div className="mt-6 pt-6 border-t border-gray-700 text-center space-y-2">
+            {/* Try Demo Account Button */}
+            <div className="mt-6 pt-6 border-t border-gray-700">
+              <button
+                type="button"
+                onClick={handleOpenDemoForm}
+                className="w-full bg-gradient-to-r from-green-600 to-emerald-500 hover:from-green-700 hover:to-emerald-600 py-3 rounded-lg font-semibold transition flex items-center justify-center gap-2"
+              >
+                <Play size={20} />
+                Try Demo Account
+              </button>
+              <p className="text-xs text-gray-500 text-center mt-2">
+                7 days trial • Full broker features
+              </p>
+            </div>
+
+            <div className="mt-4 text-center space-y-2">
               <Link to="/subbroker/login" className="block text-sm text-gray-400 hover:text-white transition">
                 Sub-Broker Login →
               </Link>
@@ -157,6 +229,175 @@ const BrokerLogin = () => {
           </div>
         </div>
       </div>
+
+      {/* Demo Registration Form Modal */}
+      {showDemoForm && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
+          <div className="bg-dark-800 rounded-2xl w-full max-w-md p-6 border border-green-500/30">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-xl font-bold text-green-400 flex items-center gap-2">
+                <Play size={24} />
+                Create Demo Account
+              </h3>
+              <button onClick={() => setShowDemoForm(false)} className="text-gray-400 hover:text-white">
+                <X size={24} />
+              </button>
+            </div>
+
+            {demoError && (
+              <div className="bg-red-500/20 border border-red-500 text-red-400 px-4 py-2 rounded-lg mb-4 text-sm">
+                {demoError}
+              </div>
+            )}
+
+            <form onSubmit={handleCreateDemo} className="space-y-4">
+              <div>
+                <label className="block text-sm text-gray-400 mb-1">Full Name *</label>
+                <input
+                  type="text"
+                  value={demoFormData.name}
+                  onChange={(e) => setDemoFormData({ ...demoFormData, name: e.target.value })}
+                  className="w-full bg-dark-700 border border-green-500/30 rounded-lg px-4 py-2 focus:outline-none focus:border-green-500"
+                  placeholder="Enter your name"
+                  required
+                />
+              </div>
+              <div>
+                <label className="block text-sm text-gray-400 mb-1">Email *</label>
+                <input
+                  type="email"
+                  value={demoFormData.email}
+                  onChange={(e) => setDemoFormData({ ...demoFormData, email: e.target.value })}
+                  className="w-full bg-dark-700 border border-green-500/30 rounded-lg px-4 py-2 focus:outline-none focus:border-green-500"
+                  placeholder="Enter your email"
+                  required
+                />
+              </div>
+              <div>
+                <label className="block text-sm text-gray-400 mb-1">Phone Number *</label>
+                <input
+                  type="tel"
+                  value={demoFormData.phone}
+                  onChange={(e) => setDemoFormData({ ...demoFormData, phone: e.target.value })}
+                  className="w-full bg-dark-700 border border-green-500/30 rounded-lg px-4 py-2 focus:outline-none focus:border-green-500"
+                  placeholder="Enter phone number"
+                  required
+                />
+              </div>
+              <div>
+                <label className="block text-sm text-gray-400 mb-1">Password</label>
+                <input
+                  type="text"
+                  value={demoFormData.password}
+                  onChange={(e) => setDemoFormData({ ...demoFormData, password: e.target.value })}
+                  className="w-full bg-dark-700 border border-green-500/30 rounded-lg px-4 py-2 focus:outline-none focus:border-green-500"
+                  placeholder="Password"
+                />
+                <p className="text-xs text-gray-500 mt-1">Default: demo1234</p>
+              </div>
+              <div>
+                <label className="block text-sm text-gray-400 mb-1">PIN (4-6 digits)</label>
+                <input
+                  type="text"
+                  value={demoFormData.pin}
+                  onChange={(e) => setDemoFormData({ ...demoFormData, pin: e.target.value })}
+                  className="w-full bg-dark-700 border border-green-500/30 rounded-lg px-4 py-2 focus:outline-none focus:border-green-500"
+                  placeholder="PIN"
+                  maxLength={6}
+                />
+                <p className="text-xs text-gray-500 mt-1">Default: 1234</p>
+              </div>
+
+              <div className="bg-green-500/10 border border-green-500/30 rounded-lg p-3">
+                <p className="text-xs text-green-400">
+                  ✓ Demo Balance: ₹1,00,000<br/>
+                  ✓ Valid for 7 days<br/>
+                  ✓ Full broker features access
+                </p>
+              </div>
+
+              <button
+                type="submit"
+                disabled={demoLoading}
+                className="w-full bg-gradient-to-r from-green-600 to-emerald-500 hover:from-green-700 hover:to-emerald-600 py-3 rounded-lg font-semibold transition disabled:opacity-50 flex items-center justify-center gap-2"
+              >
+                {demoLoading ? (
+                  <>
+                    <Clock className="animate-spin" size={20} />
+                    Creating Account...
+                  </>
+                ) : (
+                  <>
+                    <Play size={20} />
+                    Create Demo Account
+                  </>
+                )}
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Demo Credentials Modal - After successful creation */}
+      {showDemoCredentials && demoCredentials && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
+          <div className="bg-dark-800 rounded-2xl w-full max-w-md p-6 border border-green-500/30">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-xl font-bold text-green-400 flex items-center gap-2">
+                <Play size={24} />
+                Demo Account Created!
+              </h3>
+              <button onClick={() => setShowDemoCredentials(false)} className="text-gray-400 hover:text-white">
+                <X size={24} />
+              </button>
+            </div>
+
+            <div className="bg-dark-700 rounded-lg p-4 mb-4 space-y-3">
+              <div>
+                <div className="text-xs text-gray-400">Name</div>
+                <div className="font-medium text-white">{demoCredentials.name}</div>
+              </div>
+              <div>
+                <div className="text-xs text-gray-400">Admin Code</div>
+                <div className="font-mono text-orange-400 text-lg">{demoCredentials.adminCode}</div>
+              </div>
+              <div>
+                <div className="text-xs text-gray-400">Password</div>
+                <div className="font-mono text-green-400">{demoCredentials.demoPassword}</div>
+              </div>
+              <div>
+                <div className="text-xs text-gray-400">PIN</div>
+                <div className="font-mono text-green-400">{demoCredentials.demoPin}</div>
+              </div>
+              <div className="flex gap-4">
+                <div>
+                  <div className="text-xs text-gray-400">Demo Balance</div>
+                  <div className="font-bold text-green-400">₹{demoCredentials.wallet?.balance?.toLocaleString()}</div>
+                </div>
+                <div>
+                  <div className="text-xs text-gray-400">Expires In</div>
+                  <div className="text-yellow-400">7 Days</div>
+                </div>
+              </div>
+            </div>
+
+            <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-lg p-3 mb-4">
+              <p className="text-xs text-yellow-400">
+                ⚠️ This is a demo account. All users you create will also be demo users. 
+                When converted to a real broker, all demo users will be deleted.
+              </p>
+            </div>
+
+            <button
+              onClick={handleDemoLogin}
+              className="w-full bg-gradient-to-r from-green-600 to-emerald-500 hover:from-green-700 hover:to-emerald-600 py-3 rounded-lg font-semibold transition flex items-center justify-center gap-2"
+            >
+              <Play size={20} />
+              Start Demo Now
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
