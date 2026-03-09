@@ -1878,34 +1878,90 @@ const PositionsPanel = ({ activeTab, setActiveTab, walletData, user, marketData,
       const filteredPending = filterByMode(pendingRes.data);
       const filteredHistory = filterByMode(historyRes.data);
       
-      // Apply netting logic for crypto positions - aggregate by symbol+side
+      // Apply netting logic - aggregate positions by symbol and net BUY vs SELL
       const netPositions = (positions) => {
-        if (!cryptoOnly) return positions; // Only net crypto positions
-        
-        const netted = {};
+        // Step 1: Group by symbol (not symbol+side)
+        const bySymbol = {};
         for (const pos of positions) {
-          const key = `${pos.symbol}_${pos.side}`;
-          if (!netted[key]) {
-            netted[key] = {
-              ...pos,
-              _ids: [pos._id], // Track all position IDs for closing
-              totalValue: pos.quantity * pos.entryPrice,
-              quantity: pos.quantity,
-              commission: pos.commission || 0,
-            };
+          const key = `${pos.symbol}_${pos.exchange || 'NSE'}`;
+          if (!bySymbol[key]) {
+            bySymbol[key] = { buys: [], sells: [] };
+          }
+          if (pos.side === 'BUY') {
+            bySymbol[key].buys.push(pos);
           } else {
-            // Aggregate: combine quantities, calculate weighted avg entry price
-            const existing = netted[key];
-            const newTotalQty = existing.quantity + pos.quantity;
-            const newTotalValue = existing.totalValue + (pos.quantity * pos.entryPrice);
-            existing._ids.push(pos._id);
-            existing.quantity = newTotalQty;
-            existing.totalValue = newTotalValue;
-            existing.entryPrice = newTotalValue / newTotalQty; // Weighted average
-            existing.commission = (existing.commission || 0) + (pos.commission || 0);
+            bySymbol[key].sells.push(pos);
           }
         }
-        return Object.values(netted);
+        
+        // Step 2: Net each symbol's positions
+        const netted = [];
+        for (const key of Object.keys(bySymbol)) {
+          const { buys, sells } = bySymbol[key];
+          
+          // Calculate total BUY quantity and weighted avg price
+          let buyQty = 0, buyValue = 0, buyIds = [], buyCommission = 0;
+          for (const b of buys) {
+            buyQty += b.quantity;
+            buyValue += b.quantity * b.entryPrice;
+            buyIds.push(b._id);
+            buyCommission += b.commission || 0;
+          }
+          const buyAvgPrice = buyQty > 0 ? buyValue / buyQty : 0;
+          
+          // Calculate total SELL quantity and weighted avg price
+          let sellQty = 0, sellValue = 0, sellIds = [], sellCommission = 0;
+          for (const s of sells) {
+            sellQty += s.quantity;
+            sellValue += s.quantity * s.entryPrice;
+            sellIds.push(s._id);
+            sellCommission += s.commission || 0;
+          }
+          const sellAvgPrice = sellQty > 0 ? sellValue / sellQty : 0;
+          
+          // Net the positions
+          const netQty = buyQty - sellQty;
+          
+          if (netQty === 0) {
+            // Fully netted - no open position (but we still track for display if needed)
+            continue;
+          }
+          
+          // Use the first position as template
+          const template = buys[0] || sells[0];
+          
+          if (netQty > 0) {
+            // Net BUY position
+            netted.push({
+              ...template,
+              side: 'BUY',
+              quantity: netQty,
+              entryPrice: buyAvgPrice,
+              _ids: buyIds,
+              _sellIds: sellIds, // Track sell IDs for reference
+              commission: buyCommission,
+              isNetted: true,
+              originalBuyQty: buyQty,
+              originalSellQty: sellQty
+            });
+          } else {
+            // Net SELL position
+            netted.push({
+              ...template,
+              side: 'SELL',
+              quantity: Math.abs(netQty),
+              entryPrice: sellAvgPrice,
+              _ids: sellIds,
+              _buyIds: buyIds, // Track buy IDs for reference
+              commission: sellCommission,
+              isNetted: true,
+              originalBuyQty: buyQty,
+              originalSellQty: sellQty
+            });
+          }
+        }
+        
+        return netted;
       };
       
       setPositions(netPositions(filteredPositions));
@@ -4232,37 +4288,76 @@ const MobilePositionsPanel = ({ activeTab, user, marketData, cryptoOnly = false,
         axios.get('/api/trading/pending-orders', { headers }),
         axios.get('/api/trading/history?limit=100', { headers })
       ]);
-      
       const allPositions = filterByMode(posRes.data);
       const allPending = filterByMode(pendingRes.data);
       const allHistory = filterByMode(historyRes.data);
       
-      // Apply netting logic for crypto positions - aggregate by symbol+side
+      // Apply netting logic - aggregate positions by symbol and net BUY vs SELL
       const netPositions = (positions) => {
-        if (!cryptoOnly) return positions;
-        const netted = {};
+        const bySymbol = {};
         for (const pos of positions) {
-          const key = `${pos.symbol}_${pos.side}`;
-          if (!netted[key]) {
-            netted[key] = {
-              ...pos,
-              _ids: [pos._id],
-              totalValue: pos.quantity * pos.entryPrice,
-              quantity: pos.quantity,
-              commission: pos.commission || 0,
-            };
+          const key = `${pos.symbol}_${pos.exchange || 'NSE'}`;
+          if (!bySymbol[key]) {
+            bySymbol[key] = { buys: [], sells: [] };
+          }
+          if (pos.side === 'BUY') {
+            bySymbol[key].buys.push(pos);
           } else {
-            const existing = netted[key];
-            const newTotalQty = existing.quantity + pos.quantity;
-            const newTotalValue = existing.totalValue + (pos.quantity * pos.entryPrice);
-            existing._ids.push(pos._id);
-            existing.quantity = newTotalQty;
-            existing.totalValue = newTotalValue;
-            existing.entryPrice = newTotalValue / newTotalQty;
-            existing.commission = (existing.commission || 0) + (pos.commission || 0);
+            bySymbol[key].sells.push(pos);
           }
         }
-        return Object.values(netted);
+        
+        const netted = [];
+        for (const key of Object.keys(bySymbol)) {
+          const { buys, sells } = bySymbol[key];
+          
+          let buyQty = 0, buyValue = 0, buyIds = [], buyCommission = 0;
+          for (const b of buys) {
+            buyQty += b.quantity;
+            buyValue += b.quantity * b.entryPrice;
+            buyIds.push(b._id);
+            buyCommission += b.commission || 0;
+          }
+          const buyAvgPrice = buyQty > 0 ? buyValue / buyQty : 0;
+          
+          let sellQty = 0, sellValue = 0, sellIds = [], sellCommission = 0;
+          for (const s of sells) {
+            sellQty += s.quantity;
+            sellValue += s.quantity * s.entryPrice;
+            sellIds.push(s._id);
+            sellCommission += s.commission || 0;
+          }
+          const sellAvgPrice = sellQty > 0 ? sellValue / sellQty : 0;
+          
+          const netQty = buyQty - sellQty;
+          if (netQty === 0) continue;
+          
+          const template = buys[0] || sells[0];
+          if (netQty > 0) {
+            netted.push({
+              ...template,
+              side: 'BUY',
+              quantity: netQty,
+              entryPrice: buyAvgPrice,
+              _ids: buyIds,
+              _sellIds: sellIds,
+              commission: buyCommission,
+              isNetted: true
+            });
+          } else {
+            netted.push({
+              ...template,
+              side: 'SELL',
+              quantity: Math.abs(netQty),
+              entryPrice: sellAvgPrice,
+              _ids: sellIds,
+              _buyIds: buyIds,
+              commission: sellCommission,
+              isNetted: true
+            });
+          }
+        }
+        return netted;
       };
       
       setPositions(netPositions(allPositions));
@@ -4270,6 +4365,7 @@ const MobilePositionsPanel = ({ activeTab, user, marketData, cryptoOnly = false,
       setCancelledOrders(allHistory.filter(o => o.status === 'CANCELLED' || o.closeReason === 'REJECTED'));
       setHistory(allHistory.filter(o => o.status === 'CLOSED'));
       
+// ...
       // Calculate Today's P&L
       const today = new Date();
       today.setHours(0, 0, 0, 0);

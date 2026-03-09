@@ -11852,6 +11852,7 @@ const DemoBrokersManagement = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [expiryModal, setExpiryModal] = useState({ show: false, broker: null });
   const [expiryDays, setExpiryDays] = useState(7);
+  const [usersModal, setUsersModal] = useState({ show: false, broker: null, users: [], loading: false });
 
   useEffect(() => {
     fetchDemoBrokers();
@@ -11867,6 +11868,19 @@ const DemoBrokersManagement = () => {
       console.error('Error fetching demo brokers:', error);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const fetchBrokerUsers = async (broker) => {
+    setUsersModal({ show: true, broker, users: [], loading: true });
+    try {
+      const { data } = await axios.get(`/api/admin/demo-broker/${broker._id}/users`, {
+        headers: { Authorization: `Bearer ${admin.token}` }
+      });
+      setUsersModal(prev => ({ ...prev, users: data, loading: false }));
+    } catch (error) {
+      console.error('Error fetching broker users:', error);
+      setUsersModal(prev => ({ ...prev, loading: false }));
     }
   };
 
@@ -12074,6 +12088,12 @@ const DemoBrokersManagement = () => {
                     >
                       <Trash2 size={16} /> Delete
                     </button>
+                    <button 
+                      onClick={() => fetchBrokerUsers(broker)} 
+                      className="px-3 py-2 bg-cyan-600 hover:bg-cyan-700 rounded text-sm flex items-center gap-1"
+                    >
+                      <Users size={16} /> View Users
+                    </button>
                   </div>
                 </div>
               </div>
@@ -12140,6 +12160,78 @@ const DemoBrokersManagement = () => {
                 className="w-full py-2 bg-dark-600 hover:bg-dark-500 rounded"
               >
                 Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Users Modal */}
+      {usersModal.show && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
+          <div className="bg-dark-800 rounded-lg p-6 w-full max-w-4xl max-h-[80vh] overflow-hidden flex flex-col">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-xl font-bold flex items-center gap-2">
+                <Users className="text-cyan-400" size={24} />
+                Users under {usersModal.broker?.name || usersModal.broker?.username}
+              </h3>
+              <button onClick={() => setUsersModal({ show: false, broker: null, users: [], loading: false })} className="text-gray-400 hover:text-white">
+                <X size={24} />
+              </button>
+            </div>
+            
+            <div className="text-sm text-gray-400 mb-4">
+              Admin Code: <span className="font-mono text-orange-400">{usersModal.broker?.adminCode}</span>
+            </div>
+
+            <div className="flex-1 overflow-y-auto">
+              {usersModal.loading ? (
+                <div className="text-center py-8"><RefreshCw className="animate-spin inline" size={24} /></div>
+              ) : usersModal.users.length === 0 ? (
+                <div className="text-center py-8 text-gray-400">No users found under this broker</div>
+              ) : (
+                <table className="w-full text-sm">
+                  <thead className="bg-dark-700 sticky top-0">
+                    <tr>
+                      <th className="text-left p-3">Username</th>
+                      <th className="text-left p-3">Name</th>
+                      <th className="text-left p-3">Email</th>
+                      <th className="text-left p-3">Phone</th>
+                      <th className="text-right p-3">Balance</th>
+                      <th className="text-center p-3">Status</th>
+                      <th className="text-center p-3">Demo</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {usersModal.users.map(user => (
+                      <tr key={user._id} className="border-b border-dark-600 hover:bg-dark-700">
+                        <td className="p-3 font-mono">{user.username}</td>
+                        <td className="p-3">{user.name}</td>
+                        <td className="p-3 text-gray-400">{user.email}</td>
+                        <td className="p-3 text-gray-400">{user.phone}</td>
+                        <td className="p-3 text-right text-green-400">₹{(user.wallet?.balance || 0).toLocaleString()}</td>
+                        <td className="p-3 text-center">
+                          <span className={`px-2 py-1 rounded text-xs ${user.isActive ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}`}>
+                            {user.isActive ? 'Active' : 'Inactive'}
+                          </span>
+                        </td>
+                        <td className="p-3 text-center">
+                          {user.isDemo && <span className="px-2 py-1 rounded text-xs bg-purple-500/20 text-purple-400">Demo</span>}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+
+            <div className="mt-4 pt-4 border-t border-dark-600 flex justify-between items-center">
+              <span className="text-sm text-gray-400">Total Users: {usersModal.users.length}</span>
+              <button
+                onClick={() => setUsersModal({ show: false, broker: null, users: [], loading: false })}
+                className="px-4 py-2 bg-dark-600 hover:bg-dark-500 rounded"
+              >
+                Close
               </button>
             </div>
           </div>

@@ -27,6 +27,23 @@ router.get('/branding/:refCode', async (req, res) => {
   }
 });
 
+// Get all users under a Demo Broker (Super Admin only)
+router.get('/demo-broker/:id/users', protectAdmin, async (req, res) => {
+  try {
+    if (req.admin.role !== 'SUPER_ADMIN') {
+      return res.status(403).json({ message: 'Only Super Admin can view demo broker users' });
+    }
+    
+    const users = await User.find({ admin: req.params.id })
+      .select('username name email phone isDemo wallet.balance isActive createdAt')
+      .sort({ createdAt: -1 });
+    
+    res.json(users);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
 // Get list of brokers for user registration (public endpoint)
 router.get('/brokers/public', async (req, res) => {
   try {

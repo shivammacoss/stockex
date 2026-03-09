@@ -130,9 +130,16 @@ const processTicks = (ticks) => {
   for (const tick of ticks) {
     const token = tick.instrument_token.toString();
     
-    // Extract best bid/ask from depth
-    const bestBid = tick.depth?.buy?.[0]?.price || tick.last_price;
-    const bestAsk = tick.depth?.sell?.[0]?.price || tick.last_price;
+  const rawBid = tick.depth?.buy?.[0]?.price;
+  const rawAsk = tick.depth?.sell?.[0]?.price;
+
+  const bestBid = (rawBid && rawBid > 0) ? rawBid : tick.last_price;
+  const bestAsk = (rawAsk && rawAsk > 0) ? rawAsk : tick.last_price;
+
+
+  const isUpperCircuit = (!rawAsk || rawAsk === 0) && tick.last_price > 0;
+  const isLowerCircuit = (!rawBid || rawBid === 0) && tick.last_price > 0;
+  const circuitStatus = isUpperCircuit ? 'UC' : (isLowerCircuit? 'LC':null);
     
     const tickData = {
       token: token,
@@ -140,8 +147,9 @@ const processTicks = (ticks) => {
       ltp: tick.last_price,
       bid: bestBid,
       ask: bestAsk,
-      bidQty: tick.depth?.buy?.[0]?.quantity || 0,
-      askQty: tick.depth?.sell?.[0]?.quantity || 0,
+      rawBid: rawBid || 0,
+      rawAsk: rawAsk || 0,
+      circuit: circuitStatus,
       open: tick.ohlc?.open,
       high: tick.ohlc?.high,
       low: tick.ohlc?.low,
