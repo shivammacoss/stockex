@@ -408,6 +408,19 @@ router.post('/withdraw-request', protectUser, async (req, res) => {
 
     const user = await User.findById(req.user._id);
     
+    // Check if trading account has negative balance - block withdrawal until P&L is settled
+    const tradingBalance = user.wallet.tradingBalance || 0;
+    const unrealizedPnL = user.wallet.unrealizedPnL || 0;
+    const effectiveTradingBalance = tradingBalance + unrealizedPnL;
+    
+    if (effectiveTradingBalance < 0) {
+      return res.status(400).json({ 
+        message: `Withdrawal blocked! Your trading account has negative balance of ₹${Math.abs(effectiveTradingBalance).toLocaleString()}. Please settle your P&L first by depositing funds to your trading account.`,
+        code: 'NEGATIVE_TRADING_BALANCE',
+        deficit: Math.abs(effectiveTradingBalance)
+      });
+    }
+    
     if (amount > user.wallet.cashBalance) {
       return res.status(400).json({ message: 'Insufficient balance' });
     }

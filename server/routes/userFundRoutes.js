@@ -111,6 +111,19 @@ router.post('/fund-request/withdraw', protectUser, async (req, res) => {
       return res.status(400).json({ message: 'Invalid amount' });
     }
     
+    // Check if trading account has negative balance - block withdrawal until P&L is settled
+    const tradingBalance = req.user.wallet.tradingBalance || 0;
+    const unrealizedPnL = req.user.wallet.unrealizedPnL || 0;
+    const effectiveTradingBalance = tradingBalance + unrealizedPnL;
+    
+    if (effectiveTradingBalance < 0) {
+      return res.status(400).json({ 
+        message: `Withdrawal blocked! Your trading account has negative balance of ₹${Math.abs(effectiveTradingBalance).toLocaleString()}. Please settle your P&L first by depositing funds to your trading account.`,
+        code: 'NEGATIVE_TRADING_BALANCE',
+        deficit: Math.abs(effectiveTradingBalance)
+      });
+    }
+    
     // Check user balance
     if (req.user.wallet.cashBalance < amount) {
       return res.status(400).json({ message: 'Insufficient balance' });
@@ -265,6 +278,18 @@ router.post('/internal-transfer', protectUser, async (req, res) => {
       
     } else {
       // Transfer from Trading Account to Main Wallet
+      // Check if trading account has negative effective balance (including unrealized P&L)
+      const unrealizedPnL = user.wallet?.unrealizedPnL || 0;
+      const effectiveTradingBalance = tradingBalance + unrealizedPnL;
+      
+      if (effectiveTradingBalance < 0) {
+        return res.status(400).json({ 
+          message: `Transfer blocked! Your trading account has negative balance of ₹${Math.abs(effectiveTradingBalance).toLocaleString()}. Please settle your P&L first.`,
+          code: 'NEGATIVE_TRADING_BALANCE',
+          deficit: Math.abs(effectiveTradingBalance)
+        });
+      }
+      
       // Allow withdrawal of free margin only (trading balance - used margin)
       if (amount > availableTradingBalance) {
         return res.status(400).json({ 

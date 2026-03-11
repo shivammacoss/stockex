@@ -2848,14 +2848,15 @@ const TradingPanel = ({ instrument, orderType, setOrderType, walletData, onClose
   };
   const activeWallet = getActiveWallet();
 
-  // Check if segment allows quantity mode (futures and equity, not options)
+  // Check if segment allows quantity mode (only equity, NOT futures)
   const segment = instrument?.displaySegment || instrument?.segment || '';
   const segmentUpper = segment.toUpperCase();
-  // Allow quantity mode for all futures segments (NSE, BSE, MCX) and equity
+  // Futures segments - only Lots mode allowed (no quantity toggle)
   const isFuturesSegment = ['NSEFUT', 'MCXFUT', 'BSEFUT', 'NFO', 'BFO', 'BSE-FUT', 'MCX'].includes(segmentUpper) || 
                            segmentUpper.includes('FUT');
   const isEquitySegment = segmentUpper === 'NSE-EQ' || segmentUpper === 'EQUITY' || segmentUpper === 'NSE' || segmentUpper === 'BSE';
-  const allowsQuantityMode = ((isFutures || isFuturesSegment) && !isOptions) || isEquity || isEquitySegment;
+  // Only allow quantity mode for Equity segments, NOT for Futures
+  const allowsQuantityMode = isEquity || isEquitySegment;
 
   // Always use lot size from DB (no hardcoded fallbacks)
   const lotSize = isCrypto ? 1 : (instrument?.lotSize || 1);

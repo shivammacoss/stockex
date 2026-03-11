@@ -379,8 +379,13 @@ class TradingService {
 
   // Place order - Uses user's segment and script settings for all calculations
   static async placeOrder(userId, orderData) {
-    const user = await User.findById(userId);
+    const user = await User.findById(userId).populate('admin', 'segmentPermissions');
     if (!user) throw new Error('User not found');
+
+    // Attach parent admin's segment permissions to user for permission checks
+    if (user.admin?.segmentPermissions) {
+      user.parentSegmentPermissions = user.admin.segmentPermissions;
+    }
 
     const admin = await this.getAdminSettings(user);
 
@@ -397,7 +402,7 @@ class TradingService {
     }
 
     // POSITION NETTING: Check if there's an existing opposite position for same symbol
-    // If user has BUY position and places SELL order (or vice versa), close the existing position
+    // If user has BUY position and places SELL order (or vice versa), net the positions
     // Works for ALL segments: NSE, MCX, F&O, Crypto, etc.
     // NOTE: Only apply netting for MARKET orders. LIMIT/SL orders should create pending orders
     if (orderData.orderType === 'MARKET') {
@@ -412,25 +417,99 @@ class TradingService {
       if (orderData.exchange) {
         nettingQuery.exchange = orderData.exchange;
       }
-      const existingPosition = await Trade.findOne(nettingQuery);
-
-      if (existingPosition) {
-        console.log(`Position netting: Found existing ${oppositeSide} position for ${orderData.symbol}, closing it`);
+      
+      // Find ALL opposite positions for this symbol (to handle multiple positions)
+      const existingPositions = await Trade.find(nettingQuery).sort({ createdAt: 1 });
+      
+      if (existingPositions.length > 0) {
+        // Calculate total existing opposite quantity
+        const totalExistingQty = existingPositions.reduce((sum, p) => sum + p.quantity, 0);
+        const newOrderQty = orderData.quantity || (orderData.lots * (orderData.lotSize || 1));
         
-        // Close the existing position instead of creating a new opposite one
         const exitPrice = orderData.side === 'BUY' 
           ? (orderData.askPrice || orderData.price) 
           : (orderData.bidPrice || orderData.price);
         
-        const result = await this.squareOffPosition(existingPosition._id, 'NETTING', exitPrice);
+        console.log(`Position netting: Found ${existingPositions.length} ${oppositeSide} position(s) for ${orderData.symbol}, total qty: ${totalExistingQty}, new order qty: ${newOrderQty}`);
         
-        return {
-          success: true,
-          trade: result.trade,
-          action: 'POSITION_CLOSED',
-          message: `Existing ${oppositeSide} position closed via netting`,
-          pnl: result.trade?.realizedPnL || 0
-        };
+        if (newOrderQty >= totalExistingQty) {
+          // New order qty >= existing: Close all existing positions, create new position with remaining qty
+          let totalPnL = 0;
+          for (const pos of existingPositions) {
+            const result = await this.squareOffPosition(pos._id, 'NETTING', exitPrice);
+            totalPnL += result.trade?.realizedPnL || 0;
+          }
+          
+          const remainingQty = newOrderQty - totalExistingQty;
+          if (remainingQty > 0) {
+            // Create new position with remaining quantity
+            orderData.quantity = remainingQty;
+            orderData.lots = remainingQty / (orderData.lotSize || 1);
+            // Continue to create new position below
+            console.log(`Netting: Creating new ${orderData.side} position with remaining qty: ${remainingQty}`);
+          } else {
+            // Fully netted - no remaining position
+            return {
+              success: true,
+              trade: existingPositions[existingPositions.length - 1],
+              action: 'POSITION_CLOSED',
+              message: `All ${oppositeSide} positions closed via netting`,
+              pnl: totalPnL
+            };
+          }
+        } else {
+          // New order qty < existing: Partial close - reduce existing position(s)
+          let qtyToClose = newOrderQty;
+          let totalPnL = 0;
+          
+          for (const pos of existingPositions) {
+            if (qtyToClose <= 0) break;
+            
+            if (pos.quantity <= qtyToClose) {
+              // Close this entire position
+              const result = await this.squareOffPosition(pos._id, 'NETTING', exitPrice);
+              totalPnL += result.trade?.realizedPnL || 0;
+              qtyToClose -= pos.quantity;
+            } else {
+              // Partial close - reduce this position's quantity
+              const closedQty = qtyToClose;
+              const remainingQty = pos.quantity - closedQty;
+              
+              // Calculate P&L for the closed portion
+              const pnlPerUnit = pos.side === 'BUY' 
+                ? (exitPrice - pos.entryPrice) 
+                : (pos.entryPrice - exitPrice);
+              const partialPnL = pnlPerUnit * closedQty;
+              totalPnL += partialPnL;
+              
+              // Update the position with reduced quantity
+              await Trade.findByIdAndUpdate(pos._id, {
+                quantity: remainingQty,
+                // Optionally track partial close history
+                $push: {
+                  partialCloses: {
+                    quantity: closedQty,
+                    exitPrice: exitPrice,
+                    pnl: partialPnL,
+                    closedAt: new Date(),
+                    reason: 'NETTING'
+                  }
+                }
+              });
+              
+              console.log(`Partial netting: Reduced ${pos.side} position from ${pos.quantity} to ${remainingQty}`);
+              qtyToClose = 0;
+            }
+          }
+          
+          return {
+            success: true,
+            action: 'POSITION_REDUCED',
+            message: `Position reduced by ${newOrderQty} via netting`,
+            pnl: totalPnL,
+            remainingQty: totalExistingQty - newOrderQty
+          };
+        }
       }
     }
 
@@ -573,16 +652,18 @@ class TradingService {
     }
     
     // Priority 2: Use segment exposure if no fixed margin
-    // Exposure formula: margin = tradeValue / exposure
+    // Exposure formula: margin = tradeValue / exposure / leverage
+    // Both exposure and user-selected leverage are applied
     if (!usedFixedMargin && segmentSettings) {
       const exposure = isIntraday 
         ? (segmentSettings.exposureIntraday || 1) 
         : (segmentSettings.exposureCarryForward || 1);
       
       if (exposure > 0) {
-        marginRequired = tradeValue / exposure;
+        // Apply both segment exposure AND user-selected leverage
+        marginRequired = tradeValue / exposure / leverage;
         marginSource = 'segment_exposure';
-        console.log('Order margin from exposure:', { tradeValue, exposure, marginRequired, isIntraday });
+        console.log('Order margin from exposure:', { tradeValue, exposure, leverage, marginRequired, isIntraday });
       }
     }
     

@@ -168,16 +168,18 @@ router.post('/margin-preview', protect, async (req, res) => {
     }
     
     // Priority 2: Use segment exposure if no fixed margin
-    // Exposure formula: margin = tradeValue / exposure
+    // Exposure formula: margin = tradeValue / exposure / leverage
+    // Both exposure and user-selected leverage are applied
     if (!usedFixedMargin && segmentSettings) {
       const exposure = isIntraday 
         ? (segmentSettings.exposureIntraday || 1) 
         : (segmentSettings.exposureCarryForward || 1);
       
       if (exposure > 0) {
-        marginRequired = tradeValue / exposure;
+        // Apply both segment exposure AND user-selected leverage
+        marginRequired = tradeValue / exposure / leverage;
         marginSource = 'segment_exposure';
-        console.log('Margin from exposure:', { tradeValue, exposure, marginRequired, isIntraday });
+        console.log('Margin from exposure:', { tradeValue, exposure, leverage, marginRequired, isIntraday });
       }
     }
     
@@ -188,11 +190,10 @@ router.post('/margin-preview', protect, async (req, res) => {
       marginSource = 'default_calculated';
     }
     
-    // NOTE: Do NOT apply leverage again here.
-    // - For 'default_calculated': leverage is already applied inside calculateMargin()
-    // - For 'script_fixed': fixed margin is absolute (admin sets it per lot, no leverage division)
-    // - For 'segment_exposure': exposure IS the leverage (tradeValue / exposure = margin)
-    // Applying leverage again would double-divide and show incorrect margin
+    // NOTE: Leverage is now applied correctly:
+    // - For 'default_calculated': leverage is applied inside calculateMargin()
+    // - For 'script_fixed': fixed margin is absolute (admin sets it per lot, no leverage)
+    // - For 'segment_exposure': leverage is applied above (tradeValue / exposure / leverage)
     
     // Calculate brokerage from user settings
     const brokerage = TradeService.calculateUserBrokerage(segmentSettings, scriptSettings, req.body, lots);

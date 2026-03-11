@@ -69,16 +69,38 @@ class TradeService {
   }
   
   // Get user's segment settings for a trade
+  // Settings are inherited from parent admin/broker/subbroker
+  // Users under Super Admin get full access to all segments
   static getUserSegmentSettings(user, segment, instrumentType) {
+    // Default full access settings
+    const fullAccessSettings = {
+      enabled: true,
+      maxExchangeLots: 1000,
+      commissionType: 'PER_LOT',
+      commissionLot: 0,
+      maxLots: 500,
+      minLots: 1,
+      orderLots: 100,
+      exposureIntraday: 10,
+      exposureCarryForward: 5,
+      optionBuy: { allowed: true, commissionType: 'PER_LOT', commission: 0, strikeSelection: 100, maxExchangeLots: 1000 },
+      optionSell: { allowed: true, commissionType: 'PER_LOT', commission: 0, strikeSelection: 100, maxExchangeLots: 1000 }
+    };
+    
+    // Users directly under Super Admin get full access to all segments
+    if (user.creatorRole === 'SUPER_ADMIN') {
+      console.log('User under Super Admin - full access granted');
+      return fullAccessSettings;
+    }
+    
     // Map trade segment/displaySegment to Market Watch segment permission key
-    // Market Watch segments: NSEFUT, NSEOPT, MCXFUT, MCXOPT, NSE-EQ, BSE-FUT, BSE-OPT
     const segmentUpper = segment?.toUpperCase() || '';
     const isOptions = instrumentType === 'OPTIONS' || instrumentType === 'OPT';
     
-    let segmentKey = segment; // Default to passed segment
+    let segmentKey = segment;
     
     // Direct matches for Market Watch segments
-    const marketWatchSegments = ['NSEFUT', 'NSEOPT', 'MCXFUT', 'MCXOPT', 'NSE-EQ', 'BSE-FUT', 'BSE-OPT'];
+    const marketWatchSegments = ['NSEFUT', 'NSEOPT', 'MCXFUT', 'MCXOPT', 'NSE-EQ', 'BSE-FUT', 'BSE-OPT', 'CRYPTO'];
     if (marketWatchSegments.includes(segmentUpper)) {
       segmentKey = segmentUpper;
     }
@@ -92,55 +114,45 @@ class TradeService {
     } else if (segmentUpper === 'BSE' || segmentUpper === 'BFO') {
       segmentKey = isOptions ? 'BSE-OPT' : 'BSE-FUT';
     } else if (segmentUpper === 'CURRENCY' || segmentUpper === 'CDS') {
-      segmentKey = 'NSEFUT'; // Currency derivatives mapped to NSE futures
+      segmentKey = 'NSEFUT';
     } else if (segmentUpper === 'CRYPTO') {
-      segmentKey = 'NSE-EQ'; // Crypto uses equity settings
+      segmentKey = 'CRYPTO';
     }
     
-    // Handle Mongoose Map - convert to plain object first if needed
-    let segmentPerms = user.segmentPermissions;
-    if (segmentPerms && typeof segmentPerms.toObject === 'function') {
-      segmentPerms = segmentPerms.toObject();
+    // Check parent admin's segment permissions (stored in user.parentSegmentPermissions populated from admin)
+    // If parent admin has this segment enabled, allow trading
+    let parentSegmentPerms = user.parentSegmentPermissions || user.admin?.segmentPermissions;
+    
+    if (parentSegmentPerms && typeof parentSegmentPerms.toObject === 'function') {
+      parentSegmentPerms = parentSegmentPerms.toObject();
     }
     
-    // Try to get segment permissions - check if it's a Map or Object
-    let segmentPermissions = null;
-    
-    if (segmentPerms instanceof Map) {
-      segmentPermissions = segmentPerms.get(segmentKey) || segmentPerms.get(segment?.toUpperCase());
-    } else if (segmentPerms && typeof segmentPerms === 'object') {
-      // It's a plain object (most likely from Mongoose)
-      segmentPermissions = segmentPerms[segmentKey] || segmentPerms[segment?.toUpperCase()];
+    let parentSegmentSettings = null;
+    if (parentSegmentPerms instanceof Map) {
+      parentSegmentSettings = parentSegmentPerms.get(segmentKey) || parentSegmentPerms.get(segment?.toUpperCase());
+    } else if (parentSegmentPerms && typeof parentSegmentPerms === 'object') {
+      parentSegmentSettings = parentSegmentPerms[segmentKey] || parentSegmentPerms[segment?.toUpperCase()];
     }
     
-    // Convert nested Map/Object if needed
-    if (segmentPermissions && typeof segmentPermissions.toObject === 'function') {
-      segmentPermissions = segmentPermissions.toObject();
+    if (parentSegmentSettings && typeof parentSegmentSettings.toObject === 'function') {
+      parentSegmentSettings = parentSegmentSettings.toObject();
     }
     
     console.log('Segment Settings Debug:', {
       segment, segmentKey,
-      found: !!segmentPermissions,
-      maxLots: segmentPermissions?.maxLots,
-      commissionLot: segmentPermissions?.commissionLot,
-      availableKeys: segmentPerms instanceof Map 
-        ? Array.from(segmentPerms.keys())
-        : Object.keys(segmentPerms || {})
+      creatorRole: user.creatorRole,
+      hasParentSettings: !!parentSegmentSettings,
+      parentEnabled: parentSegmentSettings?.enabled
     });
     
-    return segmentPermissions || {
-      enabled: true,
-      maxExchangeLots: 100,
-      commissionType: 'PER_LOT',
-      commissionLot: 0,
-      maxLots: 50,
-      minLots: 1,
-      orderLots: 10,
-      exposureIntraday: 1,
-      exposureCarryForward: 1,
-      optionBuy: { allowed: true, commissionType: 'PER_LOT', commission: 0, strikeSelection: 50, maxExchangeLots: 100 },
-      optionSell: { allowed: true, commissionType: 'PER_LOT', commission: 0, strikeSelection: 50, maxExchangeLots: 100 }
-    };
+    // If parent admin has settings for this segment, use them
+    if (parentSegmentSettings) {
+      return parentSegmentSettings;
+    }
+    
+    // If no parent settings found, allow trading with default settings
+    // This ensures users can trade even if parent admin hasn't configured specific segments
+    return fullAccessSettings;
   }
   
   // Get user's script-specific settings
@@ -290,11 +302,16 @@ class TradeService {
     await this.checkMarketOpen(tradeData.segment);
     
     // 2. Get user and admin
-    const user = await User.findById(userId);
+    const user = await User.findById(userId).populate('admin', 'segmentPermissions');
     if (!user) throw new Error('User not found');
     
     const admin = await Admin.findOne({ adminCode: user.adminCode });
     if (!admin) throw new Error('Admin not found');
+    
+    // Attach parent admin's segment permissions to user for permission checks
+    if (user.admin?.segmentPermissions) {
+      user.parentSegmentPermissions = user.admin.segmentPermissions;
+    }
     
     // 3. Get user's segment and script settings
     const segmentSettings = this.getUserSegmentSettings(user, tradeData.segment, tradeData.instrumentType);

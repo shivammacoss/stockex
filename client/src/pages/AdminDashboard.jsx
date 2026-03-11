@@ -281,7 +281,7 @@ const AdminDashboard = () => {
   const navItems = getNavItems();
 
   return (
-    <div className="min-h-screen bg-dark-900 flex flex-col md:flex-row">
+    <div className="h-screen bg-dark-900 flex flex-col md:flex-row overflow-hidden">
       {/* Mobile Header */}
       <header className="md:hidden bg-dark-800 border-b border-dark-600 px-4 py-3 flex items-center justify-between">
         <Link to="/" className="flex items-center gap-2">
@@ -336,9 +336,9 @@ const AdminDashboard = () => {
         </div>
       )}
 
-      {/* Desktop Sidebar */}
-      <aside className="hidden md:flex w-64 bg-dark-800 border-r border-dark-600 flex-col">
-        <div className="p-4 border-b border-dark-600">
+      {/* Desktop Sidebar - Fixed */}
+      <aside className="hidden md:flex w-64 bg-dark-800 border-r border-dark-600 flex-col h-screen fixed left-0 top-0">
+        <div className="p-4 border-b border-dark-600 flex-shrink-0">
           <Link to="/" className="flex items-center gap-2">
             <span className="text-xl font-bold">stockex</span>
           </Link>
@@ -349,7 +349,7 @@ const AdminDashboard = () => {
 
         {/* Admin Info */}
         {!isSuperAdmin && admin?.adminCode && (
-          <div className={`px-4 py-3 border-b border-dark-600 ${admin?.isDemo ? 'bg-green-900/20' : 'bg-dark-700/50'}`}>
+          <div className={`px-4 py-3 border-b border-dark-600 flex-shrink-0 ${admin?.isDemo ? 'bg-green-900/20' : 'bg-dark-700/50'}`}>
             <div className="text-xs text-gray-400">{admin?.isDemo ? 'Your Demo Broker Code' : 'Your Admin Code'}</div>
             <div className={`text-lg font-mono font-bold ${admin?.isDemo ? 'text-green-400' : 'text-purple-400'}`}>{admin.adminCode}</div>
             <div className={`text-xs mt-1 ${getRoleColor()}`}>
@@ -366,7 +366,7 @@ const AdminDashboard = () => {
           </div>
         )}
 
-        <nav className="flex-1 p-4 space-y-1">
+        <nav className="flex-1 p-4 space-y-1 overflow-y-auto">
           {navItems.map(item => (
             <Link
               key={item.path}
@@ -383,7 +383,7 @@ const AdminDashboard = () => {
           ))}
         </nav>
 
-        <div className="p-4 border-t border-dark-600">
+        <div className="p-4 border-t border-dark-600 flex-shrink-0 bg-dark-800">
           <div className="text-sm text-gray-400 mb-1">
             {admin?.name || admin?.username}
           </div>
@@ -398,8 +398,8 @@ const AdminDashboard = () => {
         </div>
       </aside>
 
-      {/* Main Content */}
-      <main className="flex-1 overflow-auto">
+      {/* Main Content - Scrollable with margin for fixed sidebar */}
+      <main className="flex-1 md:ml-64 overflow-y-auto h-screen">
         <Routes>
           <Route path="dashboard" element={isSuperAdmin ? <SuperAdminDashboard /> : <AdminDashboardHome />} />
           {/* Super Admin Only Routes */}
@@ -2356,7 +2356,7 @@ const AdminPasswordResetModal = ({ admin: targetAdmin, token, onClose }) => {
 // Admin Settings Modal - All Settings (General, Segment Permissions, Script Settings)
 const AdminChargesModal = ({ admin: targetAdmin, token, onClose, onSuccess }) => {
   const [activeTab, setActiveTab] = useState('general');
-  const segmentKeys = ['NSEFUT', 'NSEOPT', 'MCXFUT', 'MCXOPT', 'NSE-EQ', 'BSE-FUT', 'BSE-OPT', 'CRYPTO'];
+  const segmentKeys = ['NSEFUT', 'NSEOPT', 'MCXFUT', 'MCXOPT', 'NSE-EQ', 'BSE-FUT', 'BSE-OPT'];
 
   // General settings state
   const [adminSettings, setAdminSettings] = useState({
@@ -6418,12 +6418,11 @@ const MarketControl = () => {
     return <div className="flex items-center justify-center h-64"><RefreshCw className="animate-spin" size={32} /></div>;
   }
 
-  const segments = ['EQUITY', 'FNO', 'MCX', 'CRYPTO'];
+  const segments = ['EQUITY', 'FNO', 'MCX'];
   const segmentColors = {
     EQUITY: 'blue',
     FNO: 'purple',
-    MCX: 'yellow',
-    CRYPTO: 'green'
+    MCX: 'yellow'
   };
 
   return (
@@ -9503,7 +9502,7 @@ const TradingPanel = () => {
   const [selectedUser, setSelectedUser] = useState(null);
   const [userSearch, setUserSearch] = useState('');
 
-  const segments = ['NSEFUT', 'NSEOPT', 'MCXFUT', 'MCXOPT', 'NSE-EQ', 'BSE-FUT', 'BSE-OPT', 'CRYPTO'];
+  const segments = ['NSEFUT', 'NSEOPT', 'MCXFUT', 'MCXOPT', 'NSE-EQ', 'BSE-FUT', 'BSE-OPT'];
 
   useEffect(() => {
     fetchInstruments(activeSegment);
@@ -10373,7 +10372,7 @@ const SystemDefaultSettings = () => {
   const [message, setMessage] = useState({ type: '', text: '' });
   
   // Admin Segment/Script Defaults state (same structure as admin My Settings)
-  const adminSegmentKeys = ['NSEFUT', 'NSEOPT', 'MCXFUT', 'MCXOPT', 'NSE-EQ', 'BSE-FUT', 'BSE-OPT', 'CRYPTO'];
+  const adminSegmentKeys = ['NSEFUT', 'NSEOPT', 'MCXFUT', 'MCXOPT', 'NSE-EQ', 'BSE-FUT', 'BSE-OPT'];
   const [adminDefTab, setAdminDefTab] = useState('segments'); // 'segments' or 'scripts'
   const [adminDefExpandedSeg, setAdminDefExpandedSeg] = useState('NSEFUT');
   const [adminSegDefs, setAdminSegDefs] = useState({});
@@ -13013,7 +13012,7 @@ const PattiSharingManagement = () => {
               <div>
                 <label className="block text-sm font-medium mb-3">Segment-wise Sharing (Optional)</label>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  {['EQUITY', 'FNO', 'MCX', 'CRYPTO', 'CURRENCY'].map(segment => (
+                  {['EQUITY', 'FNO', 'MCX', 'CURRENCY'].map(segment => (
                     <div key={segment} className={`bg-dark-700 rounded-lg p-3 ${!formData.segments[segment]?.enabled && 'opacity-50'}`}>
                       <div className="flex items-center justify-between mb-2">
                         <label className="flex items-center gap-2 cursor-pointer">
@@ -15048,7 +15047,7 @@ const MySegmentSettings = () => {
   const [selectedScript, setSelectedScript] = useState(null);
   const [scriptSearchTerm, setScriptSearchTerm] = useState('');
 
-  const segments = ['NSEFUT', 'NSEOPT', 'MCXFUT', 'MCXOPT', 'NSE-EQ', 'BSE-FUT', 'BSE-OPT', 'CRYPTO'];
+  const segments = ['NSEFUT', 'NSEOPT', 'MCXFUT', 'MCXOPT', 'NSE-EQ', 'BSE-FUT', 'BSE-OPT'];
 
   const defaultSegmentSettings = {
     enabled: false, maxExchangeLots: 100, commissionType: 'PER_LOT', commissionLot: 0,
@@ -16344,13 +16343,6 @@ const AllUsersManagement = () => {
                         title="Change Password"
                       >
                         <Key size={16} />
-                      </button>
-                      <button
-                        onClick={() => openEditModal(user)}
-                        className="p-2 hover:bg-dark-600 rounded transition text-purple-400"
-                        title="Edit Settings"
-                      >
-                        <Settings size={16} />
                       </button>
                       <button
                         onClick={() => {
@@ -18700,7 +18692,6 @@ const UserManagement = () => {
                 <div className="flex gap-2 flex-wrap">
                   <button onClick={() => { setSelectedUser(user); setShowEditModal(true); }} className="p-2 bg-dark-700 rounded text-blue-400"><Edit size={16} /></button>
                   <button onClick={() => { setSelectedUser(user); setShowPasswordModal(true); }} className="p-2 bg-dark-700 rounded text-yellow-400"><Key size={16} /></button>
-                  <button onClick={() => openSettingsModal(user)} className="p-2 bg-dark-700 rounded text-purple-400"><Settings size={16} /></button>
                   <button onClick={() => { setSelectedUser(user); setShowCopyModal(true); }} className="p-2 bg-dark-700 rounded text-cyan-400"><Copy size={16} /></button>
                   <button onClick={() => { setSelectedUser(user); setShowWalletModal(true); }} className="p-2 bg-dark-700 rounded text-green-400" title="Manage INR Wallet"><Wallet size={16} /></button>
                   {isSuperAdmin && <button onClick={() => handleLoginAsUser(user._id)} className="p-2 bg-dark-700 rounded text-indigo-400" title="Login As User"><Eye size={16} /></button>}
@@ -18784,13 +18775,6 @@ const UserManagement = () => {
                         title="Change Password"
                       >
                         <Key size={16} />
-                      </button>
-                      <button
-                        onClick={() => openSettingsModal(user)}
-                        className="p-2 hover:bg-dark-600 rounded transition text-purple-400"
-                        title="Edit Settings"
-                      >
-                        <Settings size={16} />
                       </button>
                       <button
                         onClick={() => { setSelectedUser(user); setShowCopyModal(true); }}
