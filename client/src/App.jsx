@@ -17,7 +17,35 @@ import UserOrders from './pages/UserOrders';
 import UserTransactions from './pages/UserTransactions';
 import UserGames from './pages/UserGames';
 import LandingPage from './pages/LandingPage';
+import LandingPageNew from './pages/LandingPageNew';
 import LoginAs from './pages/LoginAs';
+// Landing Pages from stockex_repo
+import About from './pages/landing/about/About';
+import PropFirm from './pages/landing/prop-firm/Prop-firm';
+import Partnership from './pages/landing/partnership/Partnership';
+import Contact from './pages/landing/contact/Contact';
+import Blog from './pages/landing/blog/Blog';
+import Careers from './pages/landing/careers/Careers';
+import Markets from './pages/landing/markets/Markets';
+import Accounts from './pages/landing/accounts/Accounts';
+import UserAccount from './pages/landing/accounts/UserAccount';
+import DemoAccount from './pages/landing/accounts/DemoAccount';
+import DemoTrading from './pages/landing/demo-trading/DemoTrading';
+import BrokerProgram from './pages/landing/broker-program/BrokerProgram';
+import StocksMarket from './pages/landing/markets/stocks/Stocks';
+import ForexMarket from './pages/landing/markets/forex/Forex';
+import IndicesMarket from './pages/landing/markets/indices/Indices';
+import CommoditiesMarket from './pages/landing/markets/commodities/Commodities';
+import CurrencyMarket from './pages/landing/markets/currency/Currency';
+import MetalsMarket from './pages/landing/markets/metals/Metals';
+import CfdsMarket from './pages/landing/markets/cfds/Cfds';
+import BrokerageCalculator from './pages/landing/tools/BrokerageCalculator';
+import ProfitLossCalculator from './pages/landing/tools/ProfitLossCalculator';
+import MarginCalculator from './pages/landing/tools/MarginCalculator';
+import MarketHeatmap from './pages/landing/tools/MarketHeatmap';
+import PrivacyPolicy from './pages/landing/legal/PrivacyPolicy';
+import TermsConditions from './pages/landing/legal/TermsConditions';
+import RiskDisclosure from './pages/landing/legal/RiskDisclosure';
 
 class ErrorBoundary extends React.Component {
   constructor(props) {
@@ -69,7 +97,33 @@ function App() {
       <AuthProvider>
         <Router>
           <Routes>
-            <Route path="/" element={<LandingPage />} />
+            <Route path="/" element={<LandingPageNew />} />
+            <Route path="/about" element={<About />} />
+            <Route path="/careers" element={<Careers />} />
+            <Route path="/blog" element={<Blog />} />
+            <Route path="/markets" element={<Markets />} />
+            <Route path="/markets/stocks" element={<StocksMarket />} />
+            <Route path="/markets/forex" element={<ForexMarket />} />
+            <Route path="/markets/indices" element={<IndicesMarket />} />
+            <Route path="/markets/commodities" element={<CommoditiesMarket />} />
+            <Route path="/markets/currency" element={<CurrencyMarket />} />
+            <Route path="/markets/metals" element={<MetalsMarket />} />
+            <Route path="/markets/cfds" element={<CfdsMarket />} />
+            <Route path="/accounts" element={<Accounts />} />
+            <Route path="/accounts/user" element={<UserAccount />} />
+            <Route path="/accounts/demo" element={<DemoAccount />} />
+            <Route path="/demo-trading" element={<DemoTrading />} />
+            <Route path="/broker-program" element={<BrokerProgram />} />
+            <Route path="/partnership" element={<Partnership />} />
+            <Route path="/prop-firm" element={<PropFirm />} />
+            <Route path="/contact" element={<Contact />} />
+            <Route path="/legal/privacy-policy" element={<PrivacyPolicy />} />
+            <Route path="/legal/terms-and-conditions" element={<TermsConditions />} />
+            <Route path="/legal/risk-disclosure" element={<RiskDisclosure />} />
+            <Route path="/tools/brokerage-calculator" element={<BrokerageCalculator />} />
+            <Route path="/tools/profit-loss-calculator" element={<ProfitLossCalculator />} />
+            <Route path="/tools/margin-calculator" element={<MarginCalculator />} />
+            <Route path="/tools/market-heatmap" element={<MarketHeatmap />} />
             <Route path="/login" element={<UserLogin />} />
             <Route path="/login-as" element={<LoginAs />} />
             
