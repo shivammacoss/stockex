@@ -8,7 +8,7 @@ import {
   Key, Wallet, Eye, EyeOff, X, ArrowUpCircle, ArrowDownCircle,
   RefreshCw, Menu, Shield, CreditCard, FileText, BarChart3, Building2, Settings, UserPlus, Copy,
   ChevronLeft, ChevronRight, ArrowRightLeft, Layers, Save, DollarSign, Bell, Award, Star, CheckCircle,
-  Gamepad2, Trophy, Target, Hash, Bitcoin, Clock, Percent, AlertTriangle, Gift, Zap, Coins, Lock, Play
+  Gamepad2, Trophy, Target, Hash, Bitcoin, Clock, Percent, AlertTriangle, Gift, Zap, Coins, Lock, Play, History
 } from 'lucide-react';
 
 // Reusable Pagination Component
@@ -199,6 +199,7 @@ const AdminDashboard = () => {
     if (isSuperAdmin) {
       return [
         ...baseItems,
+        { path: `${basePath}/all-accounts`, icon: Eye, label: 'All Accounts Overview' },
         { path: `${basePath}/admins`, icon: Shield, label: 'Hierarchy Management' },
         { path: `${basePath}/demo-brokers`, icon: Play, label: 'Demo Brokers' },
         { path: `${basePath}/all-users`, icon: Users, label: 'All Users' },
@@ -403,6 +404,7 @@ const AdminDashboard = () => {
         <Routes>
           <Route path="dashboard" element={isSuperAdmin ? <SuperAdminDashboard /> : <AdminDashboardHome />} />
           {/* Super Admin Only Routes */}
+          {isSuperAdmin && <Route path="all-accounts" element={<AllAccountsOverview />} />}
           {isSuperAdmin && <Route path="admins/*" element={<AdminManagement />} />}
           {isSuperAdmin && <Route path="demo-brokers" element={<DemoBrokersManagement />} />}
           {isSuperAdmin && <Route path="all-users" element={<AllUsersManagement />} />}
@@ -979,6 +981,17 @@ const AdminManagement = () => {
   const [showRoleModal, setShowRoleModal] = useState(false);
   const [showRestrictModal, setShowRestrictModal] = useState(false);
   const [showUsersModal, setShowUsersModal] = useState(false);
+  const [showAllAccountsModal, setShowAllAccountsModal] = useState(false);
+  const [allAccountsData, setAllAccountsData] = useState(null);
+  const [loadingAllAccounts, setLoadingAllAccounts] = useState(false);
+  const [showFundHistoryModal, setShowFundHistoryModal] = useState(false);
+  const [fundHistory, setFundHistory] = useState([]);
+  const [loadingFundHistory, setLoadingFundHistory] = useState(false);
+  const [showHierarchyModal, setShowHierarchyModal] = useState(false);
+  const [hierarchyData, setHierarchyData] = useState(null);
+  const [loadingHierarchy, setLoadingHierarchy] = useState(false);
+  const [expandedBrokers, setExpandedBrokers] = useState({});
+  const [expandedSubBrokers, setExpandedSubBrokers] = useState({});
   const [adminUsers, setAdminUsers] = useState([]);
   const [loadingUsers, setLoadingUsers] = useState(false);
   const [selectedAdmin, setSelectedAdmin] = useState(null);
@@ -1153,6 +1166,128 @@ const AdminManagement = () => {
     fetchAdminUsers(adm);
   };
 
+  // Fetch all accounts (subordinates + users) under an admin
+  const fetchAllAccountsUnder = async (targetAdmin) => {
+    setLoadingAllAccounts(true);
+    setAllAccountsData(null);
+    try {
+      // Fetch subordinates (brokers/sub-brokers under this admin)
+      const subordinates = admins.filter(a => 
+        a.parentId?._id === targetAdmin._id || 
+        a.parentId === targetAdmin._id ||
+        a.hierarchyPath?.includes(targetAdmin._id)
+      );
+      
+      // Fetch users under this admin
+      const { data: users } = await axios.get(`/api/admin/manage/admins/${targetAdmin._id}/users`, {
+        headers: { Authorization: `Bearer ${admin.token}` }
+      });
+      
+      // Get sub-subordinates (e.g., sub-brokers under brokers)
+      const subSubordinates = [];
+      for (const sub of subordinates) {
+        const subSubs = admins.filter(a => 
+          a.parentId?._id === sub._id || a.parentId === sub._id
+        );
+        subSubordinates.push(...subSubs);
+      }
+      
+      // Fetch users for each subordinate
+      const subordinateUsers = [];
+      for (const sub of [...subordinates, ...subSubordinates]) {
+        try {
+          const { data: subUsers } = await axios.get(`/api/admin/manage/admins/${sub._id}/users`, {
+            headers: { Authorization: `Bearer ${admin.token}` }
+          });
+          subordinateUsers.push(...(subUsers.users || []));
+        } catch (e) {
+          console.error('Error fetching users for', sub.adminCode);
+        }
+      }
+      
+      setAllAccountsData({
+        admin: targetAdmin,
+        subordinates: [...subordinates, ...subSubordinates],
+        directUsers: users.users || [],
+        allUsers: [...(users.users || []), ...subordinateUsers],
+        stats: {
+          totalSubordinates: subordinates.length + subSubordinates.length,
+          brokers: subordinates.filter(s => s.role === 'BROKER').length,
+          subBrokers: [...subordinates, ...subSubordinates].filter(s => s.role === 'SUB_BROKER').length,
+          directUsers: (users.users || []).length,
+          totalUsers: (users.users || []).length + subordinateUsers.length
+        }
+      });
+    } catch (error) {
+      console.error('Error fetching all accounts:', error);
+      setAllAccountsData({ error: 'Failed to fetch accounts' });
+    } finally {
+      setLoadingAllAccounts(false);
+    }
+  };
+
+  const handleViewAllAccounts = (adm) => {
+    setSelectedAdmin(adm);
+    setShowAllAccountsModal(true);
+    fetchAllAccountsUnder(adm);
+  };
+
+  // Fetch fund history for an admin
+  const fetchFundHistory = async (targetAdmin) => {
+    setLoadingFundHistory(true);
+    setFundHistory([]);
+    try {
+      const { data } = await axios.get(`/api/admin/manage/admins/${targetAdmin._id}/fund-history`, {
+        headers: { Authorization: `Bearer ${admin.token}` }
+      });
+      setFundHistory(data.history || []);
+    } catch (error) {
+      console.error('Error fetching fund history:', error);
+      setFundHistory([]);
+    } finally {
+      setLoadingFundHistory(false);
+    }
+  };
+
+  const handleViewFundHistory = (adm) => {
+    setSelectedAdmin(adm);
+    setShowFundHistoryModal(true);
+    fetchFundHistory(adm);
+  };
+
+  // Fetch complete hierarchy for an admin
+  const fetchHierarchy = async (targetAdmin) => {
+    setLoadingHierarchy(true);
+    setHierarchyData(null);
+    setExpandedBrokers({});
+    setExpandedSubBrokers({});
+    try {
+      const { data } = await axios.get(`/api/admin/manage/admins/${targetAdmin._id}/hierarchy`, {
+        headers: { Authorization: `Bearer ${admin.token}` }
+      });
+      setHierarchyData(data);
+    } catch (error) {
+      console.error('Error fetching hierarchy:', error);
+      setHierarchyData(null);
+    } finally {
+      setLoadingHierarchy(false);
+    }
+  };
+
+  const handleViewHierarchy = (adm) => {
+    setSelectedAdmin(adm);
+    setShowHierarchyModal(true);
+    fetchHierarchy(adm);
+  };
+
+  const toggleBrokerExpand = (brokerId) => {
+    setExpandedBrokers(prev => ({ ...prev, [brokerId]: !prev[brokerId] }));
+  };
+
+  const toggleSubBrokerExpand = (subBrokerId) => {
+    setExpandedSubBrokers(prev => ({ ...prev, [subBrokerId]: !prev[subBrokerId] }));
+  };
+
   return (
     <div className="p-4 md:p-6">
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-6">
@@ -1276,10 +1411,14 @@ const AdminManagement = () => {
                 </div>
 
                 {/* Stats */}
-                <div className="flex gap-6">
+                <div className="flex gap-4 flex-wrap">
                   <div className="text-center">
                     <div className="text-xs text-gray-400">Wallet</div>
                     <div className="text-lg font-bold text-green-400">₹{(adm.wallet?.balance || 0).toLocaleString()}</div>
+                  </div>
+                  <div className="text-center">
+                    <div className="text-xs text-gray-400">Total Added</div>
+                    <div className="text-lg font-bold text-yellow-400">₹{(adm.wallet?.totalDeposited || 0).toLocaleString()}</div>
                   </div>
                   <div className="text-center">
                     <div className="text-xs text-gray-400">Users</div>
@@ -1310,6 +1449,15 @@ const AdminManagement = () => {
                   >
                     <Eye size={16} /> View
                   </button>
+                  {isSuperAdmin && (
+                    <button
+                      onClick={() => handleViewAllAccounts(adm)}
+                      className="px-3 py-2 bg-amber-600 hover:bg-amber-700 rounded text-sm flex items-center gap-1"
+                      title="View all subordinates and users under this account"
+                    >
+                      <Layers size={16} /> All Accounts
+                    </button>
+                  )}
                   <button
                     onClick={() => handleViewUsers(adm)}
                     className="px-3 py-2 bg-cyan-600 hover:bg-cyan-700 rounded text-sm flex items-center gap-1"
@@ -1327,6 +1475,20 @@ const AdminManagement = () => {
                     className="px-3 py-2 bg-green-600 hover:bg-green-700 rounded text-sm flex items-center gap-1"
                   >
                     <Wallet size={16} /> Fund
+                  </button>
+                  <button
+                    onClick={() => handleViewFundHistory(adm)}
+                    className="px-3 py-2 bg-teal-600 hover:bg-teal-700 rounded text-sm flex items-center gap-1"
+                    title="View fund transaction history"
+                  >
+                    <History size={16} /> History
+                  </button>
+                  <button
+                    onClick={() => handleViewHierarchy(adm)}
+                    className="px-3 py-2 bg-indigo-600 hover:bg-indigo-700 rounded text-sm flex items-center gap-1"
+                    title="View complete hierarchy"
+                  >
+                    <Layers size={16} /> Hierarchy
                   </button>
                   <button
                     onClick={() => { setSelectedAdmin(adm); setShowPasswordModal(true); }}
@@ -1592,6 +1754,541 @@ const AdminManagement = () => {
           onClose={() => { setShowRestrictModal(false); setSelectedAdmin(null); }}
           onSuccess={() => { fetchAdmins(); }}
         />
+      )}
+
+      {/* All Accounts Modal - View all subordinates and users under an admin */}
+      {showAllAccountsModal && selectedAdmin && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-dark-800 rounded-lg w-full max-w-5xl max-h-[90vh] overflow-hidden flex flex-col">
+            <div className="flex justify-between items-center p-4 border-b border-dark-600">
+              <div>
+                <h2 className="text-xl font-bold flex items-center gap-2">
+                  <Layers className="text-amber-400" size={24} />
+                  All Accounts under {selectedAdmin.name || selectedAdmin.username}
+                </h2>
+                <p className="text-sm text-gray-400 mt-1">
+                  <span className={`px-2 py-0.5 rounded text-xs ${getRoleBadgeColor(selectedAdmin.role)}`}>
+                    {getRoleLabel(selectedAdmin.role)}
+                  </span>
+                  <span className="ml-2 font-mono">{selectedAdmin.adminCode}</span>
+                </p>
+              </div>
+              <button onClick={() => { setShowAllAccountsModal(false); setSelectedAdmin(null); setAllAccountsData(null); }} className="text-gray-400 hover:text-white">
+                <X size={24} />
+              </button>
+            </div>
+            
+            <div className="p-4 overflow-y-auto flex-1">
+              {loadingAllAccounts ? (
+                <div className="text-center py-8"><RefreshCw className="animate-spin inline" size={32} /></div>
+              ) : allAccountsData?.error ? (
+                <div className="text-center py-8 text-red-400">{allAccountsData.error}</div>
+              ) : allAccountsData ? (
+                <div className="space-y-6">
+                  {/* Stats Summary */}
+                  <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+                    <div className="bg-purple-500/10 border border-purple-500/30 rounded-lg p-4">
+                      <div className="text-sm text-purple-400">Brokers</div>
+                      <div className="text-2xl font-bold text-purple-300">{allAccountsData.stats?.brokers || 0}</div>
+                    </div>
+                    <div className="bg-green-500/10 border border-green-500/30 rounded-lg p-4">
+                      <div className="text-sm text-green-400">Sub Brokers</div>
+                      <div className="text-2xl font-bold text-green-300">{allAccountsData.stats?.subBrokers || 0}</div>
+                    </div>
+                    <div className="bg-cyan-500/10 border border-cyan-500/30 rounded-lg p-4">
+                      <div className="text-sm text-cyan-400">Direct Users</div>
+                      <div className="text-2xl font-bold text-cyan-300">{allAccountsData.stats?.directUsers || 0}</div>
+                    </div>
+                    <div className="bg-blue-500/10 border border-blue-500/30 rounded-lg p-4">
+                      <div className="text-sm text-blue-400">Total Users</div>
+                      <div className="text-2xl font-bold text-blue-300">{allAccountsData.stats?.totalUsers || 0}</div>
+                    </div>
+                    <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-lg p-4">
+                      <div className="text-sm text-yellow-400">Total Subordinates</div>
+                      <div className="text-2xl font-bold text-yellow-300">{allAccountsData.stats?.totalSubordinates || 0}</div>
+                    </div>
+                  </div>
+
+                  {/* Subordinates Section */}
+                  {allAccountsData.subordinates?.length > 0 && (
+                    <div>
+                      <h3 className="text-lg font-semibold mb-3 flex items-center gap-2">
+                        <Shield size={20} className="text-purple-400" />
+                        Brokers ({allAccountsData.subordinates.length})
+                      </h3>
+                      <div className="bg-dark-700 rounded-lg overflow-hidden">
+                        <table className="w-full">
+                          <thead className="bg-dark-600">
+                            <tr>
+                              <th className="text-left p-3 text-sm">Name</th>
+                              <th className="text-left p-3 text-sm">Code</th>
+                              <th className="text-left p-3 text-sm">Role</th>
+                              <th className="text-left p-3 text-sm">Email</th>
+                              <th className="text-left p-3 text-sm">Users</th>
+                              <th className="text-left p-3 text-sm">Status</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {allAccountsData.subordinates.map(sub => (
+                              <tr key={sub._id} className="border-t border-dark-600 hover:bg-dark-600">
+                                <td className="p-3">{sub.name}</td>
+                                <td className="p-3 font-mono text-sm">{sub.adminCode}</td>
+                                <td className="p-3">
+                                  <span className={`px-2 py-1 rounded text-xs ${getRoleBadgeColor(sub.role)}`}>
+                                    {getRoleLabel(sub.role)}
+                                  </span>
+                                </td>
+                                <td className="p-3 text-gray-400 text-sm">{sub.email}</td>
+                                <td className="p-3">{sub.stats?.totalUsers || sub.userCount || 0}</td>
+                                <td className="p-3">
+                                  <span className={`px-2 py-1 rounded text-xs ${sub.status === 'ACTIVE' ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}`}>
+                                    {sub.status}
+                                  </span>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* All Users Section */}
+                  {allAccountsData.allUsers?.length > 0 && (
+                    <div>
+                      <h3 className="text-lg font-semibold mb-3 flex items-center gap-2">
+                        <Users size={20} className="text-blue-400" />
+                        All Users ({allAccountsData.allUsers.length})
+                      </h3>
+                      <div className="bg-dark-700 rounded-lg overflow-hidden max-h-96 overflow-y-auto">
+                        <table className="w-full">
+                          <thead className="bg-dark-600 sticky top-0">
+                            <tr>
+                              <th className="text-left p-3 text-sm">Name</th>
+                              <th className="text-left p-3 text-sm">Username</th>
+                              <th className="text-left p-3 text-sm">Email</th>
+                              <th className="text-left p-3 text-sm">Balance</th>
+                              <th className="text-left p-3 text-sm">Status</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {allAccountsData.allUsers.slice(0, 100).map(user => (
+                              <tr key={user._id} className="border-t border-dark-600 hover:bg-dark-600">
+                                <td className="p-3">{user.fullName || user.name || '-'}</td>
+                                <td className="p-3 font-mono text-sm text-blue-400">{user.username}</td>
+                                <td className="p-3 text-gray-400 text-sm">{user.email}</td>
+                                <td className="p-3 text-yellow-400">₹{(user.wallet?.balance || 0).toLocaleString()}</td>
+                                <td className="p-3">
+                                  <span className={`px-2 py-1 rounded text-xs ${user.isActive ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}`}>
+                                    {user.isActive ? 'Active' : 'Inactive'}
+                                  </span>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                        {allAccountsData.allUsers.length > 100 && (
+                          <div className="p-3 text-center text-gray-400 text-sm">
+                            Showing first 100 of {allAccountsData.allUsers.length} users
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* No Data */}
+                  {(!allAccountsData.subordinates?.length && !allAccountsData.allUsers?.length) && (
+                    <div className="text-center py-8 text-gray-400">
+                      <Users size={48} className="mx-auto mb-4 opacity-50" />
+                      <p>No subordinates or users found under this account</p>
+                    </div>
+                  )}
+                </div>
+              ) : null}
+            </div>
+            
+            <div className="p-4 border-t border-dark-600">
+              <button
+                onClick={() => { setShowAllAccountsModal(false); setSelectedAdmin(null); setAllAccountsData(null); }}
+                className="w-full py-2 bg-dark-600 hover:bg-dark-500 rounded-lg"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Fund History Modal */}
+      {showFundHistoryModal && selectedAdmin && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-dark-800 rounded-lg w-full max-w-3xl max-h-[90vh] flex flex-col">
+            <div className="p-4 border-b border-dark-600 flex justify-between items-center">
+              <div>
+                <h2 className="text-xl font-bold flex items-center gap-2">
+                  <History size={24} className="text-teal-400" />
+                  Fund History - {selectedAdmin.name || selectedAdmin.username}
+                </h2>
+                <div className="flex items-center gap-2 mt-1">
+                  <span className={`px-2 py-0.5 rounded text-xs ${
+                    selectedAdmin.role === 'ADMIN' ? 'bg-purple-500/20 text-purple-400' :
+                    selectedAdmin.role === 'BROKER' ? 'bg-blue-500/20 text-blue-400' :
+                    'bg-green-500/20 text-green-400'
+                  }`}>{selectedAdmin.role}</span>
+                  <span className="text-sm text-gray-400">{selectedAdmin.adminCode}</span>
+                </div>
+              </div>
+              <button onClick={() => { setShowFundHistoryModal(false); setSelectedAdmin(null); setFundHistory([]); }} className="text-gray-400 hover:text-white">
+                <X size={24} />
+              </button>
+            </div>
+            
+            <div className="p-4 overflow-y-auto flex-1">
+              {/* Summary Stats */}
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+                <div className="bg-green-500/10 border border-green-500/30 rounded-lg p-4">
+                  <div className="text-sm text-green-400">Total Deposited</div>
+                  <div className="text-2xl font-bold text-green-300">₹{(selectedAdmin.wallet?.totalDeposited || 0).toLocaleString()}</div>
+                </div>
+                <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-4">
+                  <div className="text-sm text-red-400">Total Withdrawn</div>
+                  <div className="text-2xl font-bold text-red-300">₹{(selectedAdmin.wallet?.totalWithdrawn || 0).toLocaleString()}</div>
+                </div>
+                <div className="bg-blue-500/10 border border-blue-500/30 rounded-lg p-4">
+                  <div className="text-sm text-blue-400">Current Balance</div>
+                  <div className="text-2xl font-bold text-blue-300">₹{(selectedAdmin.wallet?.balance || 0).toLocaleString()}</div>
+                </div>
+                <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-lg p-4">
+                  <div className="text-sm text-yellow-400">Transactions</div>
+                  <div className="text-2xl font-bold text-yellow-300">{fundHistory.length}</div>
+                </div>
+              </div>
+
+              {loadingFundHistory ? (
+                <div className="text-center py-8"><RefreshCw className="animate-spin inline" size={32} /></div>
+              ) : fundHistory.length === 0 ? (
+                <div className="text-center py-8 text-gray-400">
+                  <History size={48} className="mx-auto mb-4 opacity-50" />
+                  <p>No fund transactions found</p>
+                </div>
+              ) : (
+                <div className="bg-dark-700 rounded-lg overflow-hidden">
+                  <table className="w-full">
+                    <thead className="bg-dark-600">
+                      <tr>
+                        <th className="text-left p-3 text-sm">Date</th>
+                        <th className="text-left p-3 text-sm">Type</th>
+                        <th className="text-left p-3 text-sm">Amount</th>
+                        <th className="text-left p-3 text-sm">Balance After</th>
+                        <th className="text-left p-3 text-sm">Description</th>
+                        <th className="text-left p-3 text-sm">By</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {fundHistory.map((txn, idx) => (
+                        <tr key={txn._id || idx} className="border-t border-dark-600 hover:bg-dark-600">
+                          <td className="p-3 text-sm text-gray-400">
+                            {new Date(txn.createdAt).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}
+                            <br />
+                            <span className="text-xs">{new Date(txn.createdAt).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}</span>
+                          </td>
+                          <td className="p-3">
+                            <span className={`px-2 py-1 rounded text-xs font-medium ${
+                              txn.type === 'CREDIT' ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'
+                            }`}>
+                              {txn.type === 'CREDIT' ? '+ Deposit' : '- Withdraw'}
+                            </span>
+                          </td>
+                          <td className={`p-3 font-bold ${txn.type === 'CREDIT' ? 'text-green-400' : 'text-red-400'}`}>
+                            {txn.type === 'CREDIT' ? '+' : '-'}₹{(txn.amount || 0).toLocaleString()}
+                          </td>
+                          <td className="p-3 text-blue-400">₹{(txn.balanceAfter || 0).toLocaleString()}</td>
+                          <td className="p-3 text-sm text-gray-300">{txn.description || txn.reason || '-'}</td>
+                          <td className="p-3 text-sm text-purple-400">{txn.performedBy?.name || txn.performedBy?.username || 'System'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+            
+            <div className="p-4 border-t border-dark-600">
+              <button
+                onClick={() => { setShowFundHistoryModal(false); setSelectedAdmin(null); setFundHistory([]); }}
+                className="w-full py-2 bg-dark-600 hover:bg-dark-500 rounded-lg"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Hierarchy View Modal */}
+      {showHierarchyModal && selectedAdmin && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-dark-800 rounded-lg w-full max-w-5xl max-h-[90vh] flex flex-col">
+            <div className="p-4 border-b border-dark-600 flex justify-between items-center">
+              <div>
+                <h2 className="text-xl font-bold flex items-center gap-2">
+                  <Layers size={24} className="text-indigo-400" />
+                  Hierarchy View - {selectedAdmin.name || selectedAdmin.username}
+                </h2>
+                <div className="flex items-center gap-2 mt-1">
+                  <span className={`px-2 py-0.5 rounded text-xs ${
+                    selectedAdmin.role === 'ADMIN' ? 'bg-purple-500/20 text-purple-400' :
+                    selectedAdmin.role === 'BROKER' ? 'bg-blue-500/20 text-blue-400' :
+                    'bg-green-500/20 text-green-400'
+                  }`}>{selectedAdmin.role}</span>
+                  <span className="text-sm text-gray-400">{selectedAdmin.adminCode}</span>
+                </div>
+              </div>
+              <button onClick={() => { setShowHierarchyModal(false); setSelectedAdmin(null); setHierarchyData(null); }} className="text-gray-400 hover:text-white">
+                <X size={24} />
+              </button>
+            </div>
+            
+            <div className="p-4 overflow-y-auto flex-1">
+              {loadingHierarchy ? (
+                <div className="text-center py-8"><RefreshCw className="animate-spin inline" size={32} /></div>
+              ) : hierarchyData ? (
+                <>
+                  {/* Summary Stats */}
+                  <div className="grid grid-cols-2 md:grid-cols-6 gap-3 mb-6">
+                    <div className="bg-blue-500/10 border border-blue-500/30 rounded-lg p-3 text-center">
+                      <div className="text-xs text-blue-400">Brokers</div>
+                      <div className="text-xl font-bold text-blue-300">{hierarchyData.stats?.totalBrokers || 0}</div>
+                      <div className="text-xs text-gray-400">₹{(hierarchyData.stats?.totalBrokerBalance || 0).toLocaleString()}</div>
+                    </div>
+                    <div className="bg-green-500/10 border border-green-500/30 rounded-lg p-3 text-center">
+                      <div className="text-xs text-green-400">Sub-Brokers</div>
+                      <div className="text-xl font-bold text-green-300">{hierarchyData.stats?.totalSubBrokers || 0}</div>
+                      <div className="text-xs text-gray-400">₹{(hierarchyData.stats?.totalSubBrokerBalance || 0).toLocaleString()}</div>
+                    </div>
+                    <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-lg p-3 text-center">
+                      <div className="text-xs text-yellow-400">Total Clients</div>
+                      <div className="text-xl font-bold text-yellow-300">{hierarchyData.stats?.totalUsers || 0}</div>
+                      <div className="text-xs text-gray-400">₹{(hierarchyData.stats?.totalUserBalance || 0).toLocaleString()}</div>
+                    </div>
+                    <div className="bg-purple-500/10 border border-purple-500/30 rounded-lg p-3 text-center">
+                      <div className="text-xs text-purple-400">Admin Balance</div>
+                      <div className="text-xl font-bold text-purple-300">₹{(hierarchyData.admin?.wallet?.balance || 0).toLocaleString()}</div>
+                    </div>
+                    <div className="bg-teal-500/10 border border-teal-500/30 rounded-lg p-3 text-center">
+                      <div className="text-xs text-teal-400">Total Deposited</div>
+                      <div className="text-xl font-bold text-teal-300">₹{(hierarchyData.admin?.wallet?.totalDeposited || 0).toLocaleString()}</div>
+                    </div>
+                    <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-3 text-center">
+                      <div className="text-xs text-red-400">Total Withdrawn</div>
+                      <div className="text-xl font-bold text-red-300">₹{(hierarchyData.admin?.wallet?.totalWithdrawn || 0).toLocaleString()}</div>
+                    </div>
+                  </div>
+
+                  {/* Brokers Section */}
+                  {hierarchyData.brokers?.length > 0 && (
+                    <div className="mb-6">
+                      <h3 className="text-lg font-semibold text-blue-400 mb-3 flex items-center gap-2">
+                        <Users size={20} /> Brokers ({hierarchyData.brokers.length})
+                      </h3>
+                      <div className="space-y-2">
+                        {hierarchyData.brokers.map(broker => (
+                          <div key={broker._id} className="bg-dark-700 rounded-lg overflow-hidden">
+                            <div 
+                              className="p-3 flex items-center justify-between cursor-pointer hover:bg-dark-600"
+                              onClick={() => toggleBrokerExpand(broker._id)}
+                            >
+                              <div className="flex items-center gap-3">
+                                <ChevronRight size={18} className={`transition-transform ${expandedBrokers[broker._id] ? 'rotate-90' : ''}`} />
+                                <div>
+                                  <div className="font-medium">{broker.name || broker.username}</div>
+                                  <div className="text-xs text-gray-400">{broker.adminCode}</div>
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-4 text-sm">
+                                <div className="text-center">
+                                  <div className="text-xs text-gray-400">Balance</div>
+                                  <div className="text-yellow-400 font-medium">₹{(broker.wallet?.balance || 0).toLocaleString()}</div>
+                                </div>
+                                <div className="text-center">
+                                  <div className="text-xs text-gray-400">Sub-Brokers</div>
+                                  <div className="text-green-400">{broker.subBrokerCount || 0}</div>
+                                </div>
+                                <div className="text-center">
+                                  <div className="text-xs text-gray-400">Clients</div>
+                                  <div className="text-blue-400">{broker.userCount || 0}</div>
+                                </div>
+                                <div className="text-center">
+                                  <div className="text-xs text-gray-400">Client Balance</div>
+                                  <div className="text-purple-400">₹{(broker.totalUserBalance || 0).toLocaleString()}</div>
+                                </div>
+                              </div>
+                            </div>
+                            
+                            {expandedBrokers[broker._id] && (
+                              <div className="border-t border-dark-600 p-3 bg-dark-750">
+                                {/* Sub-Brokers under this Broker */}
+                                {broker.subBrokers?.length > 0 && (
+                                  <div className="mb-3">
+                                    <div className="text-sm text-green-400 mb-2">Sub-Brokers ({broker.subBrokers.length})</div>
+                                    <div className="space-y-1 ml-4">
+                                      {broker.subBrokers.map(sb => (
+                                        <div key={sb._id} className="bg-dark-600 rounded p-2">
+                                          <div 
+                                            className="flex items-center justify-between cursor-pointer"
+                                            onClick={(e) => { e.stopPropagation(); toggleSubBrokerExpand(sb._id); }}
+                                          >
+                                            <div className="flex items-center gap-2">
+                                              <ChevronRight size={14} className={`transition-transform ${expandedSubBrokers[sb._id] ? 'rotate-90' : ''}`} />
+                                              <span className="text-sm">{sb.name || sb.username}</span>
+                                              <span className="text-xs text-gray-500">{sb.adminCode}</span>
+                                            </div>
+                                            <div className="flex items-center gap-3 text-xs">
+                                              <span className="text-yellow-400">₹{(sb.wallet?.balance || 0).toLocaleString()}</span>
+                                              <span className="text-blue-400">{sb.userCount} clients</span>
+                                              <span className="text-purple-400">₹{(sb.totalUserBalance || 0).toLocaleString()}</span>
+                                            </div>
+                                          </div>
+                                          {expandedSubBrokers[sb._id] && sb.users?.length > 0 && (
+                                            <div className="mt-2 ml-4 space-y-1">
+                                              {sb.users.map(user => (
+                                                <div key={user._id} className="flex items-center justify-between text-xs bg-dark-700 p-2 rounded">
+                                                  <span>{user.fullName || user.username}</span>
+                                                  <span className="text-yellow-400">₹{(user.wallet?.balance || user.wallet?.cashBalance || 0).toLocaleString()}</span>
+                                                </div>
+                                              ))}
+                                            </div>
+                                          )}
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
+                                
+                                {/* Direct Clients under this Broker */}
+                                {broker.users?.length > 0 && (
+                                  <div>
+                                    <div className="text-sm text-yellow-400 mb-2">Direct Clients ({broker.users.length})</div>
+                                    <div className="grid grid-cols-2 md:grid-cols-3 gap-2 ml-4">
+                                      {broker.users.map(user => (
+                                        <div key={user._id} className="flex items-center justify-between text-xs bg-dark-600 p-2 rounded">
+                                          <span>{user.fullName || user.username}</span>
+                                          <span className="text-yellow-400">₹{(user.wallet?.balance || user.wallet?.cashBalance || 0).toLocaleString()}</span>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
+                                
+                                {!broker.subBrokers?.length && !broker.users?.length && (
+                                  <div className="text-center text-gray-500 text-sm py-2">No sub-brokers or clients</div>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Direct Sub-Brokers Section */}
+                  {hierarchyData.directSubBrokers?.length > 0 && (
+                    <div className="mb-6">
+                      <h3 className="text-lg font-semibold text-green-400 mb-3 flex items-center gap-2">
+                        <Users size={20} /> Direct Sub-Brokers ({hierarchyData.directSubBrokers.length})
+                      </h3>
+                      <div className="space-y-2">
+                        {hierarchyData.directSubBrokers.map(sb => (
+                          <div key={sb._id} className="bg-dark-700 rounded-lg overflow-hidden">
+                            <div 
+                              className="p-3 flex items-center justify-between cursor-pointer hover:bg-dark-600"
+                              onClick={() => toggleSubBrokerExpand(sb._id)}
+                            >
+                              <div className="flex items-center gap-3">
+                                <ChevronRight size={18} className={`transition-transform ${expandedSubBrokers[sb._id] ? 'rotate-90' : ''}`} />
+                                <div>
+                                  <div className="font-medium">{sb.name || sb.username}</div>
+                                  <div className="text-xs text-gray-400">{sb.adminCode}</div>
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-4 text-sm">
+                                <div className="text-center">
+                                  <div className="text-xs text-gray-400">Balance</div>
+                                  <div className="text-yellow-400 font-medium">₹{(sb.wallet?.balance || 0).toLocaleString()}</div>
+                                </div>
+                                <div className="text-center">
+                                  <div className="text-xs text-gray-400">Clients</div>
+                                  <div className="text-blue-400">{sb.userCount || 0}</div>
+                                </div>
+                                <div className="text-center">
+                                  <div className="text-xs text-gray-400">Client Balance</div>
+                                  <div className="text-purple-400">₹{(sb.totalUserBalance || 0).toLocaleString()}</div>
+                                </div>
+                              </div>
+                            </div>
+                            
+                            {expandedSubBrokers[sb._id] && sb.users?.length > 0 && (
+                              <div className="border-t border-dark-600 p-3 bg-dark-750">
+                                <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+                                  {sb.users.map(user => (
+                                    <div key={user._id} className="flex items-center justify-between text-xs bg-dark-600 p-2 rounded">
+                                      <span>{user.fullName || user.username}</span>
+                                      <span className="text-yellow-400">₹{(user.wallet?.balance || user.wallet?.cashBalance || 0).toLocaleString()}</span>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Direct Clients Section */}
+                  {hierarchyData.directUsers?.length > 0 && (
+                    <div>
+                      <h3 className="text-lg font-semibold text-yellow-400 mb-3 flex items-center gap-2">
+                        <Users size={20} /> Direct Clients ({hierarchyData.directUsers.length})
+                      </h3>
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                        {hierarchyData.directUsers.map(user => (
+                          <div key={user._id} className="bg-dark-700 p-3 rounded-lg">
+                            <div className="font-medium text-sm">{user.fullName || user.username}</div>
+                            <div className="text-xs text-gray-400">{user.adminCode}</div>
+                            <div className="text-yellow-400 font-medium mt-1">₹{(user.wallet?.balance || user.wallet?.cashBalance || 0).toLocaleString()}</div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* No Data */}
+                  {!hierarchyData.brokers?.length && !hierarchyData.directSubBrokers?.length && !hierarchyData.directUsers?.length && (
+                    <div className="text-center py-8 text-gray-400">
+                      <Layers size={48} className="mx-auto mb-4 opacity-50" />
+                      <p>No subordinates or clients found under this account</p>
+                    </div>
+                  )}
+                </>
+              ) : (
+                <div className="text-center py-8 text-gray-400">
+                  <Layers size={48} className="mx-auto mb-4 opacity-50" />
+                  <p>Failed to load hierarchy data</p>
+                </div>
+              )}
+            </div>
+            
+            <div className="p-4 border-t border-dark-600">
+              <button
+                onClick={() => { setShowHierarchyModal(false); setSelectedAdmin(null); setHierarchyData(null); }}
+                className="w-full py-2 bg-dark-600 hover:bg-dark-500 rounded-lg"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
@@ -13772,6 +14469,64 @@ const GameSettingsManagement = () => {
                 </div>
               )}
 
+              {/* BTC Up/Down Expiry Time Settings */}
+              {selectedGame === 'btcUpDown' && (
+                <div className="space-y-4">
+                  <h4 className="font-medium text-orange-400 flex items-center gap-2">
+                    <Clock size={16} /> Expiry Time Settings
+                  </h4>
+                  <p className="text-xs text-gray-500">Configure available expiry times for BTC Up/Down trades (in seconds)</p>
+                  
+                  <div>
+                    <label className="block text-sm text-gray-400 mb-2">Allowed Expiry Times</label>
+                    <div className="flex flex-wrap gap-2">
+                      {[60, 120, 300, 600, 900].map(time => {
+                        const isEnabled = (currentGame?.allowedExpiryTimes || [60, 120, 300, 600, 900]).includes(time);
+                        const label = time < 60 ? `${time}s` : `${time / 60}m`;
+                        return (
+                          <button
+                            key={time}
+                            onClick={() => {
+                              const current = currentGame?.allowedExpiryTimes || [60, 120, 300, 600, 900];
+                              const updated = isEnabled 
+                                ? current.filter(t => t !== time)
+                                : [...current, time].sort((a, b) => a - b);
+                              if (updated.length > 0) {
+                                updateGameSetting(selectedGame, 'allowedExpiryTimes', updated);
+                              }
+                            }}
+                            className={`px-3 py-1.5 rounded-lg text-sm font-medium transition ${
+                              isEnabled 
+                                ? 'bg-orange-500 text-white' 
+                                : 'bg-dark-700 text-gray-400 hover:bg-dark-600'
+                            }`}
+                          >
+                            {label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <p className="text-xs text-gray-500 mt-2">Click to enable/disable each expiry time option</p>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm text-gray-400 mb-2">Default Expiry Time (seconds)</label>
+                    <select
+                      value={currentGame?.defaultExpiryTime || 60}
+                      onChange={e => updateGameSetting(selectedGame, 'defaultExpiryTime', parseInt(e.target.value))}
+                      className="w-full bg-dark-700 border border-dark-600 rounded px-4 py-2"
+                    >
+                      {(currentGame?.allowedExpiryTimes || [60, 120, 300, 600, 900]).map(time => (
+                        <option key={time} value={time}>
+                          {time < 60 ? `${time} seconds` : `${time / 60} minute${time > 60 ? 's' : ''}`}
+                        </option>
+                      ))}
+                    </select>
+                    <p className="text-xs text-gray-500 mt-1">Pre-selected expiry time for users</p>
+                  </div>
+                </div>
+              )}
+
               {/* Per-Game Profit Distribution */}
               <div className="space-y-4">
                 <h4 className="font-medium text-orange-400">Brokerage Distribution (%)</h4>
@@ -15868,6 +16623,482 @@ const ProfileSettings = () => {
             <div className="text-green-400">{admin?.status || 'ACTIVE'}</div>
           </div>
         </div>
+      </div>
+    </div>
+  );
+};
+
+// All Accounts Overview (Super Admin only) - View complete hierarchy of all accounts
+const AllAccountsOverview = () => {
+  const { admin } = useAuth();
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [searchResults, setSearchResults] = useState(null);
+  const [searching, setSearching] = useState(false);
+  const [activeTab, setActiveTab] = useState('overview'); // overview, admins, brokers, subbrokers, users
+  const [expandedAdmin, setExpandedAdmin] = useState(null);
+
+  useEffect(() => {
+    fetchAllAccounts();
+  }, []);
+
+  const fetchAllAccounts = async () => {
+    try {
+      const { data } = await axios.get('/api/admin/manage/all-accounts-overview', {
+        headers: { Authorization: `Bearer ${admin.token}` }
+      });
+      setData(data);
+    } catch (error) {
+      console.error('Error fetching accounts:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSearch = async () => {
+    if (!searchTerm.trim() || searchTerm.length < 2) return;
+    setSearching(true);
+    try {
+      const { data } = await axios.get(`/api/admin/manage/search-all-accounts?q=${encodeURIComponent(searchTerm)}`, {
+        headers: { Authorization: `Bearer ${admin.token}` }
+      });
+      setSearchResults(data);
+    } catch (error) {
+      console.error('Error searching:', error);
+    } finally {
+      setSearching(false);
+    }
+  };
+
+  const clearSearch = () => {
+    setSearchTerm('');
+    setSearchResults(null);
+  };
+
+  const getRoleBadge = (role) => {
+    const colors = {
+      'ADMIN': 'bg-purple-500/20 text-purple-400 border-purple-500/30',
+      'BROKER': 'bg-cyan-500/20 text-cyan-400 border-cyan-500/30',
+      'SUB_BROKER': 'bg-green-500/20 text-green-400 border-green-500/30',
+      'USER': 'bg-blue-500/20 text-blue-400 border-blue-500/30'
+    };
+    const labels = {
+      'ADMIN': 'Admin',
+      'BROKER': 'Broker',
+      'SUB_BROKER': 'Sub Broker',
+      'USER': 'Client'
+    };
+    return (
+      <span className={`px-2 py-1 rounded text-xs border ${colors[role] || 'bg-gray-500/20 text-gray-400'}`}>
+        {labels[role] || role}
+      </span>
+    );
+  };
+
+  if (loading) {
+    return (
+      <div className="p-6 flex items-center justify-center">
+        <RefreshCw className="animate-spin" size={32} />
+      </div>
+    );
+  }
+
+  return (
+    <div className="p-4 md:p-6">
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-6">
+        <div>
+          <h1 className="text-2xl font-bold flex items-center gap-2">
+            <Eye className="text-yellow-400" size={28} />
+            All Accounts Overview
+          </h1>
+          <p className="text-gray-400 text-sm mt-1">Complete hierarchy view of all accounts in the system</p>
+        </div>
+        <button
+          onClick={fetchAllAccounts}
+          className="flex items-center gap-2 bg-dark-700 hover:bg-dark-600 px-4 py-2 rounded-lg"
+        >
+          <RefreshCw size={18} />
+          Refresh
+        </button>
+      </div>
+
+      {/* Stats Cards */}
+      {data?.stats && (
+        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-4 mb-6">
+          <div className="bg-purple-500/10 border border-purple-500/30 rounded-xl p-4">
+            <div className="text-purple-400 text-sm">Admins</div>
+            <div className="text-2xl font-bold text-purple-300">{data.stats.totalAdmins}</div>
+          </div>
+          <div className="bg-cyan-500/10 border border-cyan-500/30 rounded-xl p-4">
+            <div className="text-cyan-400 text-sm">Brokers</div>
+            <div className="text-2xl font-bold text-cyan-300">{data.stats.totalBrokers}</div>
+          </div>
+          <div className="bg-green-500/10 border border-green-500/30 rounded-xl p-4">
+            <div className="text-green-400 text-sm">Sub Brokers</div>
+            <div className="text-2xl font-bold text-green-300">{data.stats.totalSubBrokers}</div>
+          </div>
+          <div className="bg-blue-500/10 border border-blue-500/30 rounded-xl p-4">
+            <div className="text-blue-400 text-sm">Total Clients</div>
+            <div className="text-2xl font-bold text-blue-300">{data.stats.totalUsers}</div>
+          </div>
+          <div className="bg-emerald-500/10 border border-emerald-500/30 rounded-xl p-4">
+            <div className="text-emerald-400 text-sm">Active Clients</div>
+            <div className="text-2xl font-bold text-emerald-300">{data.stats.activeUsers}</div>
+          </div>
+          <div className="bg-red-500/10 border border-red-500/30 rounded-xl p-4">
+            <div className="text-red-400 text-sm">Inactive Clients</div>
+            <div className="text-2xl font-bold text-red-300">{data.stats.inactiveUsers}</div>
+          </div>
+          <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-xl p-4">
+            <div className="text-yellow-400 text-sm">Total Balance</div>
+            <div className="text-xl font-bold text-yellow-300">₹{(data.stats.totalWalletBalance || 0).toLocaleString()}</div>
+          </div>
+        </div>
+      )}
+
+      {/* Search Bar */}
+      <div className="bg-dark-800 rounded-xl p-4 mb-6">
+        <div className="flex gap-2">
+          <div className="relative flex-1">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
+            <input
+              type="text"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
+              placeholder="Search by name, username, email, phone, or admin code..."
+              className="w-full bg-dark-700 border border-dark-600 rounded-lg pl-10 pr-4 py-2 focus:border-yellow-500 outline-none"
+            />
+          </div>
+          <button
+            onClick={handleSearch}
+            disabled={searching || searchTerm.length < 2}
+            className="bg-yellow-600 hover:bg-yellow-700 px-4 py-2 rounded-lg disabled:opacity-50"
+          >
+            {searching ? <RefreshCw className="animate-spin" size={18} /> : 'Search'}
+          </button>
+          {searchResults && (
+            <button
+              onClick={clearSearch}
+              className="bg-dark-700 hover:bg-dark-600 px-4 py-2 rounded-lg"
+            >
+              Clear
+            </button>
+          )}
+        </div>
+
+        {/* Search Results */}
+        {searchResults && (
+          <div className="mt-4 border-t border-dark-600 pt-4">
+            <h3 className="text-lg font-semibold mb-3">Search Results</h3>
+            
+            {searchResults.admins?.length > 0 && (
+              <div className="mb-4">
+                <h4 className="text-sm text-gray-400 mb-2">Admins/Brokers/SubBrokers ({searchResults.admins.length})</h4>
+                <div className="space-y-2">
+                  {searchResults.admins.map(a => (
+                    <div key={a._id} className="bg-dark-700 rounded-lg p-3 flex items-center justify-between">
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium">{a.name}</span>
+                          {getRoleBadge(a.role)}
+                        </div>
+                        <div className="text-sm text-gray-400">
+                          {a.adminCode} • {a.email} • {a.phone}
+                        </div>
+                        {a.parentId && (
+                          <div className="text-xs text-gray-500">
+                            Parent: {a.parentId.name} ({a.parentId.adminCode})
+                          </div>
+                        )}
+                      </div>
+                      <div className={`px-2 py-1 rounded text-xs ${a.status === 'ACTIVE' ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}`}>
+                        {a.status}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {searchResults.users?.length > 0 && (
+              <div>
+                <h4 className="text-sm text-gray-400 mb-2">Clients ({searchResults.users.length})</h4>
+                <div className="space-y-2">
+                  {searchResults.users.map(u => (
+                    <div key={u._id} className="bg-dark-700 rounded-lg p-3 flex items-center justify-between">
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium">{u.name || u.username}</span>
+                          {getRoleBadge('USER')}
+                        </div>
+                        <div className="text-sm text-gray-400">
+                          {u.email} • {u.phone}
+                        </div>
+                        {u.admin && (
+                          <div className="text-xs text-gray-500">
+                            Under: {u.admin.name} ({u.admin.adminCode}) - {u.admin.role}
+                          </div>
+                        )}
+                      </div>
+                      <div className="text-right">
+                        <div className={`px-2 py-1 rounded text-xs ${u.isActive ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}`}>
+                          {u.isActive ? 'Active' : 'Inactive'}
+                        </div>
+                        <div className="text-sm text-yellow-400 mt-1">₹{(u.wallet?.balance || 0).toLocaleString()}</div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {searchResults.admins?.length === 0 && searchResults.users?.length === 0 && (
+              <div className="text-center text-gray-400 py-4">No results found</div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Tabs */}
+      <div className="flex gap-2 mb-4 overflow-x-auto pb-2">
+        {[
+          { id: 'overview', label: 'Overview', icon: Eye },
+          { id: 'admins', label: `Admins (${data?.stats?.totalAdmins || 0})`, icon: Shield },
+          { id: 'brokers', label: `Brokers (${data?.stats?.totalBrokers || 0})`, icon: Users },
+          { id: 'subbrokers', label: `Sub Brokers (${data?.stats?.totalSubBrokers || 0})`, icon: Users },
+          { id: 'users', label: `Clients (${data?.stats?.totalUsers || 0})`, icon: Users }
+        ].map(tab => (
+          <button
+            key={tab.id}
+            onClick={() => setActiveTab(tab.id)}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg whitespace-nowrap ${
+              activeTab === tab.id ? 'bg-yellow-600 text-white' : 'bg-dark-700 hover:bg-dark-600'
+            }`}
+          >
+            <tab.icon size={16} />
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Tab Content */}
+      <div className="bg-dark-800 rounded-xl overflow-hidden">
+        {activeTab === 'overview' && (
+          <div className="p-4">
+            <h3 className="text-lg font-semibold mb-4">Hierarchy Overview</h3>
+            
+            {/* Admins with their subordinates */}
+            <div className="space-y-4">
+              {data?.hierarchy?.admins?.map(adm => (
+                <div key={adm._id} className="bg-dark-700 rounded-lg overflow-hidden">
+                  <div 
+                    className="p-4 flex items-center justify-between cursor-pointer hover:bg-dark-600"
+                    onClick={() => setExpandedAdmin(expandedAdmin === adm._id ? null : adm._id)}
+                  >
+                    <div className="flex items-center gap-3">
+                      <Shield className="text-purple-400" size={20} />
+                      <div>
+                        <div className="font-medium">{adm.name}</div>
+                        <div className="text-sm text-gray-400">{adm.adminCode} • {adm.email}</div>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-4">
+                      <div className="text-right">
+                        <div className="text-sm text-gray-400">Subordinates: {adm.subordinateCount}</div>
+                        <div className="text-sm text-gray-400">Users: {adm.userCount}</div>
+                      </div>
+                      {getRoleBadge(adm.role)}
+                      <ChevronRight className={`transition-transform ${expandedAdmin === adm._id ? 'rotate-90' : ''}`} size={20} />
+                    </div>
+                  </div>
+                  
+                  {expandedAdmin === adm._id && (
+                    <div className="border-t border-dark-600 p-4 bg-dark-800">
+                      {/* Brokers under this admin */}
+                      <div className="ml-4">
+                        {data?.hierarchy?.brokers?.filter(b => b.parentId?._id === adm._id || b.parentId === adm._id).map(broker => (
+                          <div key={broker._id} className="mb-3">
+                            <div className="flex items-center gap-2 p-2 bg-dark-700 rounded">
+                              <Users className="text-cyan-400" size={16} />
+                              <span>{broker.name}</span>
+                              <span className="text-gray-400 text-sm">({broker.adminCode})</span>
+                              {getRoleBadge(broker.role)}
+                              <span className="text-sm text-gray-400 ml-auto">Users: {broker.userCount}</span>
+                            </div>
+                            {/* SubBrokers under this broker */}
+                            <div className="ml-6 mt-2 space-y-1">
+                              {data?.hierarchy?.subBrokers?.filter(sb => sb.parentId?._id === broker._id || sb.parentId === broker._id).map(sb => (
+                                <div key={sb._id} className="flex items-center gap-2 p-2 bg-dark-600 rounded text-sm">
+                                  <Users className="text-green-400" size={14} />
+                                  <span>{sb.name}</span>
+                                  <span className="text-gray-400">({sb.adminCode})</span>
+                                  {getRoleBadge(sb.role)}
+                                  <span className="text-gray-400 ml-auto">Users: {sb.userCount}</span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {activeTab === 'admins' && (
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead className="bg-dark-700">
+                <tr>
+                  <th className="text-left p-4">Name</th>
+                  <th className="text-left p-4">Code</th>
+                  <th className="text-left p-4">Email</th>
+                  <th className="text-left p-4">Phone</th>
+                  <th className="text-left p-4">Subordinates</th>
+                  <th className="text-left p-4">Users</th>
+                  <th className="text-left p-4">Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data?.hierarchy?.admins?.map(a => (
+                  <tr key={a._id} className="border-t border-dark-700 hover:bg-dark-700">
+                    <td className="p-4">{a.name}</td>
+                    <td className="p-4 font-mono text-purple-400">{a.adminCode}</td>
+                    <td className="p-4 text-gray-400">{a.email}</td>
+                    <td className="p-4 text-gray-400">{a.phone}</td>
+                    <td className="p-4">{a.subordinateCount}</td>
+                    <td className="p-4">{a.userCount}</td>
+                    <td className="p-4">
+                      <span className={`px-2 py-1 rounded text-xs ${a.status === 'ACTIVE' ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}`}>
+                        {a.status}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {activeTab === 'brokers' && (
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead className="bg-dark-700">
+                <tr>
+                  <th className="text-left p-4">Name</th>
+                  <th className="text-left p-4">Code</th>
+                  <th className="text-left p-4">Parent</th>
+                  <th className="text-left p-4">Email</th>
+                  <th className="text-left p-4">Sub Brokers</th>
+                  <th className="text-left p-4">Users</th>
+                  <th className="text-left p-4">Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data?.hierarchy?.brokers?.map(b => (
+                  <tr key={b._id} className="border-t border-dark-700 hover:bg-dark-700">
+                    <td className="p-4">{b.name}</td>
+                    <td className="p-4 font-mono text-cyan-400">{b.adminCode}</td>
+                    <td className="p-4 text-gray-400">{b.parentId?.name || '-'}</td>
+                    <td className="p-4 text-gray-400">{b.email}</td>
+                    <td className="p-4">{b.subordinateCount}</td>
+                    <td className="p-4">{b.userCount}</td>
+                    <td className="p-4">
+                      <span className={`px-2 py-1 rounded text-xs ${b.status === 'ACTIVE' ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}`}>
+                        {b.status}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {activeTab === 'subbrokers' && (
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead className="bg-dark-700">
+                <tr>
+                  <th className="text-left p-4">Name</th>
+                  <th className="text-left p-4">Code</th>
+                  <th className="text-left p-4">Parent Broker</th>
+                  <th className="text-left p-4">Email</th>
+                  <th className="text-left p-4">Users</th>
+                  <th className="text-left p-4">Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data?.hierarchy?.subBrokers?.map(sb => (
+                  <tr key={sb._id} className="border-t border-dark-700 hover:bg-dark-700">
+                    <td className="p-4">{sb.name}</td>
+                    <td className="p-4 font-mono text-green-400">{sb.adminCode}</td>
+                    <td className="p-4 text-gray-400">{sb.parentId?.name || '-'}</td>
+                    <td className="p-4 text-gray-400">{sb.email}</td>
+                    <td className="p-4">{sb.userCount}</td>
+                    <td className="p-4">
+                      <span className={`px-2 py-1 rounded text-xs ${sb.status === 'ACTIVE' ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}`}>
+                        {sb.status}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {activeTab === 'users' && (
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead className="bg-dark-700">
+                <tr>
+                  <th className="text-left p-4">Name</th>
+                  <th className="text-left p-4">Username</th>
+                  <th className="text-left p-4">Email</th>
+                  <th className="text-left p-4">Phone</th>
+                  <th className="text-left p-4">Admin</th>
+                  <th className="text-left p-4">Balance</th>
+                  <th className="text-left p-4">Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data?.users?.slice(0, 100).map(u => (
+                  <tr key={u._id} className="border-t border-dark-700 hover:bg-dark-700">
+                    <td className="p-4">{u.name || '-'}</td>
+                    <td className="p-4 font-mono text-blue-400">{u.username}</td>
+                    <td className="p-4 text-gray-400">{u.email}</td>
+                    <td className="p-4 text-gray-400">{u.phone}</td>
+                    <td className="p-4">
+                      {u.admin ? (
+                        <div>
+                          <div className="text-sm">{u.admin.name}</div>
+                          <div className="text-xs text-gray-500">{u.admin.adminCode}</div>
+                        </div>
+                      ) : '-'}
+                    </td>
+                    <td className="p-4 text-yellow-400">₹{(u.wallet?.balance || 0).toLocaleString()}</td>
+                    <td className="p-4">
+                      <span className={`px-2 py-1 rounded text-xs ${u.isActive ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}`}>
+                        {u.isActive ? 'Active' : 'Inactive'}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {data?.users?.length > 100 && (
+              <div className="p-4 text-center text-gray-400">
+                Showing first 100 of {data.users.length} users. Use search to find specific users.
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );

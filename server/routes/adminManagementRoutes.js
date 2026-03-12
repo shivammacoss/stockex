@@ -1258,6 +1258,169 @@ router.post('/admins/:id/add-funds', protectAdmin, async (req, res) => {
   }
 });
 
+// Get fund history for an admin
+router.get('/admins/:id/fund-history', protectAdmin, async (req, res) => {
+  try {
+    const targetAdmin = await Admin.findById(req.params.id);
+    if (!targetAdmin) return res.status(404).json({ message: 'Admin not found' });
+    
+    // Check permission: Super Admin can view anyone, others can only view their subordinates
+    if (req.admin.role !== 'SUPER_ADMIN') {
+      const isSubordinate = targetAdmin.parentId?.toString() === req.admin._id.toString() ||
+                           targetAdmin.hierarchyPath?.includes(req.admin._id.toString());
+      const isSelf = req.admin._id.toString() === targetAdmin._id.toString();
+      if (!isSubordinate && !isSelf) {
+        return res.status(403).json({ message: 'You can only view fund history of your subordinates' });
+      }
+    }
+    
+    // Fetch wallet ledger entries for this admin (all transactions)
+    const history = await WalletLedger.find({
+      ownerType: 'ADMIN',
+      ownerId: targetAdmin._id
+    })
+    .populate('performedBy', 'name username adminCode')
+    .sort({ createdAt: -1 })
+    .limit(100);
+    
+    res.json({ 
+      history,
+      wallet: targetAdmin.wallet,
+      admin: {
+        _id: targetAdmin._id,
+        name: targetAdmin.name,
+        username: targetAdmin.username,
+        adminCode: targetAdmin.adminCode
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Get complete hierarchy under an admin (Brokers -> Sub-Brokers -> Clients with balances)
+router.get('/admins/:id/hierarchy', protectAdmin, async (req, res) => {
+  try {
+    const targetAdmin = await Admin.findById(req.params.id).select('-password -pin');
+    if (!targetAdmin) return res.status(404).json({ message: 'Admin not found' });
+    
+    // Check permission
+    if (req.admin.role !== 'SUPER_ADMIN') {
+      const isSubordinate = targetAdmin.parentId?.toString() === req.admin._id.toString() ||
+                           targetAdmin.hierarchyPath?.includes(req.admin._id.toString());
+      const isSelf = req.admin._id.toString() === targetAdmin._id.toString();
+      if (!isSubordinate && !isSelf) {
+        return res.status(403).json({ message: 'Access denied' });
+      }
+    }
+    
+    // Get all brokers under this admin
+    const brokers = await Admin.find({ 
+      parentId: targetAdmin._id, 
+      role: 'BROKER' 
+    }).select('-password -pin').lean();
+    
+    // Get all sub-brokers under this admin (direct) and under brokers
+    const directSubBrokers = await Admin.find({ 
+      parentId: targetAdmin._id, 
+      role: 'SUB_BROKER' 
+    }).select('-password -pin').lean();
+    
+    // Get sub-brokers under each broker
+    const brokerIds = brokers.map(b => b._id);
+    const brokerSubBrokers = await Admin.find({ 
+      parentId: { $in: brokerIds }, 
+      role: 'SUB_BROKER' 
+    }).select('-password -pin').lean();
+    
+    // Get all users under this admin hierarchy
+    const allAdminIds = [
+      targetAdmin._id,
+      ...brokers.map(b => b._id),
+      ...directSubBrokers.map(s => s._id),
+      ...brokerSubBrokers.map(s => s._id)
+    ];
+    
+    const users = await User.find({ 
+      admin: { $in: allAdminIds } 
+    }).select('fullName username email phone wallet isActive admin adminCode createdAt').lean();
+    
+    // Build hierarchy structure
+    const hierarchy = {
+      admin: {
+        _id: targetAdmin._id,
+        name: targetAdmin.name,
+        username: targetAdmin.username,
+        adminCode: targetAdmin.adminCode,
+        role: targetAdmin.role,
+        wallet: targetAdmin.wallet,
+        status: targetAdmin.status
+      },
+      brokers: brokers.map(broker => {
+        const brokerSubBrokersFiltered = brokerSubBrokers.filter(
+          sb => sb.parentId?.toString() === broker._id.toString()
+        );
+        const brokerUsers = users.filter(u => u.admin?.toString() === broker._id.toString());
+        
+        return {
+          _id: broker._id,
+          name: broker.name,
+          username: broker.username,
+          adminCode: broker.adminCode,
+          wallet: broker.wallet,
+          status: broker.status,
+          subBrokers: brokerSubBrokersFiltered.map(sb => {
+            const sbUsers = users.filter(u => u.admin?.toString() === sb._id.toString());
+            return {
+              _id: sb._id,
+              name: sb.name,
+              username: sb.username,
+              adminCode: sb.adminCode,
+              wallet: sb.wallet,
+              status: sb.status,
+              users: sbUsers,
+              userCount: sbUsers.length,
+              totalUserBalance: sbUsers.reduce((sum, u) => sum + (u.wallet?.balance || u.wallet?.cashBalance || 0), 0)
+            };
+          }),
+          users: brokerUsers,
+          userCount: brokerUsers.length,
+          totalUserBalance: brokerUsers.reduce((sum, u) => sum + (u.wallet?.balance || u.wallet?.cashBalance || 0), 0),
+          subBrokerCount: brokerSubBrokersFiltered.length
+        };
+      }),
+      directSubBrokers: directSubBrokers.map(sb => {
+        const sbUsers = users.filter(u => u.admin?.toString() === sb._id.toString());
+        return {
+          _id: sb._id,
+          name: sb.name,
+          username: sb.username,
+          adminCode: sb.adminCode,
+          wallet: sb.wallet,
+          status: sb.status,
+          users: sbUsers,
+          userCount: sbUsers.length,
+          totalUserBalance: sbUsers.reduce((sum, u) => sum + (u.wallet?.balance || u.wallet?.cashBalance || 0), 0)
+        };
+      }),
+      directUsers: users.filter(u => u.admin?.toString() === targetAdmin._id.toString()),
+      stats: {
+        totalBrokers: brokers.length,
+        totalSubBrokers: directSubBrokers.length + brokerSubBrokers.length,
+        totalUsers: users.length,
+        totalBrokerBalance: brokers.reduce((sum, b) => sum + (b.wallet?.balance || 0), 0),
+        totalSubBrokerBalance: [...directSubBrokers, ...brokerSubBrokers].reduce((sum, s) => sum + (s.wallet?.balance || 0), 0),
+        totalUserBalance: users.reduce((sum, u) => sum + (u.wallet?.balance || u.wallet?.cashBalance || 0), 0)
+      }
+    };
+    
+    res.json(hierarchy);
+  } catch (error) {
+    console.error('Error fetching hierarchy:', error);
+    res.status(500).json({ message: error.message });
+  }
+});
+
 // Deduct funds from admin wallet (Parent can deduct from subordinate)
 router.post('/admins/:id/deduct-funds', protectAdmin, async (req, res) => {
   try {
@@ -5351,6 +5514,106 @@ router.post('/nifty-jackpot/declare-result', protectAdmin, superAdminOnly, async
         totalCollected
       }
     });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// ==================== ALL ACCOUNTS OVERVIEW (SUPER ADMIN ONLY) ====================
+// Get complete hierarchy overview - all admins, brokers, sub-brokers, and users
+router.get('/all-accounts-overview', protectAdmin, superAdminOnly, async (req, res) => {
+  try {
+    // Get all admins (ADMIN, BROKER, SUB_BROKER)
+    const allAdmins = await Admin.find({ role: { $in: ['ADMIN', 'BROKER', 'SUB_BROKER'] } })
+      .select('-password -pin')
+      .populate('parentId', 'name adminCode role')
+      .sort({ role: 1, createdAt: -1 });
+    
+    // Get all users
+    const allUsers = await User.find({})
+      .select('username name email phone isActive wallet adminCode admin createdAt')
+      .populate('admin', 'name adminCode role')
+      .sort({ createdAt: -1 });
+    
+    // Calculate stats
+    const stats = {
+      totalAdmins: allAdmins.filter(a => a.role === 'ADMIN').length,
+      totalBrokers: allAdmins.filter(a => a.role === 'BROKER').length,
+      totalSubBrokers: allAdmins.filter(a => a.role === 'SUB_BROKER').length,
+      totalUsers: allUsers.length,
+      activeUsers: allUsers.filter(u => u.isActive).length,
+      inactiveUsers: allUsers.filter(u => !u.isActive).length,
+      totalWalletBalance: allUsers.reduce((sum, u) => sum + (u.wallet?.balance || 0), 0)
+    };
+    
+    // Build hierarchy tree
+    const adminsWithUsers = await Promise.all(allAdmins.map(async (admin) => {
+      const userCount = await User.countDocuments({ admin: admin._id });
+      const activeUserCount = await User.countDocuments({ admin: admin._id, isActive: true });
+      const subordinateCount = await Admin.countDocuments({ parentId: admin._id });
+      
+      return {
+        ...admin.toObject(),
+        userCount,
+        activeUserCount,
+        subordinateCount
+      };
+    }));
+    
+    res.json({
+      stats,
+      admins: adminsWithUsers,
+      users: allUsers,
+      hierarchy: {
+        admins: adminsWithUsers.filter(a => a.role === 'ADMIN'),
+        brokers: adminsWithUsers.filter(a => a.role === 'BROKER'),
+        subBrokers: adminsWithUsers.filter(a => a.role === 'SUB_BROKER')
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Search across all accounts (Super Admin only)
+router.get('/search-all-accounts', protectAdmin, superAdminOnly, async (req, res) => {
+  try {
+    const { q } = req.query;
+    if (!q || q.length < 2) {
+      return res.json({ admins: [], users: [] });
+    }
+    
+    const searchRegex = new RegExp(q, 'i');
+    
+    // Search admins
+    const admins = await Admin.find({
+      role: { $in: ['ADMIN', 'BROKER', 'SUB_BROKER'] },
+      $or: [
+        { name: searchRegex },
+        { username: searchRegex },
+        { email: searchRegex },
+        { adminCode: searchRegex },
+        { phone: searchRegex }
+      ]
+    })
+    .select('-password -pin')
+    .populate('parentId', 'name adminCode role')
+    .limit(20);
+    
+    // Search users
+    const users = await User.find({
+      $or: [
+        { name: searchRegex },
+        { username: searchRegex },
+        { email: searchRegex },
+        { phone: searchRegex }
+      ]
+    })
+    .select('username name email phone isActive wallet adminCode admin createdAt')
+    .populate('admin', 'name adminCode role')
+    .limit(20);
+    
+    res.json({ admins, users });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }

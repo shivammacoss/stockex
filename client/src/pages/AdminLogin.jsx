@@ -1,7 +1,8 @@
-import { useState } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { Shield, Eye, EyeOff, Users, Settings, BarChart3, Lock } from 'lucide-react';
+import { Shield, Eye, EyeOff, Users, Settings, BarChart3, Lock, Building2 } from 'lucide-react';
+import axios from 'axios';
 
 const AdminLogin = () => {
   const [isSetup, setIsSetup] = useState(false);
@@ -9,8 +10,49 @@ const AdminLogin = () => {
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [parentAdminInfo, setParentAdminInfo] = useState(null);
+  const [currentRole, setCurrentRole] = useState(null);
+  const [fetchingParent, setFetchingParent] = useState(false);
   const { loginAdmin, setupAdmin } = useAuth();
   const navigate = useNavigate();
+  
+  // Fetch parent admin info when email changes
+  const fetchParentAdminInfo = useCallback(async (email) => {
+    if (!email || isSetup) {
+      setParentAdminInfo(null);
+      setCurrentRole(null);
+      return;
+    }
+    
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      setParentAdminInfo(null);
+      setCurrentRole(null);
+      return;
+    }
+    
+    setFetchingParent(true);
+    try {
+      const { data } = await axios.post('/api/admin/parent-info', { email });
+      setParentAdminInfo(data.parentAdmin);
+      setCurrentRole(data.currentRole);
+    } catch (err) {
+      setParentAdminInfo(null);
+      setCurrentRole(null);
+    } finally {
+      setFetchingParent(false);
+    }
+  }, [isSetup]);
+  
+  // Debounce email input
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      if (!isSetup && formData.email) {
+        fetchParentAdminInfo(formData.email);
+      }
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [formData.email, isSetup, fetchParentAdminInfo]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -127,6 +169,51 @@ const AdminLogin = () => {
                   required
                 />
               </div>
+
+              {/* Show parent admin info on login form */}
+              {!isSetup && parentAdminInfo && (
+                <div className="mb-4 p-3 bg-gradient-to-r from-purple-500/10 to-blue-500/10 border border-purple-500/30 rounded-xl">
+                  <div className="flex items-center gap-2">
+                    <Building2 className="w-5 h-5 text-purple-400" />
+                    <div className="flex-1">
+                      <div className="text-xs text-gray-400">
+                        {currentRole === 'ADMIN' ? 'Admin Under' : 
+                         currentRole === 'BROKER' ? 'Broker Under' : 
+                         currentRole === 'SUB_BROKER' ? 'Sub-Broker Under' : 'Under'}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-white font-medium">{parentAdminInfo.name}</span>
+                        <span className="text-xs px-2 py-0.5 bg-purple-500/20 text-purple-400 rounded">
+                          {parentAdminInfo.role === 'ADMIN' ? 'Admin' : 
+                           parentAdminInfo.role === 'BROKER' ? 'Broker' : 
+                           parentAdminInfo.role === 'SUPER_ADMIN' ? 'Super Admin' : parentAdminInfo.role}
+                        </span>
+                      </div>
+                      <div className="text-sm text-purple-400 font-mono mt-1">{parentAdminInfo.adminCode}</div>
+                    </div>
+                  </div>
+                </div>
+              )}
+              
+              {/* Show current role if Super Admin (no parent) */}
+              {!isSetup && currentRole === 'SUPER_ADMIN' && !parentAdminInfo && (
+                <div className="mb-4 p-3 bg-gradient-to-r from-yellow-500/10 to-orange-500/10 border border-yellow-500/30 rounded-xl">
+                  <div className="flex items-center gap-2">
+                    <Shield className="w-5 h-5 text-yellow-400" />
+                    <span className="text-yellow-400 font-medium">Super Admin Account</span>
+                  </div>
+                </div>
+              )}
+              
+              {/* Show loading indicator */}
+              {!isSetup && fetchingParent && formData.email && (
+                <div className="mb-4 p-3 bg-dark-700 border border-dark-600 rounded-xl animate-pulse">
+                  <div className="flex items-center gap-2 text-gray-400 text-sm">
+                    <div className="w-4 h-4 border-2 border-gray-400 border-t-transparent rounded-full animate-spin"></div>
+                    <span>Fetching account info...</span>
+                  </div>
+                </div>
+              )}
 
               <div className="mb-6">
                 <label className="block text-sm text-gray-400 mb-2">Password</label>

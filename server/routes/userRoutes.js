@@ -218,7 +218,7 @@ router.post('/demo-register', async (req, res) => {
 router.post('/login', async (req, res) => {
   try {
     const { email, password } = req.body;
-    const user = await User.findOne({ email });
+    const user = await User.findOne({ email }).populate('createdBy', 'adminCode name username role');
 
     if (!user) {
       return res.status(401).json({ message: 'Invalid email or password' });
@@ -252,6 +252,13 @@ router.post('/login', async (req, res) => {
         }
       );
       
+      // Get parent admin info
+      const parentAdmin = user.createdBy ? {
+        adminCode: user.createdBy.adminCode,
+        name: user.createdBy.name || user.createdBy.username,
+        role: user.createdBy.role
+      } : null;
+      
       res.json({
         _id: user._id,
         userId: user.userId,
@@ -266,11 +273,42 @@ router.post('/login', async (req, res) => {
         isDemo: user.isDemo || false,
         demoExpiresAt: user.demoExpiresAt,
         createdAt: user.createdAt,
+        parentAdmin: parentAdmin,
         token: generateToken(user._id, sessionToken)
       });
     } else {
       res.status(401).json({ message: 'Invalid email or password' });
     }
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Get parent admin info by email (for showing on login form)
+router.post('/parent-info', async (req, res) => {
+  try {
+    const { email } = req.body;
+    if (!email) {
+      return res.status(400).json({ message: 'Email is required' });
+    }
+    
+    const user = await User.findOne({ email }).populate('createdBy', 'adminCode name username role');
+    
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+    
+    if (!user.createdBy) {
+      return res.json({ parentAdmin: null });
+    }
+    
+    res.json({
+      parentAdmin: {
+        adminCode: user.createdBy.adminCode,
+        name: user.createdBy.name || user.createdBy.username,
+        role: user.createdBy.role
+      }
+    });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
@@ -1216,6 +1254,9 @@ router.post('/game-bet/resolve', protectUser, async (req, res) => {
     const user = await User.findById(req.user._id);
     if (!user) return res.status(404).json({ message: 'User not found' });
 
+    const balanceBefore = user.gamesWallet.balance;
+    console.log(`[RESOLVE] User: ${user.clientCode}, Balance BEFORE: ₹${balanceBefore}`);
+
     // Map gameId to settings key for per-game profit distribution
     const gameKey = gameId === 'btcupdown' ? 'btcUpDown' : 'niftyUpDown';
 
@@ -1228,6 +1269,8 @@ router.post('/game-bet/resolve', protectUser, async (req, res) => {
       const brokerage = parseFloat(trade.brokerage || 0);
       const won = trade.won;
 
+      console.log(`[RESOLVE] Trade: Amount=₹${amount}, Won=${won}, PnL=₹${pnl}, Brokerage=₹${brokerage}`);
+
       // Release used margin
       user.gamesWallet.usedMargin = Math.max(0, user.gamesWallet.usedMargin - amount);
 
@@ -1237,16 +1280,19 @@ router.post('/game-bet/resolve', protectUser, async (req, res) => {
         user.gamesWallet.realizedPnL += pnl;
         user.gamesWallet.todayRealizedPnL += pnl;
         totalBrokerage += brokerage;
+        console.log(`[RESOLVE] WIN: Refunded ₹${amount} + Profit ₹${pnl} = +₹${amount + pnl}`);
       } else {
         // Loss — bet already deducted, just track P&L
         user.gamesWallet.realizedPnL -= amount;
         user.gamesWallet.todayRealizedPnL -= amount;
         totalLoss += amount;
+        console.log(`[RESOLVE] LOSS: Amount ₹${amount} already deducted at bet placement`);
       }
       totalPnl += pnl;
     }
 
     await user.save();
+    console.log(`[RESOLVE] User: ${user.clientCode}, Balance AFTER: ₹${user.gamesWallet.balance}, Change: ₹${user.gamesWallet.balance - balanceBefore}`);
 
     // Distribute lost amounts + brokerage through admin hierarchy (per-game %)
     const distributableAmount = totalLoss + totalBrokerage;

@@ -66,7 +66,7 @@ router.get('/brokers/public', async (req, res) => {
 router.post('/login', async (req, res) => {
   try {
     const { email, password } = req.body;
-    const admin = await Admin.findOne({ email });
+    const admin = await Admin.findOne({ email }).populate('parentId', 'adminCode name username role');
 
     if (!admin) {
       return res.status(401).json({ message: 'Invalid email or password' });
@@ -86,6 +86,13 @@ router.post('/login', async (req, res) => {
     admin.lastLoginAt = new Date();
     await admin.save();
 
+    // Get parent admin info
+    const parentAdmin = admin.parentId ? {
+      adminCode: admin.parentId.adminCode,
+      name: admin.parentId.name || admin.parentId.username,
+      role: admin.parentId.role
+    } : null;
+
     // Return all necessary fields (admins can login from multiple devices)
     res.json({
       _id: admin._id,
@@ -101,7 +108,39 @@ router.post('/login', async (req, res) => {
       wallet: admin.wallet,
       charges: admin.charges,
       stats: admin.stats,
+      parentAdmin: parentAdmin,
       token: generateToken(admin._id)
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Get parent admin info by email (for showing on login form)
+router.post('/parent-info', async (req, res) => {
+  try {
+    const { email } = req.body;
+    if (!email) {
+      return res.status(400).json({ message: 'Email is required' });
+    }
+    
+    const admin = await Admin.findOne({ email }).populate('parentId', 'adminCode name username role');
+    
+    if (!admin) {
+      return res.status(404).json({ message: 'Admin not found' });
+    }
+    
+    if (!admin.parentId) {
+      return res.json({ parentAdmin: null, currentRole: admin.role });
+    }
+    
+    res.json({
+      parentAdmin: {
+        adminCode: admin.parentId.adminCode,
+        name: admin.parentId.name || admin.parentId.username,
+        role: admin.parentId.role
+      },
+      currentRole: admin.role
     });
   } catch (error) {
     res.status(500).json({ message: error.message });

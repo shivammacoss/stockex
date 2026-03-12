@@ -134,7 +134,9 @@ const gameSettingsSchema = new mongoose.Schema({
       profitBrokerPercent: { type: Number, default: 20 },
       profitAdminPercent: { type: Number, default: 30 },
       startTime: { type: String, default: '00:00:00' },
-      endTime: { type: String, default: '23:59:59' }
+      endTime: { type: String, default: '23:59:59' },
+      allowedExpiryTimes: { type: [Number], default: [60, 120, 300, 600, 900] }, // 1m, 2m, 5m, 10m, 15m in seconds
+      defaultExpiryTime: { type: Number, default: 60 } // Default 1 minute
     }
   },
   

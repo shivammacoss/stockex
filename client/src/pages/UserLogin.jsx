@@ -1,7 +1,7 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useNavigate, Link, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { Eye, EyeOff, BarChart2, Wallet, Zap, LineChart, Search, X, Users, Shield, Award, Lock } from 'lucide-react';
+import { Eye, EyeOff, BarChart2, Wallet, Zap, LineChart, Search, X, Users, Shield, Award, Lock, Building2 } from 'lucide-react';
 import axios from 'axios';
 
 const UserLogin = () => {
@@ -23,6 +23,10 @@ const UserLogin = () => {
   
   // Broker info state (for referral code)
   const [brokerInfo, setBrokerInfo] = useState(null);
+  
+  // Parent admin info state (for login form)
+  const [parentAdminInfo, setParentAdminInfo] = useState(null);
+  const [fetchingParent, setFetchingParent] = useState(false);
   
   // Broker selection state
   const [allBrokers, setAllBrokers] = useState([]);
@@ -101,6 +105,41 @@ const UserLogin = () => {
       sessionStorage.removeItem('logout_message');
     }
   }, []);
+  
+  // Fetch parent admin info when email changes (for login form)
+  const fetchParentAdminInfo = useCallback(async (email) => {
+    if (!email || isRegister) {
+      setParentAdminInfo(null);
+      return;
+    }
+    
+    // Basic email validation
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      setParentAdminInfo(null);
+      return;
+    }
+    
+    setFetchingParent(true);
+    try {
+      const { data } = await axios.post('/api/user/parent-info', { email });
+      setParentAdminInfo(data.parentAdmin);
+    } catch (err) {
+      setParentAdminInfo(null);
+    } finally {
+      setFetchingParent(false);
+    }
+  }, [isRegister]);
+  
+  // Debounce email input for parent info fetch
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      if (!isRegister && formData.email) {
+        fetchParentAdminInfo(formData.email);
+      }
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [formData.email, isRegister, fetchParentAdminInfo]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -259,6 +298,38 @@ const UserLogin = () => {
                   required
                 />
               </div>
+
+              {/* Show parent admin info on login form */}
+              {!isRegister && parentAdminInfo && (
+                <div className="mb-4 p-3 bg-gradient-to-r from-blue-500/10 to-cyan-500/10 border border-blue-500/30 rounded-xl">
+                  <div className="flex items-center gap-2">
+                    <Building2 className="w-5 h-5 text-blue-400" />
+                    <div className="flex-1">
+                      <div className="text-xs text-gray-400">Registered Under</div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-white font-medium">{parentAdminInfo.name}</span>
+                        <span className="text-xs px-2 py-0.5 bg-blue-500/20 text-blue-400 rounded">
+                          {parentAdminInfo.role === 'ADMIN' ? 'Admin' : 
+                           parentAdminInfo.role === 'BROKER' ? 'Broker' : 
+                           parentAdminInfo.role === 'SUB_BROKER' ? 'Sub-Broker' : 
+                           parentAdminInfo.role === 'SUPER_ADMIN' ? 'Super Admin' : parentAdminInfo.role}
+                        </span>
+                      </div>
+                      <div className="text-sm text-blue-400 font-mono mt-1">{parentAdminInfo.adminCode}</div>
+                    </div>
+                  </div>
+                </div>
+              )}
+              
+              {/* Show loading indicator while fetching parent info */}
+              {!isRegister && fetchingParent && formData.email && (
+                <div className="mb-4 p-3 bg-dark-700 border border-dark-600 rounded-xl animate-pulse">
+                  <div className="flex items-center gap-2 text-gray-400 text-sm">
+                    <div className="w-4 h-4 border-2 border-gray-400 border-t-transparent rounded-full animate-spin"></div>
+                    <span>Fetching account info...</span>
+                  </div>
+                </div>
+              )}
 
               <div className="mb-6">
                 <label className="block text-sm text-gray-400 mb-2">Password</label>

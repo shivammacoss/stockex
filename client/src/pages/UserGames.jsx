@@ -608,7 +608,7 @@ const InstructionsModal = ({ onClose, gameId }) => {
 };
 
 // ==================== TRADING CHART COMPONENT ====================
-const TradingChart = ({ gameId, fullHeight = false, onPriceUpdate }) => {
+const TradingChart = ({ gameId, fullHeight = false, onPriceUpdate, priceLines = [] }) => {
   const chartContainerRef = useRef(null);
   const chartRef = useRef(null);
   const candlestickSeriesRef = useRef(null);
@@ -616,6 +616,7 @@ const TradingChart = ({ gameId, fullHeight = false, onPriceUpdate }) => {
   const livePriceRef = useRef(null);
   const socketRef = useRef(null);
   const isLiveRef = useRef(false);
+  const priceLinesRef = useRef({}); // Store price line references
 
   const [livePrice, setLivePrice] = useState(null);
   const [priceChange, setPriceChange] = useState(null);
@@ -755,6 +756,41 @@ const TradingChart = ({ gameId, fullHeight = false, onPriceUpdate }) => {
       chartRef.current = null;
     };
   }, [gameId]);
+
+  // Manage price lines for active trades
+  useEffect(() => {
+    if (!candlestickSeriesRef.current) return;
+
+    const series = candlestickSeriesRef.current;
+    const currentLines = priceLinesRef.current;
+
+    // Get current price line IDs from props
+    const newLineIds = new Set(priceLines.map(pl => pl.id));
+
+    // Remove lines that are no longer in priceLines
+    Object.keys(currentLines).forEach(lineId => {
+      if (!newLineIds.has(lineId)) {
+        series.removePriceLine(currentLines[lineId]);
+        delete currentLines[lineId];
+      }
+    });
+
+    // Add or update lines
+    priceLines.forEach(pl => {
+      if (!currentLines[pl.id]) {
+        // Create new price line
+        const priceLine = series.createPriceLine({
+          price: pl.price,
+          color: pl.prediction === 'UP' ? '#22c55e' : '#ef4444',
+          lineWidth: 2,
+          lineStyle: 2, // Dashed
+          axisLabelVisible: true,
+          title: `Entry ${pl.prediction}`,
+        });
+        currentLines[pl.id] = priceLine;
+      }
+    });
+  }, [priceLines]);
 
   // Connect to Socket.IO for real-time live data
   useEffect(() => {
@@ -914,6 +950,17 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
   const currentPriceRef = useRef(null);
   const prevWindowStatusRef = useRef(windowInfo.status);
 
+  // BTC Expiry time selection
+  const allowedExpiryTimes = settings?.allowedExpiryTimes || [60, 120, 300, 600, 900]; // 1m, 2m, 5m, 10m, 15m
+  const defaultExpiryTime = settings?.defaultExpiryTime || 60;
+  const [selectedExpiry, setSelectedExpiry] = useState(defaultExpiryTime);
+
+  // Format expiry time for display
+  const formatExpiryLabel = (seconds) => {
+    if (seconds < 60) return `${seconds}s`;
+    return `${Math.floor(seconds / 60)}m`;
+  };
+
   // Admin-configured settings with fallbacks
   const winMultiplier = settings?.winMultiplier || 1.95;
   const brokeragePercent = settings?.brokeragePercent || 5;
@@ -940,8 +987,92 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
     return () => clearInterval(interval);
   }, [isBTC, gameStartTime, gameEndTime]);
 
-  // Resolve all active trades when window transitions from open → gap
+  // Helper function to resolve a single trade
+  const resolveTrade = useCallback(async (trade) => {
+    const exitPrice = currentPriceRef.current || 0;
+    const priceDiff = exitPrice - trade.entryPrice;
+    const isUp = priceDiff >= 0;
+    const won = (trade.prediction === 'UP' && isUp) || (trade.prediction === 'DOWN' && !isUp);
+    const grossWin = trade.amount * winMultiplier;
+    const brokerage = won ? parseFloat(((grossWin - trade.amount) * brokeragePercent / 100).toFixed(2)) : 0;
+    const pnl = won ? parseFloat((grossWin - trade.amount - brokerage).toFixed(2)) : -trade.amount;
+
+    const resolvedTrade = {
+      ...trade,
+      status: 'resolved',
+      exitPrice: parseFloat(exitPrice.toFixed(2)),
+      priceDiff: parseFloat(priceDiff.toFixed(2)),
+      pnl,
+      won,
+      brokerage,
+      grossWin: won ? grossWin : 0,
+      resultTime: new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }),
+    };
+
+    // Send to backend
+    try {
+      await axios.post('/api/user/game-bet/resolve', {
+        gameId: game.id,
+        trades: [{
+          amount: resolvedTrade.amount,
+          won: resolvedTrade.won,
+          pnl: resolvedTrade.pnl,
+          brokerage: resolvedTrade.brokerage
+        }]
+      }, {
+        headers: { Authorization: `Bearer ${user.token}` }
+      });
+      refreshBalance();
+    } catch (err) {
+      console.error('Error resolving trade on server:', err);
+    }
+
+    // Update state
+    setActiveTrades(prev => prev.filter(t => t.id !== trade.id));
+    setTradeHistory(prev => [resolvedTrade, ...prev]);
+  }, [game.id, user.token, winMultiplier, brokeragePercent, refreshBalance]);
+
+  // BTC: Timer-based resolution (based on selected expiry time)
+  const [, forceUpdate] = useState(0); // For countdown re-render
+  
   useEffect(() => {
+    if (!isBTC || activeTrades.length === 0) return;
+
+    const timers = [];
+
+    activeTrades.forEach(trade => {
+      if (!trade.placedAt) return;
+      const expiryDuration = trade.expiryTime || defaultExpiryTime; // Use trade's expiry time
+      const elapsed = (Date.now() - trade.placedAt) / 1000;
+      const remaining = Math.max(0, expiryDuration - elapsed);
+
+      if (remaining <= 0) {
+        // Resolve immediately
+        resolveTrade(trade);
+      } else {
+        // Set timer to resolve
+        const timer = setTimeout(() => {
+          resolveTrade(trade);
+        }, remaining * 1000);
+        timers.push(timer);
+      }
+    });
+
+    // Update countdown display every second
+    const countdownInterval = setInterval(() => {
+      forceUpdate(n => n + 1);
+    }, 1000);
+
+    return () => {
+      timers.forEach(t => clearTimeout(t));
+      clearInterval(countdownInterval);
+    };
+  }, [isBTC, activeTrades, defaultExpiryTime, resolveTrade]);
+
+  // Nifty: Resolve all active trades when window transitions from open → gap
+  useEffect(() => {
+    if (isBTC) return; // BTC uses timer-based resolution
+
     const prevStatus = prevWindowStatusRef.current;
     prevWindowStatusRef.current = windowInfo.status;
 
@@ -994,7 +1125,7 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
       setTradeHistory(prev => [...resolvedTrades.reverse(), ...prev]);
       setActiveTrades([]);
     }
-  }, [windowInfo.status, activeTrades]);
+  }, [isBTC, windowInfo.status, activeTrades]);
 
   const quickAmounts = [1, 2, 5, 10];
 
@@ -1042,6 +1173,8 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
         entryPrice: parseFloat((currentPriceRef.current || 0).toFixed(2)),
         status: 'pending',
         time: new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }),
+        placedAt: Date.now(), // For BTC timer-based resolution
+        expiryTime: isBTC ? selectedExpiry : null, // Selected expiry time for BTC
       };
 
       setActiveTrades(prev => [...prev, newTrade]);
@@ -1231,7 +1364,12 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
 
           {/* CENTER COLUMN - Chart (fills remaining space) */}
           <div className="flex-1 min-w-0 order-2 lg:order-2 flex flex-col">
-            <TradingChart gameId={game.id} fullHeight onPriceUpdate={handlePriceUpdate} />
+            <TradingChart 
+              gameId={game.id} 
+              fullHeight 
+              onPriceUpdate={handlePriceUpdate} 
+              priceLines={activeTrades.map(t => ({ id: t.id, price: t.entryPrice, prediction: t.prediction }))}
+            />
           </div>
 
           {/* RIGHT COLUMN - Betting Controls + Active Trades + History */}
@@ -1263,6 +1401,28 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
                   ))}
                 </div>
               </div>
+
+              {/* BTC Expiry Time Selection */}
+              {isBTC && (
+                <div className="bg-dark-800 rounded-xl p-4 border border-dark-600">
+                  <label className="block text-sm text-gray-400 mb-2">Select Expiry Time</label>
+                  <div className="grid grid-cols-5 gap-1.5">
+                    {allowedExpiryTimes.map(expiry => (
+                      <button
+                        key={expiry}
+                        onClick={() => setSelectedExpiry(expiry)}
+                        className={`py-2 px-2 rounded-lg text-xs font-bold transition-all ${
+                          selectedExpiry === expiry
+                            ? 'bg-orange-500 text-white'
+                            : 'bg-dark-700 hover:bg-dark-600 text-gray-300'
+                        }`}
+                      >
+                        {formatExpiryLabel(expiry)}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               {/* Prediction Selection */}
               <div className="bg-dark-800 rounded-xl p-4 border border-dark-600">
@@ -1323,26 +1483,44 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
                 <div className="flex items-center justify-between mb-1.5">
                   <h3 className="text-xs font-bold text-yellow-400">Active Trades ({activeTrades.length})</h3>
                   <div className="flex items-center gap-1">
-                    <RefreshCw className="animate-spin text-yellow-400" size={10} />
-                    <span className="text-[10px] text-yellow-400">Pending</span>
+                    <RefreshCw className="animate-spin text-green-400" size={10} />
+                    <span className="text-[10px] text-green-400">Active</span>
                   </div>
                 </div>
-                <div className="space-y-1">
-                  {activeTrades.map(trade => (
-                    <div key={trade.id} className="bg-yellow-900/15 border border-yellow-500/25 rounded-lg p-2 flex items-center justify-between">
-                      <div className="flex items-center gap-1.5">
-                        <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${
-                          trade.prediction === 'UP' ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'
-                        }`}>
-                          {trade.prediction}
-                        </span>
-                        <span className="text-[10px] text-gray-400">{toTokens(trade.amount)} T</span>
+                <div className="space-y-1.5">
+                  {activeTrades.map(trade => {
+                    const expiryDuration = trade.expiryTime || defaultExpiryTime;
+                    const elapsed = trade.placedAt ? Math.floor((Date.now() - trade.placedAt) / 1000) : 0;
+                    const remaining = Math.max(0, expiryDuration - elapsed);
+                    const isUp = trade.prediction === 'UP';
+                    return (
+                      <div key={trade.id} className={`rounded-lg p-2.5 border-l-4 ${
+                        isUp ? 'bg-green-900/20 border-green-500' : 'bg-red-900/20 border-red-500'
+                      }`}>
+                        <div className="flex items-center justify-between mb-1">
+                          <div className="flex items-center gap-2">
+                            <span className={`text-xs font-bold ${isUp ? 'text-green-400' : 'text-red-400'}`}>
+                              {trade.prediction}
+                            </span>
+                            <span className="text-xs text-gray-400">{toTokens(trade.amount)} T</span>
+                            {isBTC && trade.expiryTime && (
+                              <span className="text-[10px] text-orange-400 bg-orange-500/10 px-1.5 py-0.5 rounded">
+                                {formatExpiryLabel(trade.expiryTime)}
+                              </span>
+                            )}
+                          </div>
+                          {isBTC && trade.placedAt && (
+                            <span className="text-sm font-mono font-bold text-yellow-400">
+                              {remaining}s
+                            </span>
+                          )}
+                        </div>
+                        <div className={`text-sm font-medium ${isUp ? 'text-green-300' : 'text-red-300'}`}>
+                          Entry: {game.id === 'btcupdown' ? '$' : '₹'}{trade.entryPrice.toLocaleString()}
+                        </div>
                       </div>
-                      <div className="text-[10px] text-gray-500">
-                        @ {game.id === 'btcupdown' ? '$' : '₹'}{trade.entryPrice.toLocaleString()} • {trade.time}
-                      </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
             )}
