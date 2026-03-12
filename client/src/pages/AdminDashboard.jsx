@@ -1237,12 +1237,14 @@ const AdminManagement = () => {
     setLoadingFundHistory(true);
     setFundHistory([]);
     try {
+      console.log('[Fund History] Fetching for:', targetAdmin._id, targetAdmin.adminCode);
       const { data } = await axios.get(`/api/admin/manage/admins/${targetAdmin._id}/fund-history`, {
         headers: { Authorization: `Bearer ${admin.token}` }
       });
+      console.log('[Fund History] Response:', data);
       setFundHistory(data.history || []);
     } catch (error) {
-      console.error('Error fetching fund history:', error);
+      console.error('Error fetching fund history:', error.response?.data || error.message);
       setFundHistory([]);
     } finally {
       setLoadingFundHistory(false);

@@ -1240,7 +1240,7 @@ router.post('/admins/:id/add-funds', protectAdmin, async (req, res) => {
     await targetAdmin.save();
     
     // Create ledger entry for target (credit)
-    await WalletLedger.create({
+    const ledgerEntry = await WalletLedger.create({
       ownerType: 'ADMIN',
       ownerId: targetAdmin._id,
       adminCode: targetAdmin.adminCode,
@@ -1251,6 +1251,8 @@ router.post('/admins/:id/add-funds', protectAdmin, async (req, res) => {
       description: description || `Fund added by ${req.admin.name || req.admin.username}`,
       performedBy: req.admin._id
     });
+    
+    console.log(`[Add Funds] Created ledger entry for ${targetAdmin.adminCode}: ₹${amount}, ID: ${ledgerEntry._id}`);
     
     res.json({ message: 'Funds added successfully', wallet: targetAdmin.wallet });
   } catch (error) {
@@ -1274,8 +1276,11 @@ router.get('/admins/:id/fund-history', protectAdmin, async (req, res) => {
       }
     }
     
+    console.log(`[Fund History] Querying for Admin ID: ${targetAdmin._id}, Code: ${targetAdmin.adminCode}`);
+    
     // Fetch wallet ledger entries for this admin (all transactions)
-    const history = await WalletLedger.find({
+    // Try both by ownerId and by adminCode to ensure we get all records
+    const historyByOwnerId = await WalletLedger.find({
       ownerType: 'ADMIN',
       ownerId: targetAdmin._id
     })
@@ -1283,8 +1288,32 @@ router.get('/admins/:id/fund-history', protectAdmin, async (req, res) => {
     .sort({ createdAt: -1 })
     .limit(100);
     
+    // Also check by adminCode in case ownerId wasn't set correctly
+    const historyByAdminCode = await WalletLedger.find({
+      ownerType: 'ADMIN',
+      adminCode: targetAdmin.adminCode
+    })
+    .populate('performedBy', 'name username adminCode')
+    .sort({ createdAt: -1 })
+    .limit(100);
+    
+    // Merge and deduplicate
+    const allHistory = [...historyByOwnerId];
+    const existingIds = new Set(historyByOwnerId.map(h => h._id.toString()));
+    
+    for (const h of historyByAdminCode) {
+      if (!existingIds.has(h._id.toString())) {
+        allHistory.push(h);
+      }
+    }
+    
+    // Sort by date
+    allHistory.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+    
+    console.log(`[Fund History] Admin: ${targetAdmin.adminCode}, Found ${historyByOwnerId.length} by ownerId, ${historyByAdminCode.length} by adminCode, Total unique: ${allHistory.length}`);
+    
     res.json({ 
-      history,
+      history: allHistory.slice(0, 100),
       wallet: targetAdmin.wallet,
       admin: {
         _id: targetAdmin._id,
@@ -1294,6 +1323,7 @@ router.get('/admins/:id/fund-history', protectAdmin, async (req, res) => {
       }
     });
   } catch (error) {
+    console.error('[Fund History Error]', error);
     res.status(500).json({ message: error.message });
   }
 });
