@@ -13832,6 +13832,7 @@ const GameSettingsManagement = () => {
   const [activeTab, setActiveTab] = useState('global');
   const [selectedGame, setSelectedGame] = useState('niftyUpDown');
   const [message, setMessage] = useState({ type: '', text: '' });
+  const [zerodhaStatus, setZerodhaStatus] = useState({ connected: false });
 
   // Nifty Jackpot Price Lock state
   const [jackpotDate, setJackpotDate] = useState(new Date().toISOString().split('T')[0]);
@@ -13842,16 +13843,26 @@ const GameSettingsManagement = () => {
   const [jackpotMessage, setJackpotMessage] = useState(null);
 
   const gamesList = [
-    { id: 'niftyUpDown', name: 'Nifty Up/Down', icon: TrendingUp, color: 'text-green-400' },
-    { id: 'btcUpDown', name: 'BTC Up/Down', icon: Bitcoin, color: 'text-orange-400' },
-    { id: 'niftyNumber', name: 'Nifty Number', icon: Hash, color: 'text-purple-400' },
-    { id: 'niftyBracket', name: 'Nifty Bracket', icon: Target, color: 'text-cyan-400' },
-    { id: 'niftyJackpot', name: 'Nifty Jackpot', icon: Trophy, color: 'text-yellow-400' }
+    { id: 'niftyUpDown', name: 'Nifty Up/Down', icon: TrendingUp, color: 'text-green-400', needsZerodha: true },
+    { id: 'btcUpDown', name: 'BTC Up/Down', icon: Bitcoin, color: 'text-orange-400', needsZerodha: false },
+    { id: 'niftyNumber', name: 'Nifty Number', icon: Hash, color: 'text-purple-400', needsZerodha: true },
+    { id: 'niftyBracket', name: 'Nifty Bracket', icon: Target, color: 'text-cyan-400', needsZerodha: true },
+    { id: 'niftyJackpot', name: 'Nifty Jackpot', icon: Trophy, color: 'text-yellow-400', needsZerodha: true }
   ];
 
   useEffect(() => {
     fetchSettings();
+    fetchZerodhaStatus();
   }, []);
+
+  const fetchZerodhaStatus = async () => {
+    try {
+      const { data } = await axios.get('/api/zerodha/status');
+      setZerodhaStatus(data);
+    } catch (error) {
+      console.error('Error fetching Zerodha status:', error);
+    }
+  };
 
   const fetchSettings = async () => {
     try {
@@ -14028,17 +14039,27 @@ const GameSettingsManagement = () => {
       )}
 
       {/* Status Banner */}
-      <div className={`p-4 rounded-lg border ${settings?.gamesEnabled ? 'bg-green-900/20 border-green-500/30' : 'bg-red-900/20 border-red-500/30'}`}>
+      <div className={`p-4 rounded-lg border ${settings?.gamesEnabled ? (zerodhaStatus.connected ? 'bg-green-900/20 border-green-500/30' : 'bg-yellow-900/20 border-yellow-500/30') : 'bg-red-900/20 border-red-500/30'}`}>
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className={`w-3 h-3 rounded-full ${settings?.gamesEnabled ? 'bg-green-500 animate-pulse' : 'bg-red-500'}`}></div>
-            <span className="font-medium">{settings?.gamesEnabled ? 'Games are LIVE' : 'Games are DISABLED'}</span>
-          </div>
-          {settings?.maintenanceMode && (
-            <span className="text-yellow-400 flex items-center gap-2">
-              <AlertTriangle size={16} /> Maintenance Mode Active
+            <div className={`w-3 h-3 rounded-full ${settings?.gamesEnabled ? (zerodhaStatus.connected ? 'bg-green-500 animate-pulse' : 'bg-yellow-500 animate-pulse') : 'bg-red-500'}`}></div>
+            <span className="font-medium">
+              {!settings?.gamesEnabled ? 'Games are DISABLED' : 
+                zerodhaStatus.connected ? 'All Games are LIVE' : 'BTC Up/Down LIVE | Nifty Games: Zerodha Disconnected'}
             </span>
-          )}
+          </div>
+          <div className="flex items-center gap-4">
+            {!zerodhaStatus.connected && settings?.gamesEnabled && (
+              <span className="text-yellow-400 text-sm flex items-center gap-1">
+                <AlertTriangle size={14} /> Connect Zerodha for Nifty games
+              </span>
+            )}
+            {settings?.maintenanceMode && (
+              <span className="text-yellow-400 flex items-center gap-2">
+                <AlertTriangle size={16} /> Maintenance Mode Active
+              </span>
+            )}
+          </div>
         </div>
       </div>
 
@@ -14303,7 +14324,16 @@ const GameSettingsManagement = () => {
                     <game.icon size={18} className={game.color} />
                     <span className="text-sm">{game.name}</span>
                   </div>
-                  <div className={`w-2 h-2 rounded-full ${settings?.games?.[game.id]?.enabled ? 'bg-green-500' : 'bg-red-500'}`}></div>
+                  {/* Green dot only if: game enabled AND (BTC or Zerodha connected) */}
+                  <div className={`w-2 h-2 rounded-full ${
+                    settings?.games?.[game.id]?.enabled 
+                      ? (game.needsZerodha && !zerodhaStatus.connected ? 'bg-yellow-500' : 'bg-green-500')
+                      : 'bg-red-500'
+                  }`} title={
+                    !settings?.games?.[game.id]?.enabled 
+                      ? 'Game Disabled' 
+                      : (game.needsZerodha && !zerodhaStatus.connected ? 'Zerodha Not Connected' : 'Live')
+                  }></div>
                 </button>
               ))}
             </div>
