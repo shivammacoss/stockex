@@ -1866,12 +1866,33 @@ router.post('/nifty-jackpot/bid', protectUser, async (req, res) => {
       return res.status(400).json({ message: 'Nifty Jackpot game is currently disabled' });
     }
 
+    // Check bidding time window (default: 09:15 to 14:59 IST)
+    const biddingStartTime = gameConfig?.biddingStartTime || '09:15';
+    const biddingEndTime = gameConfig?.biddingEndTime || '14:59';
+    const now = new Date();
+    const istOffset = 5.5 * 60 * 60 * 1000; // IST is UTC+5:30
+    const istNow = new Date(now.getTime() + istOffset);
+    const currentHours = istNow.getUTCHours();
+    const currentMinutes = istNow.getUTCMinutes();
+    const currentTimeMinutes = currentHours * 60 + currentMinutes;
+    
+    const [startH, startM] = biddingStartTime.split(':').map(Number);
+    const [endH, endM] = biddingEndTime.split(':').map(Number);
+    const startTimeMinutes = startH * 60 + startM;
+    const endTimeMinutes = endH * 60 + endM + 1; // +1 to include 14:59:59
+    
+    if (currentTimeMinutes < startTimeMinutes || currentTimeMinutes > endTimeMinutes) {
+      return res.status(400).json({ 
+        message: `Bidding is only allowed from ${biddingStartTime} to ${biddingEndTime} IST. Current time: ${String(currentHours).padStart(2, '0')}:${String(currentMinutes).padStart(2, '0')} IST` 
+      });
+    }
+
     // Validate amount
     const bidAmount = parseFloat(amount);
     if (isNaN(bidAmount) || bidAmount <= 0) {
       return res.status(400).json({ message: 'Invalid bid amount' });
     }
-    const tValue = settings.tokenValue || 300;
+    const tValue = gameConfig?.ticketPrice || settings.tokenValue || 300;
     const minAmt = (gameConfig.minTickets || 1) * tValue;
     const maxAmt = (gameConfig.maxTickets || 500) * tValue;
     if (bidAmount < minAmt) {
@@ -1951,52 +1972,96 @@ router.get('/nifty-jackpot/today', protectUser, async (req, res) => {
 });
 
 // Get live leaderboard for today (top bidders)
+// Ranking logic: Order by amount (highest first), then by time (earliest first)
 router.get('/nifty-jackpot/leaderboard', protectUser, async (req, res) => {
   try {
     const date = req.query.date || getTodayIST();
 
+    // Sort by amount DESC, then by createdAt ASC (earlier bids rank higher for same amount)
     const bids = await NiftyJackpotBid.find({ betDate: date })
-      .sort({ amount: -1 })
+      .sort({ amount: -1, createdAt: 1 })
       .populate('user', 'name username')
       .limit(50);
 
     const settings = await GameSettings.getSettings();
     const gameConfig = settings.games?.niftyJackpot;
     const topWinners = gameConfig?.topWinners || 20;
-    const firstPrize = gameConfig?.firstPrize || 3000;
-    const prizeStep = gameConfig?.prizeStep || 20;
+    const prizePercentages = gameConfig?.prizePercentages || [
+      { rank: '1st', percent: 45 },
+      { rank: '2nd', percent: 10 },
+      { rank: '3rd', percent: 5 },
+      { rank: '4th', percent: 2 },
+      { rank: '5th', percent: 1.5 },
+      { rank: '6th', percent: 1 },
+      { rank: '7th', percent: 1 },
+      { rank: '8th-10th', percent: 0.75, count: 3 },
+      { rank: '11th-20th', percent: 0.5, count: 10 },
+    ];
+
+    // Calculate total pool and prize percentages
+    const totalPool = bids.reduce((sum, b) => sum + b.amount, 0);
+    const brokeragePercent = gameConfig?.brokeragePercent || 15;
+    const netPool = totalPool * (1 - brokeragePercent / 100);
+
+    // Build prize lookup by rank
+    const getPrizePercent = (rank) => {
+      if (rank === 1) return prizePercentages[0]?.percent || 45;
+      if (rank === 2) return prizePercentages[1]?.percent || 10;
+      if (rank === 3) return prizePercentages[2]?.percent || 5;
+      if (rank === 4) return prizePercentages[3]?.percent || 2;
+      if (rank === 5) return prizePercentages[4]?.percent || 1.5;
+      if (rank === 6) return prizePercentages[5]?.percent || 1;
+      if (rank === 7) return prizePercentages[6]?.percent || 1;
+      if (rank >= 8 && rank <= 10) return prizePercentages[7]?.percent || 0.75;
+      if (rank >= 11 && rank <= 20) return prizePercentages[8]?.percent || 0.5;
+      return 0;
+    };
 
     const leaderboard = bids.map((bid, idx) => {
       const rank = idx + 1;
-      const prize = rank <= topWinners ? Math.max(0, firstPrize - (rank - 1) * prizeStep) : 0;
+      const prizePercent = getPrizePercent(rank);
+      const prize = rank <= topWinners ? Math.round(netPool * prizePercent / 100) : 0;
+      // Use createdAt if available, otherwise use current time as fallback
+      const bidTime = bid.createdAt || bid._id.getTimestamp();
       return {
         rank,
         userId: bid.user?._id,
         name: bid.user?.name || bid.user?.username || 'Anonymous',
         amount: bid.amount,
+        bidTime: bidTime,
+        prizePercent,
         prize,
         isWinner: rank <= topWinners,
         status: bid.status
       };
     });
 
-    // Find current user's position
+    // Find current user's position (considering both amount and time)
     const myBid = await NiftyJackpotBid.findOne({ user: req.user._id, betDate: date });
     let myRank = null;
     if (myBid) {
-      const higherBids = await NiftyJackpotBid.countDocuments({ betDate: date, amount: { $gt: myBid.amount } });
+      // Count bids with higher amount OR same amount but earlier time
+      const higherBids = await NiftyJackpotBid.countDocuments({ 
+        betDate: date, 
+        $or: [
+          { amount: { $gt: myBid.amount } },
+          { amount: myBid.amount, createdAt: { $lt: myBid.createdAt } }
+        ]
+      });
       myRank = higherBids + 1;
     }
 
     res.json({
       date,
       totalBids: bids.length,
+      totalPool,
+      netPool,
+      brokeragePercent,
       topWinners,
-      firstPrize,
-      prizeStep,
+      prizePercentages,
       leaderboard,
       myRank,
-      myBid: myBid ? { amount: myBid.amount, status: myBid.status, rank: myBid.rank, prize: myBid.prize } : null
+      myBid: myBid ? { amount: myBid.amount, bidTime: myBid.createdAt, status: myBid.status, rank: myBid.rank, prize: myBid.prize } : null
     });
   } catch (error) {
     res.status(500).json({ message: error.message });

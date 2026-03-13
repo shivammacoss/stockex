@@ -5462,59 +5462,227 @@ router.post('/nifty-jackpot/declare-result', protectAdmin, superAdminOnly, async
     const settings = await GameSettings.getSettings();
     const gc = settings.games?.niftyJackpot;
     const topWinners = gc?.topWinners || 20;
-    const firstPrize = gc?.firstPrize || 3000;
-    const prizeStep = gc?.prizeStep || 20;
+    const brokeragePercent = gc?.brokeragePercent || 15;
+    
+    // Prize percentages for each rank
+    const prizePercentages = gc?.prizePercentages || [
+      { rank: '1st', percent: 45 },
+      { rank: '2nd', percent: 10 },
+      { rank: '3rd', percent: 5 },
+      { rank: '4th', percent: 2 },
+      { rank: '5th', percent: 1.5 },
+      { rank: '6th', percent: 1 },
+      { rank: '7th', percent: 1 },
+      { rank: '8th-10th', percent: 0.75, count: 3 },
+      { rank: '11th-20th', percent: 0.5, count: 10 },
+    ];
 
-    // Get all pending bids for this date, sorted by amount descending
-    const pendingBids = await NiftyJackpotBid.find({ betDate: date, status: 'pending' }).sort({ amount: -1 });
+    // Brokerage distribution percentages (from winner's prize)
+    // SubBroker gets highest, then Broker, then Admin
+    const brokerageDistribution = gc?.brokerageDistribution || {
+      subBrokerPercent: 8,    // SubBroker gets 8% of winner's prize as brokerage
+      brokerPercent: 2,       // Broker gets 2% of winner's prize as brokerage
+      adminPercent: 1         // Admin gets 1% of winner's prize as brokerage
+    };
+
+    // Helper to get prize percentage by rank
+    const getPrizePercent = (rank) => {
+      if (rank === 1) return prizePercentages[0]?.percent || 45;
+      if (rank === 2) return prizePercentages[1]?.percent || 10;
+      if (rank === 3) return prizePercentages[2]?.percent || 5;
+      if (rank === 4) return prizePercentages[3]?.percent || 2;
+      if (rank === 5) return prizePercentages[4]?.percent || 1.5;
+      if (rank === 6) return prizePercentages[5]?.percent || 1;
+      if (rank === 7) return prizePercentages[6]?.percent || 1;
+      if (rank >= 8 && rank <= 10) return prizePercentages[7]?.percent || 0.75;
+      if (rank >= 11 && rank <= 20) return prizePercentages[8]?.percent || 0.5;
+      return 0;
+    };
+
+    // Get all pending bids for this date, sorted by amount DESC then createdAt ASC
+    const pendingBids = await NiftyJackpotBid.find({ betDate: date, status: 'pending' }).sort({ amount: -1, createdAt: 1 });
     if (pendingBids.length === 0) {
       return res.status(400).json({ message: 'No pending bids found for this date' });
+    }
+
+    // Calculate total pool
+    const totalPool = pendingBids.reduce((sum, b) => sum + b.amount, 0);
+    const totalBrokerage = totalPool * (brokeragePercent / 100);
+    const netPool = totalPool - totalBrokerage;
+
+    // Group bids by same amount AND same time (to the second)
+    // If multiple bids have same amount and same time, they share the average prize of their ranks
+    const getTimeKey = (bid) => {
+      const t = bid.createdAt || bid._id.getTimestamp();
+      return `${t.getUTCHours()}:${t.getUTCMinutes()}:${t.getUTCSeconds()}`;
+    };
+
+    // First pass: assign preliminary ranks and find ties
+    const bidGroups = [];
+    let currentGroup = [];
+    for (let i = 0; i < pendingBids.length; i++) {
+      const bid = pendingBids[i];
+      const timeKey = getTimeKey(bid);
+      
+      if (currentGroup.length === 0) {
+        currentGroup.push({ bid, index: i, timeKey });
+      } else {
+        const lastBid = currentGroup[currentGroup.length - 1];
+        // Check if same amount AND same time (to the second)
+        if (bid.amount === lastBid.bid.amount && timeKey === lastBid.timeKey) {
+          currentGroup.push({ bid, index: i, timeKey });
+        } else {
+          bidGroups.push([...currentGroup]);
+          currentGroup = [{ bid, index: i, timeKey }];
+        }
+      }
+    }
+    if (currentGroup.length > 0) {
+      bidGroups.push(currentGroup);
+    }
+
+    // Calculate shared prizes for tied bids
+    // Example: If 2 bids tie at ranks 1 and 2, they each get (prize1 + prize2) / 2
+    const bidPrizeMap = new Map(); // bid._id -> { sharedRank, grossPrize }
+    let currentRank = 1;
+    for (const group of bidGroups) {
+      const groupSize = group.length;
+      const ranks = [];
+      for (let j = 0; j < groupSize; j++) {
+        ranks.push(currentRank + j);
+      }
+      
+      // Calculate average prize for this group (only for winners)
+      let totalGroupPrize = 0;
+      let winnerRanksInGroup = 0;
+      for (const r of ranks) {
+        if (r <= topWinners) {
+          totalGroupPrize += getPrizePercent(r);
+          winnerRanksInGroup++;
+        }
+      }
+      
+      // Average rank for display (e.g., ranks 1,2 -> avg rank 1.5)
+      const avgRank = ranks.reduce((a, b) => a + b, 0) / groupSize;
+      const sharedPrizePercent = winnerRanksInGroup > 0 ? totalGroupPrize / groupSize : 0;
+      
+      for (const item of group) {
+        const isWinner = ranks.some(r => r <= topWinners);
+        bidPrizeMap.set(item.bid._id.toString(), {
+          displayRank: groupSize > 1 ? avgRank : currentRank,
+          actualRank: currentRank,
+          grossPrizePercent: isWinner ? sharedPrizePercent : 0,
+          isTied: groupSize > 1,
+          tiedWith: groupSize - 1
+        });
+      }
+      
+      currentRank += groupSize;
     }
 
     let winnersCount = 0;
     let losersCount = 0;
     let totalPaidOut = 0;
     let totalCollected = 0;
+    let totalBrokerageDistributed = 0;
 
     for (let i = 0; i < pendingBids.length; i++) {
       const bid = pendingBids[i];
-      const rank = i + 1;
-      bid.rank = rank;
+      const prizeInfo = bidPrizeMap.get(bid._id.toString());
+      bid.rank = prizeInfo.displayRank;
       bid.resultDeclaredAt = new Date();
 
-      const user = await User.findById(bid.user);
+      const user = await User.findById(bid.user).populate('managedBy');
 
-      if (rank <= topWinners) {
-        // Winner
-        const prize = Math.max(0, firstPrize - (rank - 1) * prizeStep);
+      // Winner if their prize percent > 0 (handles tied bids correctly)
+      if (prizeInfo.grossPrizePercent > 0) {
+        // Winner - Calculate prize based on shared percentage of net pool
+        const grossPrize = Math.round(netPool * prizeInfo.grossPrizePercent / 100);
+        
+        // Calculate brokerage from winner's prize for their hierarchy
+        const subBrokerBrokerage = Math.round(grossPrize * (brokerageDistribution.subBrokerPercent / 100));
+        const brokerBrokerage = Math.round(grossPrize * (brokerageDistribution.brokerPercent / 100));
+        const adminBrokerage = Math.round(grossPrize * (brokerageDistribution.adminPercent / 100));
+        const totalWinnerBrokerage = subBrokerBrokerage + brokerBrokerage + adminBrokerage;
+        
+        // Net prize after brokerage deduction
+        const netPrize = grossPrize - totalWinnerBrokerage;
+        
         bid.status = 'won';
-        bid.prize = prize;
+        bid.prize = netPrize;
+        bid.grossPrize = grossPrize;
+        bid.brokerageDeducted = totalWinnerBrokerage;
 
-        // Credit user: refund bid amount + prize
+        // Credit user: refund bid amount + net prize
         if (user) {
-          user.gamesWallet.balance += bid.amount + prize;
+          user.gamesWallet.balance += bid.amount + netPrize;
           user.gamesWallet.usedMargin = Math.max(0, user.gamesWallet.usedMargin - bid.amount);
-          user.gamesWallet.realizedPnL += prize;
-          user.gamesWallet.todayRealizedPnL += prize;
+          user.gamesWallet.realizedPnL += netPrize;
+          user.gamesWallet.todayRealizedPnL += netPrize;
           await user.save();
+
+          // Distribute brokerage to winner's hierarchy
+          const winnerAdmin = user.managedBy;
+          if (winnerAdmin) {
+            // Find SubBroker, Broker, Admin in hierarchy
+            let subBroker = null, broker = null, admin = null;
+            
+            if (winnerAdmin.role === 'SUB_BROKER') {
+              subBroker = winnerAdmin;
+              broker = await Admin.findById(winnerAdmin.parentAdmin);
+              if (broker) admin = await Admin.findById(broker.parentAdmin);
+            } else if (winnerAdmin.role === 'BROKER') {
+              broker = winnerAdmin;
+              admin = await Admin.findById(winnerAdmin.parentAdmin);
+            } else if (winnerAdmin.role === 'ADMIN') {
+              admin = winnerAdmin;
+            }
+
+            // Credit SubBroker
+            if (subBroker && subBrokerBrokerage > 0) {
+              subBroker.wallet = subBroker.wallet || { balance: 0 };
+              subBroker.wallet.balance += subBrokerBrokerage;
+              await subBroker.save();
+            }
+
+            // Credit Broker
+            if (broker && brokerBrokerage > 0) {
+              broker.wallet = broker.wallet || { balance: 0 };
+              broker.wallet.balance += brokerBrokerage;
+              await broker.save();
+            }
+
+            // Credit Admin
+            if (admin && adminBrokerage > 0) {
+              admin.wallet = admin.wallet || { balance: 0 };
+              admin.wallet.balance += adminBrokerage;
+              await admin.save();
+            }
+
+            bid.winnerBrokerageDistribution = {
+              subBroker: subBroker ? { id: subBroker._id, name: subBroker.name, amount: subBrokerBrokerage } : null,
+              broker: broker ? { id: broker._id, name: broker.name, amount: brokerBrokerage } : null,
+              admin: admin ? { id: admin._id, name: admin.name, amount: adminBrokerage } : null
+            };
+          }
         }
-        totalPaidOut += bid.amount + prize;
+        
+        totalPaidOut += bid.amount + netPrize;
+        totalBrokerageDistributed += totalWinnerBrokerage;
         winnersCount++;
       } else {
-        // Loser
+        // Loser - NO brokerage distribution for losers (4th logic)
+        // Loser's broker/subbroker gets NOTHING - only winner's hierarchy gets brokerage
         bid.status = 'lost';
         bid.prize = 0;
 
-        // Release used margin
+        // Release used margin, deduct from PnL
         if (user) {
           user.gamesWallet.usedMargin = Math.max(0, user.gamesWallet.usedMargin - bid.amount);
           user.gamesWallet.realizedPnL -= bid.amount;
           user.gamesWallet.todayRealizedPnL -= bid.amount;
           await user.save();
-
-          // Distribute lost amount through admin hierarchy (cascading)
-          const result = await distributeGameProfit(user, bid.amount, 'NiftyJackpot', bid._id?.toString(), 'niftyJackpot');
-          bid.distribution = result.distributions;
+          // Lost amount goes to prize pool - no distribution to loser's hierarchy
         }
 
         totalCollected += bid.amount;
@@ -5529,6 +5697,9 @@ router.post('/nifty-jackpot/declare-result', protectAdmin, superAdminOnly, async
     if (jackpotResult) {
       jackpotResult.resultDeclared = true;
       jackpotResult.resultDeclaredAt = new Date();
+      jackpotResult.totalPool = totalPool;
+      jackpotResult.totalBrokerage = totalBrokerage;
+      jackpotResult.netPool = netPool;
       await jackpotResult.save();
     }
 
@@ -5538,10 +5709,14 @@ router.post('/nifty-jackpot/declare-result', protectAdmin, superAdminOnly, async
       lockedPrice: jackpotResult?.lockedPrice || null,
       summary: {
         totalBids: pendingBids.length,
+        totalPool,
+        totalBrokerage,
+        netPool,
         winners: winnersCount,
         losers: losersCount,
         totalPaidOut,
-        totalCollected
+        totalCollected,
+        totalBrokerageDistributed
       }
     });
   } catch (error) {

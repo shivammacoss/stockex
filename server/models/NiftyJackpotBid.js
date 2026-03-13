@@ -20,10 +20,38 @@ const niftyJackpotBidSchema = new mongoose.Schema({
     type: Number,
     default: null
   },
-  // Prize won based on rank
+  // Prize won based on rank (net after brokerage)
   prize: {
     type: Number,
     default: 0
+  },
+  // Gross prize before brokerage deduction
+  grossPrize: {
+    type: Number,
+    default: 0
+  },
+  // Total brokerage deducted from winner's prize
+  brokerageDeducted: {
+    type: Number,
+    default: 0
+  },
+  // Brokerage distribution to winner's hierarchy
+  winnerBrokerageDistribution: {
+    subBroker: {
+      id: { type: mongoose.Schema.Types.ObjectId, ref: 'Admin' },
+      name: String,
+      amount: { type: Number, default: 0 }
+    },
+    broker: {
+      id: { type: mongoose.Schema.Types.ObjectId, ref: 'Admin' },
+      name: String,
+      amount: { type: Number, default: 0 }
+    },
+    admin: {
+      id: { type: mongoose.Schema.Types.ObjectId, ref: 'Admin' },
+      name: String,
+      amount: { type: Number, default: 0 }
+    }
   },
   // Status: pending (waiting for result), won (in top N), lost
   status: {

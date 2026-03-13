@@ -149,7 +149,7 @@ const UserGames = () => {
           user={user}
           refreshBalance={fetchGamesBalance}
           settings={gameSettings?.games?.[GAME_SETTINGS_KEY[activeGame]] || null}
-          tokenValue={gameSettings?.tokenValue || 300}
+          tokenValue={gameSettings?.games?.[GAME_SETTINGS_KEY[activeGame]]?.ticketPrice || gameSettings?.tokenValue || 300}
         />
       );
     }
@@ -162,7 +162,7 @@ const UserGames = () => {
           user={user}
           refreshBalance={fetchGamesBalance}
           settings={gameSettings?.games?.[GAME_SETTINGS_KEY[activeGame]] || null}
-          tokenValue={gameSettings?.tokenValue || 300}
+          tokenValue={gameSettings?.games?.[GAME_SETTINGS_KEY[activeGame]]?.ticketPrice || gameSettings?.tokenValue || 300}
         />
       );
     }
@@ -175,7 +175,7 @@ const UserGames = () => {
           user={user}
           refreshBalance={fetchGamesBalance}
           settings={gameSettings?.games?.[GAME_SETTINGS_KEY[activeGame]] || null}
-          tokenValue={gameSettings?.tokenValue || 300}
+          tokenValue={gameSettings?.games?.[GAME_SETTINGS_KEY[activeGame]]?.ticketPrice || gameSettings?.tokenValue || 300}
         />
       );
     }
@@ -187,7 +187,7 @@ const UserGames = () => {
         user={user}
         refreshBalance={fetchGamesBalance}
         settings={gameSettings?.games?.[GAME_SETTINGS_KEY[activeGame]] || null}
-        tokenValue={gameSettings?.tokenValue || 300}
+        tokenValue={gameSettings?.games?.[GAME_SETTINGS_KEY[activeGame]]?.ticketPrice || gameSettings?.tokenValue || 300}
       />
     );
   }
@@ -2014,7 +2014,7 @@ const NiftyNumberScreen = ({ game, balance, onBack, user, refreshBalance, settin
                 </div>
                 <div className="flex justify-between py-1">
                   <span className="text-gray-400">Result At</span>
-                  <span className="font-medium">{settings?.resultTime || '15:30'} IST</span>
+                  <span className="font-medium">{settings?.resultTime || '15:40'} IST</span>
                 </div>
               </div>
               <div className="mt-2 bg-dark-700/50 rounded-lg p-2 text-[10px] text-gray-500">
@@ -2088,7 +2088,7 @@ const NiftyNumberScreen = ({ game, balance, onBack, user, refreshBalance, settin
                   <div className="text-gray-400 text-sm mb-1">
                     Total: ₹{todayBets.reduce((s, b) => s + b.amount, 0).toLocaleString()}
                   </div>
-                  <div className="text-yellow-400 text-xs font-medium">Result at {settings?.resultTime || '15:30'} IST</div>
+                  <div className="text-yellow-400 text-xs font-medium">Result at {settings?.resultTime || '15:40'} IST</div>
                   <div className="text-[10px] text-gray-500 mt-2">You can still edit pending bet amounts from the left panel</div>
                 </div>
               </div>
@@ -2834,12 +2834,14 @@ const NiftyJackpotScreen = ({ game, balance, onBack, user, refreshBalance, setti
                 <Crown size={14} />
                 LIVE TOP 10
               </h3>
+              <p className="text-[9px] text-gray-500 mb-2">Ranked by: Amount (highest) → Time (earliest)</p>
               {top10.length === 0 ? (
                 <p className="text-gray-500 text-[10px] text-center py-3">No bids yet today</p>
               ) : (
                 <div className="space-y-1">
                   {top10.map((entry, idx) => {
                     const isMe = entry.userId?.toString() === user._id?.toString() || entry.userId === user._id;
+                    const bidTime = entry.bidTime ? new Date(entry.bidTime).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '--:--';
                     return (
                       <div key={idx} className={`flex items-center justify-between p-2 rounded-lg text-xs ${
                         isMe ? 'bg-yellow-900/30 border border-yellow-500/20' :
@@ -2858,11 +2860,16 @@ const NiftyJackpotScreen = ({ game, balance, onBack, user, refreshBalance, setti
                             <div className={`font-medium ${isMe ? 'text-yellow-400' : 'text-white'}`}>
                               {isMe ? 'You' : entry.name}
                             </div>
-                            <div className="text-[10px] text-gray-500">{toTokens(entry.amount)} T</div>
+                            <div className="text-[10px] text-gray-500 flex items-center gap-1.5">
+                              <span className="text-purple-400 font-medium">₹{entry.amount?.toLocaleString()}</span>
+                              <span className="text-gray-600">•</span>
+                              <span className="text-cyan-400">{bidTime}</span>
+                            </div>
                           </div>
                         </div>
                         <div className="text-right">
-                          <div className="text-green-400 font-bold text-[10px]">{toTokens(entry.prize)} T</div>
+                          <div className="text-green-400 font-bold text-[10px]">₹{entry.prize?.toLocaleString()}</div>
+                          <div className="text-[9px] text-gray-500">{entry.prizePercent}%</div>
                         </div>
                       </div>
                     );
@@ -2902,7 +2909,7 @@ const NiftyJackpotScreen = ({ game, balance, onBack, user, refreshBalance, setti
                 </div>
                 <div className="flex justify-between py-1 border-b border-dark-600">
                   <span className="text-gray-400">Result At</span>
-                  <span className="font-medium">{settings?.resultTime || '15:30'} IST</span>
+                  <span className="font-medium">{settings?.resultTime || '15:40'} IST</span>
                 </div>
                 <div className="flex justify-between py-1">
                   <span className="text-gray-400">Nifty Price</span>
@@ -2992,7 +2999,7 @@ const NiftyJackpotScreen = ({ game, balance, onBack, user, refreshBalance, setti
                       </div>
                     )}
                     {todayBid.status === 'pending' && (
-                      <div className="text-yellow-400 text-xs font-medium mt-2">Result at {settings?.resultTime || '15:30'} IST</div>
+                      <div className="text-yellow-400 text-xs font-medium mt-2">Result at {settings?.resultTime || '15:40'} IST</div>
                     )}
                     {todayBid.status === 'won' && todayBid.prize > 0 && (
                       <div className="text-green-400 text-lg font-bold mt-1">Won {toTokens(todayBid.prize)} Tickets!</div>
@@ -3024,9 +3031,11 @@ const NiftyJackpotScreen = ({ game, balance, onBack, user, refreshBalance, setti
                     <Medal size={12} className="text-yellow-400" />
                     Full Leaderboard ({totalBids} bidders)
                   </h3>
+                  <p className="text-[9px] text-gray-500 mb-2">Ranked by: Amount (highest) → Time (earliest)</p>
                   <div className="space-y-1 max-h-[300px] overflow-y-auto">
                     {leaderboard.map((entry, idx) => {
                       const isMe = entry.userId?.toString() === user._id?.toString() || entry.userId === user._id;
+                      const bidTime = entry.bidTime ? new Date(entry.bidTime).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '--:--';
                       return (
                         <div key={idx} className={`flex items-center justify-between p-1.5 rounded-lg text-[11px] ${
                           isMe ? 'bg-yellow-900/30 border border-yellow-500/20' :
@@ -3040,11 +3049,16 @@ const NiftyJackpotScreen = ({ game, balance, onBack, user, refreshBalance, setti
                               entry.isWinner ? 'bg-green-900/50 text-green-400' :
                               'bg-dark-600 text-gray-500'
                             }`}>{entry.rank}</span>
-                            <span className={isMe ? 'text-yellow-400 font-bold' : 'text-gray-300'}>{isMe ? 'You' : entry.name}</span>
+                            <div>
+                              <span className={isMe ? 'text-yellow-400 font-bold' : 'text-gray-300'}>{isMe ? 'You' : entry.name}</span>
+                              <div className="text-[9px] text-cyan-400">{bidTime}</div>
+                            </div>
                           </div>
-                          <div className="flex items-center gap-2">
-                            <span className="text-gray-400">{toTokens(entry.amount)} T</span>
-                            {entry.isWinner && <span className="text-green-400 font-bold">{toTokens(entry.prize)} T</span>}
+                          <div className="flex items-center gap-2 text-right">
+                            <div>
+                              <span className="text-purple-400 font-medium">₹{entry.amount?.toLocaleString()}</span>
+                              {entry.isWinner && <div className="text-green-400 font-bold text-[10px]">₹{entry.prize?.toLocaleString()} ({entry.prizePercent}%)</div>}
+                            </div>
                           </div>
                         </div>
                       );
@@ -3072,7 +3086,7 @@ const NiftyJackpotScreen = ({ game, balance, onBack, user, refreshBalance, setti
 
                 {/* How It Works */}
                 <div className="bg-yellow-900/10 border border-yellow-500/20 rounded-xl p-3">
-                  <h3 className="text-xs font-bold text-yellow-400 mb-1.5 flex items-center gap-1.5">
+                  <h3 className="font-bold text-xs mb-2 flex items-center gap-1.5">
                     <Info size={12} />
                     How It Works
                   </h3>
@@ -3080,7 +3094,8 @@ const NiftyJackpotScreen = ({ game, balance, onBack, user, refreshBalance, setti
                     <li>• Place your bid — higher bids rank higher</li>
                     <li>• Top {topWinners} bidders win prizes</li>
                     <li>• 1st gets {toTokens(getNetPrize(1))} T net (after {brokeragePercent}% fee)</li>
-                    <li>• Results declared at {settings?.resultTime || '15:30'} IST</li>
+                    <li className="text-cyan-400">• Bidding: {settings?.biddingStartTime || '09:15'} - {settings?.biddingEndTime || '14:59'} IST</li>
+                    <li>• Results declared at {settings?.resultTime || '15:40'} IST</li>
                   </ul>
                 </div>
 

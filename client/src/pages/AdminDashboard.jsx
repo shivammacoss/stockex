@@ -14368,7 +14368,7 @@ const GameSettingsManagement = () => {
                     className="w-full bg-dark-700 border border-dark-600 rounded px-4 py-2"
                     min="1"
                   />
-                  <p className="text-xs text-gray-500 mt-1">= ₹{((currentGame?.minTickets || 1) * (settings?.tokenValue || 300)).toLocaleString()}</p>
+                  <p className="text-xs text-gray-500 mt-1">= ₹{((currentGame?.minTickets || 1) * (currentGame?.ticketPrice || settings?.tokenValue || 300)).toLocaleString()}</p>
                 </div>
                 <div>
                   <label className="block text-sm text-gray-400 mb-2">Maximum Tickets</label>
@@ -14379,7 +14379,7 @@ const GameSettingsManagement = () => {
                     className="w-full bg-dark-700 border border-dark-600 rounded px-4 py-2"
                     min="1"
                   />
-                  <p className="text-xs text-gray-500 mt-1">= ₹{((currentGame?.maxTickets || 500) * (settings?.tokenValue || 300)).toLocaleString()}</p>
+                  <p className="text-xs text-gray-500 mt-1">= ₹{((currentGame?.maxTickets || 500) * (currentGame?.ticketPrice || settings?.tokenValue || 300)).toLocaleString()}</p>
                 </div>
               </div>
 
@@ -14422,25 +14422,29 @@ const GameSettingsManagement = () => {
                 </div>
               </div>
 
-              {/* Ticket System - only for Nifty Up/Down and BTC Up/Down */}
-              {(selectedGame === 'niftyUpDown' || selectedGame === 'btcUpDown') && (
-                <div className="space-y-4">
-                  <h4 className="font-medium text-purple-400 flex items-center gap-2">
-                    <Coins size={16} /> Ticket System
-                  </h4>
-                  <div>
-                    <label className="block text-sm text-gray-400 mb-2">1 Ticket = ₹ (Value in Rupees)</label>
-                    <input
-                      type="number"
-                      value={settings?.tokenValue || 300}
-                      onChange={e => updateGlobalSetting('tokenValue', parseFloat(e.target.value))}
-                      className="w-full bg-dark-700 border border-dark-600 rounded px-4 py-2"
-                      min="1"
-                    />
-                    <p className="text-xs text-gray-500 mt-1">1 Ticket = ₹{settings?.tokenValue || 300}. Users see ticket amounts in this game.</p>
+              {/* Ticket System - Per Game Ticket Price */}
+              <div className="space-y-4">
+                <h4 className="font-medium text-purple-400 flex items-center gap-2">
+                  <Coins size={16} /> Ticket System
+                </h4>
+                <div className="bg-purple-900/20 border border-purple-500/30 rounded-lg p-3">
+                  <label className="block text-sm text-purple-400 font-medium mb-2">1 Ticket Price (₹)</label>
+                  <input
+                    type="number"
+                    value={currentGame?.ticketPrice || settings?.tokenValue || 300}
+                    onChange={e => updateGameSetting(selectedGame, 'ticketPrice', parseFloat(e.target.value))}
+                    className="w-full bg-dark-700 border border-dark-600 rounded px-4 py-2"
+                    min="1"
+                  />
+                  <p className="text-xs text-gray-500 mt-1">
+                    1 Ticket = ₹{currentGame?.ticketPrice || settings?.tokenValue || 300} for this game
+                  </p>
+                  <div className="mt-2 text-xs text-gray-400 bg-dark-700/50 rounded p-2">
+                    <span className="text-purple-400">Example:</span> Min {currentGame?.minTickets || 1} Tickets = ₹{((currentGame?.minTickets || 1) * (currentGame?.ticketPrice || settings?.tokenValue || 300)).toLocaleString()} | 
+                    Max {currentGame?.maxTickets || 500} Tickets = ₹{((currentGame?.maxTickets || 500) * (currentGame?.ticketPrice || settings?.tokenValue || 300)).toLocaleString()}
                   </div>
                 </div>
-              )}
+              </div>
 
               {/* Trading Time Settings for all games except BTC Up/Down */}
               {selectedGame !== 'btcUpDown' && (
@@ -14644,17 +14648,10 @@ const GameSettingsManagement = () => {
                       <label className="block text-sm text-gray-400 mb-2">Top Winners Count</label>
                       <input
                         type="number"
-                        value={currentGame?.topWinners || 10}
+                        value={currentGame?.topWinners || 20}
                         onChange={e => {
                           const count = parseInt(e.target.value) || 1;
                           updateGameSetting(selectedGame, 'topWinners', count);
-                          const currentDist = currentGame?.prizeDistribution || [];
-                          if (count > currentDist.length) {
-                            const newDist = [...currentDist, ...Array(count - currentDist.length).fill(1000)];
-                            updateGameSetting(selectedGame, 'prizeDistribution', newDist);
-                          } else if (count < currentDist.length) {
-                            updateGameSetting(selectedGame, 'prizeDistribution', currentDist.slice(0, count));
-                          }
                         }}
                         className="w-full bg-dark-700 border border-dark-600 rounded px-4 py-2"
                         min="1"
@@ -14663,52 +14660,183 @@ const GameSettingsManagement = () => {
                       <p className="text-xs text-gray-500 mt-1">Number of top bidders who win prizes</p>
                     </div>
                     <div>
-                      <label className="block text-sm text-gray-400 mb-2">Prize Distribution (₹ per rank)</label>
-                      <p className="text-xs text-gray-500 mb-2">Set prize amount for each rank. Brokerage ({currentGame?.brokeragePercent || 5}%) will be deducted from each prize.</p>
-                      <div className="space-y-2 max-h-[300px] overflow-y-auto">
-                        {(currentGame?.prizeDistribution || [45000, 10000, 8000, 6000, 5000, 4000, 3000, 2000, 1500, 1000]).map((prize, idx) => {
-                          const brokerage = prize * (currentGame?.brokeragePercent || 5) / 100;
-                          const netPrize = prize - brokerage;
-                          return (
-                            <div key={idx} className="flex items-center gap-2">
-                              <span className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0 ${
-                                idx === 0 ? 'bg-yellow-500 text-black' :
-                                idx === 1 ? 'bg-gray-300 text-black' :
-                                idx === 2 ? 'bg-orange-600 text-white' :
-                                'bg-dark-600 text-gray-400'
-                              }`}>#{idx + 1}</span>
-                              <input
-                                type="number"
-                                value={prize}
-                                onChange={e => {
-                                  const newDist = [...(currentGame?.prizeDistribution || [])];
-                                  newDist[idx] = parseFloat(e.target.value) || 0;
-                                  updateGameSetting(selectedGame, 'prizeDistribution', newDist);
-                                }}
-                                className="flex-1 bg-dark-700 border border-dark-600 rounded px-3 py-1.5 text-sm"
-                                min="0"
-                              />
-                              <span className="text-xs text-gray-500 w-28 text-right">Net: ₹{netPrize.toLocaleString()}</span>
+                      <label className="block text-sm text-gray-400 mb-2">Prize Distribution (% of Total Pool)</label>
+                      <p className="text-xs text-gray-500 mb-2">Set percentage of total pool for each rank. Brokerage ({currentGame?.brokeragePercent || 15}%) will be deducted from total pool first.</p>
+                      
+                      {/* Default percentage distribution */}
+                      {(() => {
+                        const defaultPercentages = [
+                          { rank: '1st', percent: 45 },
+                          { rank: '2nd', percent: 10 },
+                          { rank: '3rd', percent: 5 },
+                          { rank: '4th', percent: 2 },
+                          { rank: '5th', percent: 1.5 },
+                          { rank: '6th', percent: 1 },
+                          { rank: '7th', percent: 1 },
+                          { rank: '8th-10th', percent: 0.75, count: 3 },
+                          { rank: '11th-20th', percent: 0.5, count: 10 },
+                        ];
+                        const prizePercentages = currentGame?.prizePercentages || defaultPercentages;
+                        const totalPercent = prizePercentages.reduce((sum, p) => sum + (p.percent * (p.count || 1)), 0);
+                        
+                        return (
+                          <>
+                            <div className="space-y-2 max-h-[350px] overflow-y-auto">
+                              {prizePercentages.map((item, idx) => (
+                                <div key={idx} className="flex items-center gap-2 bg-dark-700/50 rounded-lg p-2">
+                                  <span className={`w-20 text-xs font-bold flex-shrink-0 ${
+                                    idx === 0 ? 'text-yellow-400' :
+                                    idx === 1 ? 'text-gray-300' :
+                                    idx === 2 ? 'text-orange-400' :
+                                    'text-gray-400'
+                                  }`}>{item.rank}</span>
+                                  <div className="flex items-center gap-1 flex-1">
+                                    <input
+                                      type="number"
+                                      value={item.percent}
+                                      onChange={e => {
+                                        const newPercentages = [...prizePercentages];
+                                        newPercentages[idx] = { ...newPercentages[idx], percent: parseFloat(e.target.value) || 0 };
+                                        updateGameSetting(selectedGame, 'prizePercentages', newPercentages);
+                                      }}
+                                      className="w-20 bg-dark-700 border border-dark-600 rounded px-2 py-1 text-sm text-center"
+                                      min="0"
+                                      max="100"
+                                      step="0.1"
+                                    />
+                                    <span className="text-yellow-400 text-sm">%</span>
+                                  </div>
+                                  {item.count && (
+                                    <span className="text-xs text-gray-500">× {item.count} winners = {(item.percent * item.count).toFixed(2)}%</span>
+                                  )}
+                                </div>
+                              ))}
                             </div>
-                          );
-                        })}
-                      </div>
-                      <div className="mt-2 p-2 bg-dark-700 rounded text-xs text-gray-400">
-                        Total Prizes: ₹{(currentGame?.prizeDistribution || []).reduce((s, p) => s + p, 0).toLocaleString()} | 
-                        Total Brokerage: ₹{((currentGame?.prizeDistribution || []).reduce((s, p) => s + p, 0) * (currentGame?.brokeragePercent || 5) / 100).toLocaleString()} | 
-                        Net Payout: ₹{((currentGame?.prizeDistribution || []).reduce((s, p) => s + p, 0) * (1 - (currentGame?.brokeragePercent || 5) / 100)).toLocaleString()}
-                      </div>
+                            <div className={`mt-3 p-3 rounded-lg text-sm ${totalPercent > 100 ? 'bg-red-900/30 border border-red-500/30' : 'bg-green-900/20 border border-green-500/30'}`}>
+                              <div className="flex justify-between items-center">
+                                <span className="text-gray-400">Total Distribution:</span>
+                                <span className={`font-bold ${totalPercent > 100 ? 'text-red-400' : totalPercent === 100 ? 'text-green-400' : 'text-yellow-400'}`}>
+                                  {totalPercent.toFixed(2)}%
+                                </span>
+                              </div>
+                              {totalPercent > 100 && (
+                                <p className="text-red-400 text-xs mt-1">⚠️ Total exceeds 100%! Please adjust percentages.</p>
+                              )}
+                              {totalPercent < 100 && (
+                                <p className="text-yellow-400 text-xs mt-1">💡 Remaining {(100 - totalPercent).toFixed(2)}% goes to platform</p>
+                              )}
+                            </div>
+                          </>
+                        );
+                      })()}
                     </div>
                     <div>
                       <label className="block text-sm text-gray-400 mb-2">Result Time (IST)</label>
                       <input
                         type="time"
-                        value={currentGame?.resultTime || '15:30'}
+                        value={currentGame?.resultTime || '15:40'}
                         onChange={e => updateGameSetting(selectedGame, 'resultTime', e.target.value)}
                         className="w-full bg-dark-700 border border-dark-600 rounded px-4 py-2"
                       />
                     </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-sm text-gray-400 mb-2">Bidding Start Time (IST)</label>
+                        <input
+                          type="time"
+                          value={currentGame?.biddingStartTime || '09:15'}
+                          onChange={e => updateGameSetting(selectedGame, 'biddingStartTime', e.target.value)}
+                          className="w-full bg-dark-700 border border-dark-600 rounded px-4 py-2"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm text-gray-400 mb-2">Bidding End Time (IST)</label>
+                        <input
+                          type="time"
+                          value={currentGame?.biddingEndTime || '14:59'}
+                          onChange={e => updateGameSetting(selectedGame, 'biddingEndTime', e.target.value)}
+                          className="w-full bg-dark-700 border border-dark-600 rounded px-4 py-2"
+                        />
+                      </div>
+                    </div>
+                    <p className="text-xs text-gray-500">Bidding allowed from {currentGame?.biddingStartTime || '09:15'} to {currentGame?.biddingEndTime || '14:59'} IST</p>
                   </div>
+
+                  {/* Winner Brokerage Distribution */}
+                  <div className="space-y-4">
+                    <h4 className="font-medium text-green-400">Winner Brokerage Distribution</h4>
+                    <p className="text-xs text-gray-500">Percentage deducted from winner's prize and distributed to their hierarchy</p>
+                    <div>
+                      <label className="block text-sm text-gray-400 mb-2">SubBroker Share (% of Winner's Prize)</label>
+                      <input
+                        type="number"
+                        value={currentGame?.brokerageDistribution?.subBrokerPercent || 8}
+                        onChange={e => {
+                          const bd = currentGame?.brokerageDistribution || { subBrokerPercent: 8, brokerPercent: 2, adminPercent: 1 };
+                          updateGameSetting(selectedGame, 'brokerageDistribution', { ...bd, subBrokerPercent: parseFloat(e.target.value) || 0 });
+                        }}
+                        className="w-full bg-dark-700 border border-dark-600 rounded px-4 py-2"
+                        min="0"
+                        max="50"
+                        step="0.5"
+                      />
+                      <p className="text-xs text-gray-500 mt-1">Winner's SubBroker gets this % of winner's prize</p>
+                    </div>
+                    <div>
+                      <label className="block text-sm text-gray-400 mb-2">Broker Share (% of Winner's Prize)</label>
+                      <input
+                        type="number"
+                        value={currentGame?.brokerageDistribution?.brokerPercent || 2}
+                        onChange={e => {
+                          const bd = currentGame?.brokerageDistribution || { subBrokerPercent: 8, brokerPercent: 2, adminPercent: 1 };
+                          updateGameSetting(selectedGame, 'brokerageDistribution', { ...bd, brokerPercent: parseFloat(e.target.value) || 0 });
+                        }}
+                        className="w-full bg-dark-700 border border-dark-600 rounded px-4 py-2"
+                        min="0"
+                        max="50"
+                        step="0.5"
+                      />
+                      <p className="text-xs text-gray-500 mt-1">Winner's Broker gets this % of winner's prize</p>
+                    </div>
+                    <div>
+                      <label className="block text-sm text-gray-400 mb-2">Admin Share (% of Winner's Prize)</label>
+                      <input
+                        type="number"
+                        value={currentGame?.brokerageDistribution?.adminPercent || 1}
+                        onChange={e => {
+                          const bd = currentGame?.brokerageDistribution || { subBrokerPercent: 8, brokerPercent: 2, adminPercent: 1 };
+                          updateGameSetting(selectedGame, 'brokerageDistribution', { ...bd, adminPercent: parseFloat(e.target.value) || 0 });
+                        }}
+                        className="w-full bg-dark-700 border border-dark-600 rounded px-4 py-2"
+                        min="0"
+                        max="50"
+                        step="0.5"
+                      />
+                      <p className="text-xs text-gray-500 mt-1">Winner's Admin gets this % of winner's prize</p>
+                    </div>
+                    {(() => {
+                      const bd = currentGame?.brokerageDistribution || { subBrokerPercent: 8, brokerPercent: 2, adminPercent: 1 };
+                      const total = (bd.subBrokerPercent || 0) + (bd.brokerPercent || 0) + (bd.adminPercent || 0);
+                      return (
+                        <div className="p-3 bg-dark-700 rounded-lg text-xs">
+                          <div className="flex justify-between mb-2">
+                            <span className="text-gray-400">Total Brokerage from Winner:</span>
+                            <span className="text-yellow-400 font-bold">{total}%</span>
+                          </div>
+                          <div className="text-gray-500">
+                            Example: If winner gets ₹45,000 prize:
+                            <ul className="mt-1 space-y-0.5">
+                              <li>• SubBroker: ₹{(45000 * (bd.subBrokerPercent || 0) / 100).toLocaleString()}</li>
+                              <li>• Broker: ₹{(45000 * (bd.brokerPercent || 0) / 100).toLocaleString()}</li>
+                              <li>• Admin: ₹{(45000 * (bd.adminPercent || 0) / 100).toLocaleString()}</li>
+                              <li className="text-green-400">• Winner gets: ₹{(45000 * (1 - total / 100)).toLocaleString()}</li>
+                            </ul>
+                          </div>
+                        </div>
+                      );
+                    })()}
+                  </div>
+
                   <div className="space-y-4">
                     <h4 className="font-medium text-orange-400">Profit Distribution (on Losses)</h4>
                     <div>
