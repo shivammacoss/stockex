@@ -14084,13 +14084,24 @@ const GameSettingsManagement = () => {
             </div>
           </div>
 
-          {/* Profit Distribution Hierarchy */}
+          {/* Brokerage Distribution Hierarchy */}
           <div className="bg-dark-800 rounded-lg p-6">
             <h3 className="text-lg font-bold mb-4 flex items-center gap-2">
-              <Users className="text-orange-400" size={20} /> Profit Distribution
+              <Users className="text-orange-400" size={20} /> Brokerage Distribution
             </h3>
-            <p className="text-xs text-gray-500 mb-4">Set Admin, Broker & Sub-Broker %. Remaining automatically goes to Super Admin wallet.</p>
+            <p className="text-xs text-gray-500 mb-4">Set User, Admin, Broker & Sub-Broker %. Remaining automatically goes to Super Admin wallet.</p>
             <div className="space-y-3">
+              <div>
+                <label className="block text-sm text-gray-400 mb-1">User (%)</label>
+                <input
+                  type="number"
+                  value={settings?.profitDistribution?.userPercent ?? 0}
+                  onChange={e => updateNestedSetting('profitDistribution', 'userPercent', parseFloat(e.target.value) || 0)}
+                  className="w-full bg-dark-700 border border-dark-600 rounded px-4 py-2"
+                  min="0" max="100" step="0.01"
+                />
+                <p className="text-xs text-gray-500 mt-1">% of brokerage that goes back to the winning user</p>
+              </div>
               <div>
                 <label className="block text-sm text-gray-400 mb-1">Admin (%)</label>
                 <input
@@ -14123,15 +14134,16 @@ const GameSettingsManagement = () => {
               </div>
             </div>
             {(() => {
+              const us = settings?.profitDistribution?.userPercent ?? 0;
               const ad = settings?.profitDistribution?.adminPercent ?? 30;
               const br = settings?.profitDistribution?.brokerPercent ?? 20;
               const sb = settings?.profitDistribution?.subBrokerPercent ?? 10;
-              const total = ad + br + sb;
+              const total = us + ad + br + sb;
               const saShare = Math.max(0, 100 - total);
               return (
                 <div className={`mt-4 p-3 rounded-lg text-xs ${total > 100 ? 'bg-red-900/30 border border-red-500/30' : 'bg-dark-700'}`}>
                   <div className="flex justify-between mb-1">
-                    <span className="text-gray-400">Admin + Broker + Sub-Broker</span>
+                    <span className="text-gray-400">User + Admin + Broker + Sub-Broker</span>
                     <span className={`font-bold ${total > 100 ? 'text-red-400' : 'text-green-400'}`}>{total.toFixed(2)}%</span>
                   </div>
                   <div className="flex justify-between mb-1">
@@ -14142,7 +14154,7 @@ const GameSettingsManagement = () => {
                     <p className="text-red-400 font-medium mt-1">Total exceeds 100%! Please adjust.</p>
                   )}
                   <div className="mt-2 pt-2 border-t border-dark-600 text-gray-500">
-                    Example: ₹100 brokerage → SA: ₹{saShare.toFixed(0)} | Admin: ₹{ad.toFixed(0)} | Broker: ₹{br.toFixed(0)} | Sub-Broker: ₹{sb.toFixed(0)}
+                    Example: ₹100 brokerage → User: ₹{us.toFixed(0)} | SA: ₹{saShare.toFixed(0)} | Admin: ₹{ad.toFixed(0)} | Broker: ₹{br.toFixed(0)} | Sub-Broker: ₹{sb.toFixed(0)}
                   </div>
                 </div>
               );
@@ -14558,6 +14570,17 @@ const GameSettingsManagement = () => {
                 </div>
 
                 <div>
+                  <label className="block text-sm text-gray-400 mb-1">User (%)</label>
+                  <input
+                    type="number"
+                    value={currentGame?.profitUserPercent ?? 0}
+                    onChange={e => updateGameSetting(selectedGame, 'profitUserPercent', parseFloat(e.target.value) || 0)}
+                    className="w-full bg-dark-700 border border-dark-600 rounded px-4 py-2"
+                    min="0" max="100" step="0.01"
+                  />
+                  <p className="text-xs text-gray-500 mt-1">% of brokerage that goes back to the winning user</p>
+                </div>
+                <div>
                   <label className="block text-sm text-gray-400 mb-1">Sub-Broker (%)</label>
                   <input
                     type="number"
@@ -14588,15 +14611,16 @@ const GameSettingsManagement = () => {
                   />
                 </div>
                 {(() => {
+                  const us = currentGame?.profitUserPercent ?? 0;
                   const sb = currentGame?.profitSubBrokerPercent ?? 10;
                   const br = currentGame?.profitBrokerPercent ?? 20;
                   const ad = currentGame?.profitAdminPercent ?? 30;
-                  const total = sb + br + ad;
+                  const total = us + sb + br + ad;
                   const saShare = Math.max(0, 100 - total);
                   return (
                     <div className={`p-3 rounded-lg text-xs ${total > 100 ? 'bg-red-900/30 border border-red-500/30' : 'bg-dark-700'}`}>
                       <div className="flex justify-between mb-1">
-                        <span className="text-gray-400">Sub-Broker + Broker + Admin</span>
+                        <span className="text-gray-400">User + Sub-Broker + Broker + Admin</span>
                         <span className={`font-bold ${total > 100 ? 'text-red-400' : 'text-green-400'}`}>{total.toFixed(2)}%</span>
                       </div>
                       <div className="flex justify-between mb-1">
@@ -14606,6 +14630,9 @@ const GameSettingsManagement = () => {
                       {total > 100 && (
                         <p className="text-red-400 font-medium mt-1">Total exceeds 100%! Please adjust.</p>
                       )}
+                      <div className="mt-2 pt-2 border-t border-dark-600 text-gray-500">
+                        Example: ₹100 brokerage → User: ₹{us.toFixed(0)} | SA: ₹{saShare.toFixed(0)} | Admin: ₹{ad.toFixed(0)} | Broker: ₹{br.toFixed(0)} | Sub-Broker: ₹{sb.toFixed(0)}
+                      </div>
                     </div>
                   );
                 })()}
