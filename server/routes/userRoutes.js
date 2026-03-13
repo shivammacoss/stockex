@@ -1161,10 +1161,14 @@ router.get('/game-settings', protectUser, async (req, res) => {
           cooldownBetweenRounds: game.cooldownBetweenRounds,
           startTime: game.startTime,
           endTime: game.endTime,
+          // Per-game ticket price
+          ...(game.ticketPrice !== undefined && { ticketPrice: game.ticketPrice }),
           // Nifty Number specific
           ...(game.fixedProfit !== undefined && { fixedProfit: game.fixedProfit }),
           ...(game.resultTime !== undefined && { resultTime: game.resultTime }),
           ...(game.betsPerDay !== undefined && { betsPerDay: game.betsPerDay }),
+          ...(game.biddingStartTime !== undefined && { biddingStartTime: game.biddingStartTime }),
+          ...(game.biddingEndTime !== undefined && { biddingEndTime: game.biddingEndTime }),
           // Nifty Bracket specific
           ...(game.bracketGap !== undefined && { bracketGap: game.bracketGap }),
           ...(game.expiryMinutes !== undefined && { expiryMinutes: game.expiryMinutes }),
@@ -1173,6 +1177,8 @@ router.get('/game-settings', protectUser, async (req, res) => {
           ...(game.firstPrize !== undefined && { firstPrize: game.firstPrize }),
           ...(game.prizeStep !== undefined && { prizeStep: game.prizeStep }),
           ...(game.bidsPerDay !== undefined && { bidsPerDay: game.bidsPerDay }),
+          ...(game.biddingStartTime !== undefined && { biddingStartTime: game.biddingStartTime }),
+          ...(game.biddingEndTime !== undefined && { biddingEndTime: game.biddingEndTime }),
         };
       }
     }
@@ -1181,6 +1187,7 @@ router.get('/game-settings', protectUser, async (req, res) => {
       gamesEnabled: settingsObj.gamesEnabled,
       maintenanceMode: settingsObj.maintenanceMode,
       maintenanceMessage: settingsObj.maintenanceMessage,
+      tokenValue: settingsObj.tokenValue || 300,
       games,
     });
   } catch (error) {
@@ -1206,6 +1213,20 @@ router.post('/game-bet/place', protectUser, async (req, res) => {
     const gameConfig = settings.games?.[settingsKey];
     if (!gameConfig?.enabled) {
       return res.status(400).json({ message: 'This game is currently disabled' });
+    }
+
+    // BTC 24/7 round-based bidding time validation
+    if (gameId === 'btcupdown') {
+      const nowIST = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
+      const currentMin = nowIST.getMinutes();
+      const minInBlock = currentMin % 15;
+      
+      // Bidding allowed from XX:00 to XX:14 of each 15-min block
+      if (minInBlock >= 15) {
+        return res.status(400).json({ 
+          message: 'Bidding is closed for this round. Please wait for the next round.' 
+        });
+      }
     }
 
     const betAmount = parseFloat(amount);
@@ -1419,6 +1440,28 @@ router.post('/nifty-number/bet', protectUser, async (req, res) => {
     if (!gameConfig?.enabled) {
       return res.status(400).json({ message: 'Nifty Number game is currently disabled' });
     }
+
+    // Check betting time window (9:15:00 to 15:24:59 IST)
+    // TEMPORARILY DISABLED FOR TESTING - uncomment below to enable
+    /*
+    const nowIST = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
+    const currentHour = nowIST.getHours();
+    const currentMinute = nowIST.getMinutes();
+    const currentTimeMinutes = currentHour * 60 + currentMinute;
+    
+    const biddingStartTime = gameConfig.biddingStartTime || '09:15';
+    const biddingEndTime = gameConfig.biddingEndTime || '15:24';
+    const [startH, startM] = biddingStartTime.split(':').map(Number);
+    const [endH, endM] = biddingEndTime.split(':').map(Number);
+    const startMinutes = startH * 60 + startM;
+    const endMinutes = endH * 60 + endM;
+    
+    if (currentTimeMinutes < startMinutes || currentTimeMinutes > endMinutes) {
+      return res.status(400).json({ 
+        message: `Betting is only allowed from ${biddingStartTime} to ${biddingEndTime} IST. Current time: ${currentHour.toString().padStart(2, '0')}:${currentMinute.toString().padStart(2, '0')} IST` 
+      });
+    }
+    */
 
     // Validate amount (per number)
     const betAmount = parseFloat(amount);

@@ -14837,34 +14837,6 @@ const GameSettingsManagement = () => {
                     })()}
                   </div>
 
-                  <div className="space-y-4">
-                    <h4 className="font-medium text-orange-400">Profit Distribution (on Losses)</h4>
-                    <div>
-                      <label className="block text-sm text-gray-400 mb-2">Admin Share (%)</label>
-                      <input
-                        type="number"
-                        value={currentGame?.adminSharePercent || 50}
-                        onChange={e => updateGameSetting(selectedGame, 'adminSharePercent', parseFloat(e.target.value))}
-                        className="w-full bg-dark-700 border border-dark-600 rounded px-4 py-2"
-                        min="0"
-                        max="100"
-                      />
-                      <p className="text-xs text-gray-500 mt-1">% of loser bid amounts that go to the managing admin</p>
-                    </div>
-                    <div>
-                      <label className="block text-sm text-gray-400 mb-2">Super Admin Share (%)</label>
-                      <input
-                        type="number"
-                        value={currentGame?.superAdminSharePercent || 50}
-                        onChange={e => updateGameSetting(selectedGame, 'superAdminSharePercent', parseFloat(e.target.value))}
-                        className="w-full bg-dark-700 border border-dark-600 rounded px-4 py-2"
-                        min="0"
-                        max="100"
-                      />
-                      <p className="text-xs text-gray-500 mt-1">% of loser bid amounts that go to super admin</p>
-                    </div>
-                  </div>
-
                   {/* Price Lock & Result Declaration */}
                   <div className="space-y-4 md:col-span-2">
                     <h4 className="font-medium text-green-400 flex items-center gap-2">
@@ -14966,52 +14938,46 @@ const GameSettingsManagement = () => {
                       <p className="text-xs text-gray-500 mt-1">Fixed profit amount user receives on winning</p>
                     </div>
                     <div>
-                      <label className="block text-sm text-gray-400 mb-2">Bets Per Day</label>
+                      <label className="block text-sm text-gray-400 mb-2">Bets Per Day (set high for unlimited)</label>
                       <input
                         type="number"
-                        value={currentGame?.betsPerDay || 1}
+                        value={currentGame?.betsPerDay || 100}
                         onChange={e => updateGameSetting(selectedGame, 'betsPerDay', parseInt(e.target.value))}
                         className="w-full bg-dark-700 border border-dark-600 rounded px-4 py-2"
                         min="1"
                       />
-                      <p className="text-xs text-gray-500 mt-1">Max bets a user can place per day</p>
+                      <p className="text-xs text-gray-500 mt-1">Max bets a user can place per day (set 100 for unlimited)</p>
                     </div>
                     <div>
                       <label className="block text-sm text-gray-400 mb-2">Result Time (IST)</label>
                       <input
                         type="time"
-                        value={currentGame?.resultTime || '15:30'}
+                        value={currentGame?.resultTime || '15:40'}
                         onChange={e => updateGameSetting(selectedGame, 'resultTime', e.target.value)}
                         className="w-full bg-dark-700 border border-dark-600 rounded px-4 py-2"
                       />
                     </div>
-                  </div>
-                  <div className="space-y-4">
-                    <h4 className="font-medium text-orange-400">Profit Distribution (on Losses)</h4>
-                    <div>
-                      <label className="block text-sm text-gray-400 mb-2">Admin Share (%)</label>
-                      <input
-                        type="number"
-                        value={currentGame?.adminSharePercent || 50}
-                        onChange={e => updateGameSetting(selectedGame, 'adminSharePercent', parseFloat(e.target.value))}
-                        className="w-full bg-dark-700 border border-dark-600 rounded px-4 py-2"
-                        min="0"
-                        max="100"
-                      />
-                      <p className="text-xs text-gray-500 mt-1">% of user losses that go to the managing admin</p>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-sm text-gray-400 mb-2">Betting Start Time (IST)</label>
+                        <input
+                          type="time"
+                          value={currentGame?.biddingStartTime || '09:15'}
+                          onChange={e => updateGameSetting(selectedGame, 'biddingStartTime', e.target.value)}
+                          className="w-full bg-dark-700 border border-dark-600 rounded px-4 py-2"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm text-gray-400 mb-2">Betting End Time (IST)</label>
+                        <input
+                          type="time"
+                          value={currentGame?.biddingEndTime || '15:24'}
+                          onChange={e => updateGameSetting(selectedGame, 'biddingEndTime', e.target.value)}
+                          className="w-full bg-dark-700 border border-dark-600 rounded px-4 py-2"
+                        />
+                      </div>
                     </div>
-                    <div>
-                      <label className="block text-sm text-gray-400 mb-2">Super Admin Share (%)</label>
-                      <input
-                        type="number"
-                        value={currentGame?.superAdminSharePercent || 50}
-                        onChange={e => updateGameSetting(selectedGame, 'superAdminSharePercent', parseFloat(e.target.value))}
-                        className="w-full bg-dark-700 border border-dark-600 rounded px-4 py-2"
-                        min="0"
-                        max="100"
-                      />
-                      <p className="text-xs text-gray-500 mt-1">% of user losses that go to super admin</p>
-                    </div>
+                    <p className="text-xs text-cyan-400">Betting window: {currentGame?.biddingStartTime || '09:15'} - {currentGame?.biddingEndTime || '15:24'} IST</p>
                   </div>
                 </>
               )}

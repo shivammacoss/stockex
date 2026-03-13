@@ -496,6 +496,78 @@ const getTradingWindowInfo = (openTime, closeTime) => {
   };
 };
 
+// BTC 24/7 Round-based system (15 min rounds)
+// Bidding: XX:00 - XX:14:59, Entry LTP: XX:15, Result: XX:30
+const getBTCRoundInfo = () => {
+  const now = getISTNow();
+  const currentMin = now.getMinutes();
+  const currentSec = now.getSeconds();
+  const currentHour = now.getHours();
+  
+  // Calculate which 15-min block we're in (0-3 per hour)
+  const blockInHour = Math.floor(currentMin / 15);
+  const minInBlock = currentMin % 15;
+  const secInBlock = minInBlock * 60 + currentSec;
+  
+  // Round number (continuous from midnight)
+  const roundNumber = currentHour * 4 + blockInHour + 1;
+  
+  // Bidding: 0:00 - 14:59 of each 15-min block (15 minutes)
+  // Entry LTP captured at: 15:00 of the block (start of next block)
+  // Result declared at: 30:00 (15 min after entry)
+  
+  const biddingEndSec = 15 * 60 - 1; // 14:59 = 899 seconds
+  
+  // Calculate times for display
+  const blockStartMin = blockInHour * 15;
+  const biddingStartTime = `${String(currentHour).padStart(2, '0')}:${String(blockStartMin).padStart(2, '0')}`;
+  const biddingEndTime = `${String(currentHour).padStart(2, '0')}:${String(blockStartMin + 14).padStart(2, '0')}:59`;
+  
+  // Entry LTP time (next block start)
+  const entryHour = blockStartMin + 15 >= 60 ? (currentHour + 1) % 24 : currentHour;
+  const entryMin = (blockStartMin + 15) % 60;
+  const entryTime = `${String(entryHour).padStart(2, '0')}:${String(entryMin).padStart(2, '0')}:00`;
+  
+  // Result time (30 min after block start = 15 min after entry)
+  const resultHour = blockStartMin + 30 >= 60 ? (currentHour + 1) % 24 : currentHour;
+  const resultMin = (blockStartMin + 30) % 60;
+  const resultTime = `${String(resultHour).padStart(2, '0')}:${String(resultMin).padStart(2, '0')}:00`;
+  
+  if (secInBlock <= biddingEndSec) {
+    // We're in bidding window
+    return {
+      status: 'bidding',
+      message: 'Bidding Open',
+      biddingStart: biddingStartTime,
+      biddingEnd: biddingEndTime,
+      entryTime: entryTime,
+      resultTime: resultTime,
+      countdown: biddingEndSec - secInBlock,
+      roundNumber,
+      canTrade: true,
+      phase: 'bidding'
+    };
+  } else {
+    // Bidding closed, waiting for next round
+    const nextRoundStartSec = 15 * 60 - secInBlock; // seconds until next block
+    const nextHour = blockStartMin + 15 >= 60 ? (currentHour + 1) % 24 : currentHour;
+    const nextMin = (blockStartMin + 15) % 60;
+    const nextBiddingStart = `${String(nextHour).padStart(2, '0')}:${String(nextMin).padStart(2, '0')}`;
+    
+    return {
+      status: 'waiting',
+      message: 'Bidding Closed - Waiting for Result',
+      entryTime: entryTime,
+      resultTime: resultTime,
+      nextBiddingStart: nextBiddingStart,
+      countdown: nextRoundStartSec,
+      roundNumber,
+      canTrade: false,
+      phase: 'waiting'
+    };
+  }
+};
+
 // Instructions Modal Component
 const InstructionsModal = ({ onClose, gameId }) => {
   const isNifty = gameId === 'updown';
@@ -608,7 +680,7 @@ const InstructionsModal = ({ onClose, gameId }) => {
 };
 
 // ==================== TRADING CHART COMPONENT ====================
-const TradingChart = ({ gameId, fullHeight = false, onPriceUpdate, priceLines = [] }) => {
+const TradingChart = ({ gameId, fullHeight = false, onPriceUpdate, priceLines = [], onFallbackPrice }) => {
   const chartContainerRef = useRef(null);
   const chartRef = useRef(null);
   const candlestickSeriesRef = useRef(null);
@@ -762,9 +834,8 @@ const TradingChart = ({ gameId, fullHeight = false, onPriceUpdate, priceLines = 
         console.log('[GameChart] Using placeholder candles, waiting for live data...');
         candles = generatePlaceholderCandles(fallbackPrice);
       } else {
-        console.log(`[GameChart] Loaded ${candles.length} real historical candles`);
-        setIsLiveConnected(true);
-        isLiveRef.current = true;
+        console.log(`[GameChart] Loaded ${candles.length} historical candles from DB`);
+        // Don't set isLiveConnected here - only set it when we receive real-time websocket ticks
       }
       
       series.setData(candles);
@@ -935,6 +1006,13 @@ const TradingChart = ({ gameId, fullHeight = false, onPriceUpdate, priceLines = 
   const displayPrice = livePrice || fallbackPrice;
   const isUp = priceChange ? parseFloat(priceChange.change) >= 0 : true;
 
+  // Send fallback price to parent when no live price (for Nifty Bracket)
+  useEffect(() => {
+    if (onFallbackPrice && displayPrice && !livePrice) {
+      onFallbackPrice(displayPrice);
+    }
+  }, [displayPrice, livePrice, onFallbackPrice]);
+
   return (
     <div className={`bg-dark-800 rounded-2xl overflow-hidden flex flex-col ${fullHeight ? 'h-full' : 'mb-6'}`}>
       {/* Chart Header */}
@@ -943,9 +1021,9 @@ const TradingChart = ({ gameId, fullHeight = false, onPriceUpdate, priceLines = 
           <div className="flex items-center gap-2">
             <span className="text-gray-400 text-sm">{symbol}</span>
             <div className="flex items-center gap-1">
-              <div className={`w-2 h-2 rounded-full animate-pulse ${isLiveConnected ? 'bg-green-500' : 'bg-red-500'}`}></div>
-              <span className={`text-xs ${isLiveConnected ? 'text-green-400' : 'text-red-400'}`}>
-                {isLiveConnected ? 'LIVE' : 'CONNECTING...'}
+              <div className={`w-2 h-2 rounded-full ${isLiveConnected ? 'bg-green-500 animate-pulse' : 'bg-yellow-500'}`}></div>
+              <span className={`text-xs ${isLiveConnected ? 'text-green-400' : 'text-yellow-400'}`}>
+                {isLiveConnected ? 'LIVE' : 'SIMULATED'}
               </span>
             </div>
           </div>
@@ -1016,13 +1094,24 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
     currentPriceRef.current = price;
   }, []);
 
-  // Update trading window info every second (skip for BTC - always open)
+  // BTC round info state
+  const [btcRoundInfo, setBtcRoundInfo] = useState(isBTC ? getBTCRoundInfo() : null);
+
+  // Update trading window info every second
   useEffect(() => {
-    if (isBTC) return;
-    const interval = setInterval(() => {
-      setWindowInfo(getTradingWindowInfo(gameStartTime, gameEndTime));
-    }, 1000);
-    return () => clearInterval(interval);
+    if (isBTC) {
+      // BTC uses 24/7 round-based system
+      const interval = setInterval(() => {
+        setBtcRoundInfo(getBTCRoundInfo());
+      }, 1000);
+      return () => clearInterval(interval);
+    } else {
+      // Nifty uses market hours window system
+      const interval = setInterval(() => {
+        setWindowInfo(getTradingWindowInfo(gameStartTime, gameEndTime));
+      }, 1000);
+      return () => clearInterval(interval);
+    }
   }, [isBTC, gameStartTime, gameEndTime]);
 
   // Fetch game results on mount and when window changes
@@ -1215,8 +1304,9 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
       alert('Insufficient balance');
       return;
     }
-    if (!isBTC && !windowInfo.canTrade) {
-      alert('Trading window is closed. Please wait for the next window.');
+    const canTrade = isBTC ? btcRoundInfo?.canTrade : windowInfo.canTrade;
+    if (!canTrade) {
+      alert(isBTC ? 'Bidding is closed. Please wait for the next round.' : 'Trading window is closed. Please wait for the next window.');
       return;
     }
     if (!gameEnabled) {
@@ -1243,8 +1333,8 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
         entryPrice: parseFloat((currentPriceRef.current || 0).toFixed(2)),
         status: 'pending',
         time: new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }),
-        placedAt: Date.now(), // For BTC timer-based resolution
-        expiryTime: isBTC ? selectedExpiry : null, // Selected expiry time for BTC
+        placedAt: Date.now(), // For timer-based resolution
+        expiryTime: 60, // Fixed 1 minute rounds for both Nifty and BTC
       };
 
       setActiveTrades(prev => [...prev, newTrade]);
@@ -1371,12 +1461,58 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
           {/* LEFT COLUMN - Trading Window Status */}
           <div className="lg:w-[240px] flex-shrink-0 order-1 lg:order-1 overflow-y-auto">
             {isBTC ? (
-              <div className="bg-green-900/30 border border-green-500/40 rounded-xl p-4 mb-4">
-                <div className="flex items-center gap-2">
-                  <div className="w-2.5 h-2.5 bg-green-500 rounded-full animate-pulse"></div>
-                  <span className="text-green-400 font-bold text-sm">24/7 TRADING OPEN</span>
+              <div className={`rounded-xl p-4 mb-4 border ${btcRoundInfo?.canTrade ? 'bg-green-900/30 border-green-500/40' : 'bg-yellow-900/30 border-yellow-500/40'}`}>
+                <div className="flex items-center gap-2 mb-2">
+                  <div className={`w-2.5 h-2.5 rounded-full animate-pulse ${btcRoundInfo?.canTrade ? 'bg-green-500' : 'bg-yellow-500'}`}></div>
+                  <span className={`font-bold text-sm ${btcRoundInfo?.canTrade ? 'text-green-400' : 'text-yellow-400'}`}>
+                    {btcRoundInfo?.message || 'Loading...'}
+                  </span>
                 </div>
-                <p className="text-gray-400 text-xs mt-1">BTC market never closes</p>
+                <div className="text-xs space-y-1">
+                  <div className="flex justify-between">
+                    <span className="text-gray-400">Round</span>
+                    <span className="text-white font-bold">#{btcRoundInfo?.roundNumber || '-'}</span>
+                  </div>
+                  {btcRoundInfo?.canTrade ? (
+                    <>
+                      <div className="flex justify-between">
+                        <span className="text-gray-400">Bidding</span>
+                        <span className="text-green-400">{btcRoundInfo?.biddingStart} - {btcRoundInfo?.biddingEnd?.split(':').slice(1).join(':')}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-gray-400">Entry LTP</span>
+                        <span className="text-cyan-400">{btcRoundInfo?.entryTime}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-gray-400">Result</span>
+                        <span className="text-purple-400">{btcRoundInfo?.resultTime}</span>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div className="flex justify-between">
+                        <span className="text-gray-400">Entry LTP</span>
+                        <span className="text-cyan-400">{btcRoundInfo?.entryTime}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-gray-400">Result At</span>
+                        <span className="text-purple-400">{btcRoundInfo?.resultTime}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-gray-400">Next Bidding</span>
+                        <span className="text-green-400">{btcRoundInfo?.nextBiddingStart}</span>
+                      </div>
+                    </>
+                  )}
+                  <div className="mt-2 pt-2 border-t border-dark-600">
+                    <div className="flex justify-between items-center">
+                      <span className="text-gray-400">{btcRoundInfo?.canTrade ? 'Closes in' : 'Next round in'}</span>
+                      <span className={`font-bold text-lg ${btcRoundInfo?.canTrade ? 'text-green-400' : 'text-yellow-400'}`}>
+                        {formatCountdown(btcRoundInfo?.countdown || 0)}
+                      </span>
+                    </div>
+                  </div>
+                </div>
               </div>
             ) : (
               <WindowStatusBadge />
@@ -1472,27 +1608,7 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
                 </div>
               </div>
 
-              {/* BTC Expiry Time Selection */}
-              {isBTC && (
-                <div className="bg-dark-800 rounded-xl p-4 border border-dark-600">
-                  <label className="block text-sm text-gray-400 mb-2">Select Expiry Time</label>
-                  <div className="grid grid-cols-5 gap-1.5">
-                    {allowedExpiryTimes.map(expiry => (
-                      <button
-                        key={expiry}
-                        onClick={() => setSelectedExpiry(expiry)}
-                        className={`py-2 px-2 rounded-lg text-xs font-bold transition-all ${
-                          selectedExpiry === expiry
-                            ? 'bg-orange-500 text-white'
-                            : 'bg-dark-700 hover:bg-dark-600 text-gray-300'
-                        }`}
-                      >
-                        {formatExpiryLabel(expiry)}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
+              {/* BTC uses fixed 1 minute rounds - no expiry selector needed */}
 
               {/* Prediction Selection */}
               <div className="bg-dark-800 rounded-xl p-4 border border-dark-600">
@@ -1500,9 +1616,9 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
                 <div className="grid grid-cols-2 gap-2">
                   <button
                     onClick={() => setPrediction('UP')}
-                    disabled={!windowInfo.canTrade}
+                    disabled={!(isBTC ? btcRoundInfo?.canTrade : windowInfo.canTrade)}
                     className={`p-3 rounded-xl border-2 transition-all ${
-                      !windowInfo.canTrade ? 'opacity-50 cursor-not-allowed border-dark-600' :
+                      !(isBTC ? btcRoundInfo?.canTrade : windowInfo.canTrade) ? 'opacity-50 cursor-not-allowed border-dark-600' :
                       prediction === 'UP' 
                         ? 'border-green-500 bg-green-500/20' 
                         : 'border-dark-600 hover:border-green-500/50'
@@ -1514,9 +1630,9 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
                   </button>
                   <button
                     onClick={() => setPrediction('DOWN')}
-                    disabled={!windowInfo.canTrade}
+                    disabled={!(isBTC ? btcRoundInfo?.canTrade : windowInfo.canTrade)}
                     className={`p-3 rounded-xl border-2 transition-all ${
-                      !windowInfo.canTrade ? 'opacity-50 cursor-not-allowed border-dark-600' :
+                      !(isBTC ? btcRoundInfo?.canTrade : windowInfo.canTrade) ? 'opacity-50 cursor-not-allowed border-dark-600' :
                       prediction === 'DOWN' 
                         ? 'border-red-500 bg-red-500/20' 
                         : 'border-dark-600 hover:border-red-500/50'
@@ -1532,15 +1648,15 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
               {/* Place Bet Button */}
               <button
                 onClick={handlePlaceBet}
-                disabled={!betAmount || !prediction || parseFloat(betAmount) <= 0 || !windowInfo.canTrade}
+                disabled={!betAmount || !prediction || parseFloat(betAmount) <= 0 || !(isBTC ? btcRoundInfo?.canTrade : windowInfo.canTrade)}
                 className={`w-full py-3 rounded-xl font-bold text-sm transition-all ${
-                  betAmount && prediction && parseFloat(betAmount) > 0 && windowInfo.canTrade
+                  betAmount && prediction && parseFloat(betAmount) > 0 && (isBTC ? btcRoundInfo?.canTrade : windowInfo.canTrade)
                     ? `bg-gradient-to-r ${game.color} hover:opacity-90`
                     : 'bg-dark-700 text-gray-500 cursor-not-allowed'
                 }`}
               >
-                {!windowInfo.canTrade 
-                  ? 'Trading Window Closed' 
+                {!(isBTC ? btcRoundInfo?.canTrade : windowInfo.canTrade)
+                  ? (isBTC ? 'Bidding Closed' : 'Trading Window Closed')
                   : betAmount && prediction 
                     ? `Place Trade - ${parseFloat(betAmount)} Tickets` 
                     : 'Select Amount & Prediction'}
@@ -2012,9 +2128,13 @@ const NiftyNumberScreen = ({ game, balance, onBack, user, refreshBalance, settin
                   <span className="text-gray-400">Bets/Day</span>
                   <span className="text-yellow-400 font-bold">{maxBetsPerDay}</span>
                 </div>
-                <div className="flex justify-between py-1">
+                <div className="flex justify-between py-1 border-b border-dark-600">
                   <span className="text-gray-400">Result At</span>
                   <span className="font-medium">{settings?.resultTime || '15:40'} IST</span>
+                </div>
+                <div className="flex justify-between py-1">
+                  <span className="text-gray-400">Betting</span>
+                  <span className="text-cyan-400 font-medium">{settings?.biddingStartTime || '09:15'} - {settings?.biddingEndTime || '15:24'}</span>
                 </div>
               </div>
               <div className="mt-2 bg-dark-700/50 rounded-lg p-2 text-[10px] text-gray-500">
@@ -2214,6 +2334,7 @@ const NiftyBracketScreen = ({ game, balance, onBack, user, refreshBalance, setti
   const [placing, setPlacing] = useState(false);
   const [message, setMessage] = useState(null);
   const [currentPrice, setCurrentPrice] = useState(null);
+  const [timerTick, setTimerTick] = useState(0); // For live countdown
   const resolveCheckRef = useRef(null);
 
   const bracketGap = settings?.bracketGap || 20;
@@ -2238,6 +2359,26 @@ const NiftyBracketScreen = ({ game, balance, onBack, user, refreshBalance, setti
     fetchActiveTrades();
     fetchHistory();
   }, []);
+
+  // Live countdown timer - updates every second
+  useEffect(() => {
+    if (activeTrades.length === 0) return;
+    
+    const interval = setInterval(() => {
+      setTimerTick(t => t + 1);
+      
+      // Check if any trade expired and refresh
+      const now = new Date();
+      const hasExpired = activeTrades.some(t => new Date(t.expiresAt) <= now);
+      if (hasExpired) {
+        fetchActiveTrades();
+        fetchHistory();
+        refreshBalance();
+      }
+    }, 1000);
+    
+    return () => clearInterval(interval);
+  }, [activeTrades.length]);
 
   // Check active trades against current price for auto-resolution
   // Price comes from TradingChart's onPriceUpdate callback — no separate socket needed
@@ -2456,28 +2597,52 @@ const NiftyBracketScreen = ({ game, balance, onBack, user, refreshBalance, setti
               </div>
             </div>
 
-            {/* Active Trades */}
+            {/* Active Trades - Live Updates */}
             {activeTrades.length > 0 && (
               <div className="mt-3 bg-dark-800 rounded-xl p-3 border border-yellow-500/30">
                 <h3 className="font-bold text-xs text-yellow-400 mb-2 flex items-center gap-1.5">
                   <RefreshCw size={12} className="animate-spin" />
                   Active Trades ({activeTrades.length})
+                  <span className="text-[9px] text-gray-500 ml-auto">Live</span>
                 </h3>
-                <div className="space-y-1.5">
-                  {activeTrades.map(trade => (
-                    <div key={trade._id} className="bg-dark-700 rounded-lg p-2 text-xs">
-                      <div className="flex items-center justify-between mb-1">
-                        <span className={`font-bold px-1.5 py-0.5 rounded text-[10px] ${
-                          trade.prediction === 'BUY' ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'
-                        }`}>{trade.prediction}</span>
-                        <span className="text-gray-400">{toTokens(trade.amount)} T</span>
+                <div className="space-y-2">
+                  {activeTrades.map(trade => {
+                    const timeLeft = new Date(trade.expiresAt) - new Date();
+                    const isExpiringSoon = timeLeft > 0 && timeLeft < 60000; // Less than 1 min
+                    const isExpired = timeLeft <= 0;
+                    
+                    return (
+                      <div key={trade._id} className={`bg-dark-700 rounded-lg p-2.5 text-xs border ${
+                        isExpired ? 'border-gray-500/30' : isExpiringSoon ? 'border-red-500/50 animate-pulse' : 'border-dark-600'
+                      }`}>
+                        <div className="flex items-center justify-between mb-1.5">
+                          <span className={`font-bold px-2 py-0.5 rounded text-[10px] ${
+                            trade.prediction === 'BUY' ? 'bg-green-500/30 text-green-400' : 'bg-red-500/30 text-red-400'
+                          }`}>{trade.prediction}</span>
+                          <span className="text-gray-300 font-medium">{toTokens(trade.amount)} T</span>
+                        </div>
+                        <div className="flex justify-between items-center text-[10px]">
+                          <span className="text-gray-500">{trade.lowerTarget?.toLocaleString('en-IN')} ↔ {trade.upperTarget?.toLocaleString('en-IN')}</span>
+                          <span className={`font-bold px-1.5 py-0.5 rounded ${
+                            isExpired ? 'bg-gray-500/20 text-gray-400' :
+                            isExpiringSoon ? 'bg-red-500/30 text-red-400' :
+                            'bg-yellow-500/20 text-yellow-400'
+                          }`}>
+                            {formatTimeLeft(trade.expiresAt)}
+                          </span>
+                        </div>
+                        {/* Progress bar */}
+                        {!isExpired && (
+                          <div className="mt-1.5 h-1 bg-dark-600 rounded-full overflow-hidden">
+                            <div 
+                              className={`h-full transition-all duration-1000 ${isExpiringSoon ? 'bg-red-500' : 'bg-yellow-500'}`}
+                              style={{ width: `${Math.max(0, Math.min(100, (timeLeft / (expiryMinutes * 60000)) * 100))}%` }}
+                            />
+                          </div>
+                        )}
                       </div>
-                      <div className="flex justify-between text-[10px] text-gray-500">
-                        <span>{trade.lowerTarget} ↔ {trade.upperTarget}</span>
-                        <span className="text-yellow-400">{formatTimeLeft(trade.expiresAt)}</span>
-                      </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
             )}
@@ -2487,8 +2652,29 @@ const NiftyBracketScreen = ({ game, balance, onBack, user, refreshBalance, setti
               <h3 className="font-bold text-xs mb-2 flex items-center gap-1.5">
                 <Clock size={12} className="text-gray-400" />
                 History
+                {activeTrades.length > 0 && (
+                  <span className="text-yellow-400 text-[9px] ml-auto">({activeTrades.length} active)</span>
+                )}
               </h3>
-              {tradeHistory.length === 0 ? (
+              {/* Show active trades in history section too */}
+              {activeTrades.length > 0 && (
+                <div className="mb-2 pb-2 border-b border-dark-600">
+                  <div className="text-[9px] text-yellow-400 mb-1 font-medium">Running Trades:</div>
+                  {activeTrades.map(t => {
+                    const timeLeft = new Date(t.expiresAt) - new Date();
+                    return (
+                      <div key={t._id} className="flex items-center justify-between p-2 rounded-lg text-xs bg-yellow-900/20 mb-1">
+                        <div>
+                          <span className={`font-bold text-[10px] ${t.prediction === 'BUY' ? 'text-green-400' : 'text-red-400'}`}>{t.prediction}</span>
+                          <span className="text-gray-400 ml-1">{toTokens(t.amount)} T</span>
+                        </div>
+                        <span className="text-yellow-400 text-[10px] font-medium">{formatTimeLeft(t.expiresAt)}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+              {tradeHistory.length === 0 && activeTrades.length === 0 ? (
                 <p className="text-gray-500 text-[10px] text-center py-2">No trades yet</p>
               ) : (
                 <div className="space-y-1 max-h-[200px] overflow-y-auto">
@@ -2517,7 +2703,12 @@ const NiftyBracketScreen = ({ game, balance, onBack, user, refreshBalance, setti
 
           {/* CENTER COLUMN - Nifty Chart */}
           <div className="flex-1 min-w-0 order-2 lg:order-2 flex flex-col">
-            <TradingChart gameId="updown" fullHeight onPriceUpdate={(p) => setCurrentPrice(p)} />
+            <TradingChart 
+              gameId="updown" 
+              fullHeight 
+              onPriceUpdate={(p) => setCurrentPrice(p)} 
+              onFallbackPrice={(p) => { if (!currentPrice) setCurrentPrice(p); }}
+            />
           </div>
 
           {/* RIGHT COLUMN - Betting Controls */}
@@ -2562,7 +2753,7 @@ const NiftyBracketScreen = ({ game, balance, onBack, user, refreshBalance, setti
 
               {/* Bracket Display + BUY/SELL */}
               <div className="bg-dark-800 rounded-xl p-4 border border-dark-600">
-                <label className="block text-sm text-gray-400 mb-2">Pick Your Side</label>
+                <label className="block text-sm text-gray-400 mb-3 text-center">Pick Your Side</label>
                 {!currentPrice ? (
                   <div className="text-center py-4">
                     <RefreshCw className="animate-spin text-cyan-400 mx-auto mb-2" size={20} />
@@ -2570,59 +2761,72 @@ const NiftyBracketScreen = ({ game, balance, onBack, user, refreshBalance, setti
                   </div>
                 ) : (
                   <>
-                    {/* Upper Target - BUY */}
+                    {/* Current LTP Display */}
+                    <div className="bg-dark-700 rounded-xl p-3 mb-3 text-center border border-cyan-500/30">
+                      <div className="text-[10px] text-cyan-400 mb-1">NIFTY 50 LTP</div>
+                      <div className="text-2xl font-bold text-white">₹{currentPrice.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</div>
+                      <div className="text-[10px] text-gray-500 mt-1">Bracket: ±{bracketGap} points</div>
+                    </div>
+
+                    {/* BUY Button - Green - Price Goes UP */}
                     <button
                       onClick={() => handlePlaceTrade('BUY')}
                       disabled={!betAmount || parseFloat(betAmount) <= 0 || placing || !currentPrice}
-                      className={`w-full p-3 rounded-xl border-2 transition-all mb-2 ${
+                      className={`w-full p-4 rounded-xl border-2 transition-all mb-3 ${
                         betAmount && parseFloat(betAmount) > 0 && currentPrice
-                          ? 'border-green-500/50 bg-green-900/20 hover:bg-green-900/40 hover:border-green-500'
-                          : 'border-dark-600 opacity-50 cursor-not-allowed'
+                          ? 'border-green-500 bg-gradient-to-r from-green-600 to-green-500 hover:from-green-500 hover:to-green-400 shadow-lg shadow-green-500/20'
+                          : 'border-dark-600 bg-dark-700 opacity-50 cursor-not-allowed'
                       }`}
                     >
                       <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                          <ArrowUpCircle size={22} className="text-green-400" />
+                        <div className="flex items-center gap-3">
+                          <div className="w-10 h-10 rounded-full bg-white/20 flex items-center justify-center">
+                            <ArrowUpCircle size={24} className="text-white" />
+                          </div>
                           <div className="text-left">
-                            <div className="font-bold text-green-400 text-sm">BUY</div>
-                            <div className="text-[10px] text-gray-400">Price hits {upperTarget?.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</div>
+                            <div className="font-bold text-white text-lg">BUY (UP)</div>
+                            <div className="text-xs text-white/80">Win if price hits ↑</div>
                           </div>
                         </div>
                         <div className="text-right">
-                          <div className="text-green-400 font-bold text-sm">{winMultiplier}x</div>
+                          <div className="text-white font-bold text-xl">₹{upperTarget?.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</div>
+                          <div className="text-xs text-white/80">+{bracketGap} pts</div>
                         </div>
                       </div>
                     </button>
 
-                    {/* Current Price */}
-                    <div className="text-center py-1.5 text-xs text-gray-500">
-                      Current: <span className="text-white font-bold text-sm">{currentPrice.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
-                      <span className="text-cyan-400 ml-1">(±{bracketGap})</span>
-                    </div>
-
-                    {/* Lower Target - SELL */}
+                    {/* SELL Button - Red - Price Goes DOWN */}
                     <button
                       onClick={() => handlePlaceTrade('SELL')}
                       disabled={!betAmount || parseFloat(betAmount) <= 0 || placing || !currentPrice}
-                      className={`w-full p-3 rounded-xl border-2 transition-all ${
+                      className={`w-full p-4 rounded-xl border-2 transition-all ${
                         betAmount && parseFloat(betAmount) > 0 && currentPrice
-                          ? 'border-red-500/50 bg-red-900/20 hover:bg-red-900/40 hover:border-red-500'
-                          : 'border-dark-600 opacity-50 cursor-not-allowed'
+                          ? 'border-red-500 bg-gradient-to-r from-red-600 to-red-500 hover:from-red-500 hover:to-red-400 shadow-lg shadow-red-500/20'
+                          : 'border-dark-600 bg-dark-700 opacity-50 cursor-not-allowed'
                       }`}
                     >
                       <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                          <ArrowDownCircle size={22} className="text-red-400" />
+                        <div className="flex items-center gap-3">
+                          <div className="w-10 h-10 rounded-full bg-white/20 flex items-center justify-center">
+                            <ArrowDownCircle size={24} className="text-white" />
+                          </div>
                           <div className="text-left">
-                            <div className="font-bold text-red-400 text-sm">SELL</div>
-                            <div className="text-[10px] text-gray-400">Price hits {lowerTarget?.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</div>
+                            <div className="font-bold text-white text-lg">SELL (DOWN)</div>
+                            <div className="text-xs text-white/80">Win if price hits ↓</div>
                           </div>
                         </div>
                         <div className="text-right">
-                          <div className="text-red-400 font-bold text-sm">{winMultiplier}x</div>
+                          <div className="text-white font-bold text-xl">₹{lowerTarget?.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</div>
+                          <div className="text-xs text-white/80">-{bracketGap} pts</div>
                         </div>
                       </div>
                     </button>
+
+                    {/* Win Info */}
+                    <div className="mt-3 p-2 bg-yellow-900/20 border border-yellow-500/30 rounded-lg text-center">
+                      <span className="text-yellow-400 text-xs font-medium">Win {winMultiplier}x = ₹{betAmount ? (parseFloat(betAmount) * tokenValue * winMultiplier).toLocaleString() : '0'}</span>
+                      <span className="text-gray-500 text-[10px] ml-1">(minus {brokeragePercent}% fee)</span>
+                    </div>
                   </>
                 )}
               </div>
