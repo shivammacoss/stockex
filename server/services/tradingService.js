@@ -527,6 +527,32 @@ class TradingService {
       throw new Error(`Trading in ${orderData.symbol} is blocked for your account`);
     }
 
+    // ==================== CIRCUIT LIMIT CHECK ====================
+    // Upper Circuit: When bid=0 and ask=0, stock hit upper circuit - only SELL allowed (no buyers)
+    // Lower Circuit: When bid=0 and ask=0, stock hit lower circuit - only BUY allowed (no sellers)
+    // Circuit detection is based on which price is 0:
+    // - Upper Circuit: askPrice = 0 (no sellers at this price) → Block BUY
+    // - Lower Circuit: bidPrice = 0 (no buyers at this price) → Block SELL
+    const bidPrice = orderData.bidPrice || 0;
+    const askPrice = orderData.askPrice || 0;
+    
+    // Upper Circuit: No ask price means no one is selling → BUY not possible
+    if (orderData.side === 'BUY' && askPrice === 0 && bidPrice > 0) {
+      throw new Error(`${orderData.symbol} is at UPPER CIRCUIT. Buy orders are not allowed. Only sell orders can be placed.`);
+    }
+    
+    // Lower Circuit: No bid price means no one is buying → SELL not possible
+    if (orderData.side === 'SELL' && bidPrice === 0 && askPrice > 0) {
+      throw new Error(`${orderData.symbol} is at LOWER CIRCUIT. Sell orders are not allowed. Only buy orders can be placed.`);
+    }
+    
+    // Both bid and ask are 0 - market is frozen/halted
+    if (bidPrice === 0 && askPrice === 0 && orderData.price > 0) {
+      // Allow trading if we have LTP (last traded price) - this handles pre-market or illiquid stocks
+      console.log(`[Circuit] ${orderData.symbol}: Both bid/ask are 0, using LTP: ${orderData.price}`);
+    }
+    // ==================== END CIRCUIT CHECK ====================
+
     // Determine if crypto trade early
     const isCryptoTrade = orderData.segment === 'CRYPTO' || orderData.isCrypto || orderData.exchange === 'BINANCE';
     
@@ -672,6 +698,15 @@ class TradingService {
       marginRequired = marginCalc.marginRequired;
       marginSource = 'default_calculated';
     }
+    
+    // CRITICAL: Ensure minimum margin is required (prevent 0 margin trades)
+    // Minimum margin should be at least 1% of trade value or ₹100, whichever is higher
+    const minMargin = Math.max(tradeValue * 0.01, 100);
+    if (marginRequired < minMargin && tradeValue > 0) {
+      console.log(`[Trade] Margin too low (${marginRequired}), setting minimum margin: ${minMargin}`);
+      marginRequired = minMargin;
+      marginSource = 'minimum_enforced';
+    }
 
     // Determine if crypto trade - check before balance validation
     const isCrypto = orderData.segment === 'CRYPTO' || orderData.isCrypto || orderData.exchange === 'BINANCE';
@@ -697,7 +732,18 @@ class TradingService {
       // MCX trades use separate MCX wallet with margin system
       const mcxBalance = user.mcxWallet?.balance || 0;
       const mcxUsedMargin = user.mcxWallet?.usedMargin || 0;
+      
+      // CRITICAL: Check if MCX wallet balance is 0 or negative
+      if (mcxBalance <= 0) {
+        throw new Error(`Cannot place MCX trade. Your MCX wallet balance is ₹0. Please transfer funds to your MCX wallet.`);
+      }
+      
       availableBalance = mcxBalance - mcxUsedMargin;
+      
+      // CRITICAL: Ensure available MCX balance is positive
+      if (availableBalance <= 0) {
+        throw new Error(`Insufficient MCX margin. Your available MCX balance is ₹${availableBalance.toLocaleString()}. Please close some positions or add funds.`);
+      }
       
       // Check if user has enough in MCX wallet for margin + commission
       if ((marginRequired + totalCommission) > availableBalance) {
@@ -708,6 +754,11 @@ class TradingService {
       const walletBalance = user.wallet?.tradingBalance || user.wallet?.cashBalance || user.wallet?.balance || 0;
       const blockedMargin = user.wallet?.usedMargin || user.wallet?.blocked || 0;
       
+      // CRITICAL: Check if wallet balance is 0 or negative - reject trade immediately
+      if (walletBalance <= 0) {
+        throw new Error(`Cannot place trade. Your trading balance is ₹0. Please add funds to your trading account.`);
+      }
+      
       // Include Delivery Pledge as available margin (with haircut applied)
       const pledgeBalance = user.deliveryPledge?.balance || 0;
       const pledgeUsedMargin = user.deliveryPledge?.usedMargin || 0;
@@ -716,6 +767,11 @@ class TradingService {
       const usablePledge = (pledgeBalance - pledgeUsedMargin) * (1 - haircutPercent / 100);
       
       availableBalance = (walletBalance - blockedMargin) + Math.max(0, usablePledge);
+      
+      // CRITICAL: Ensure available balance is positive
+      if (availableBalance <= 0) {
+        throw new Error(`Insufficient available margin. Your available balance is ₹${availableBalance.toLocaleString()}. Please close some positions or add funds.`);
+      }
       
       // Check if user has enough for margin + commission
       if ((marginRequired + totalCommission) > availableBalance) {

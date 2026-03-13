@@ -7,6 +7,7 @@ import FundRequest from '../models/FundRequest.js';
 import Notification from '../models/Notification.js';
 import BrokerChangeRequest from '../models/BrokerChangeRequest.js';
 import GameSettings from '../models/GameSettings.js';
+import GameResult from '../models/GameResult.js';
 import NiftyNumberBet from '../models/NiftyNumberBet.js';
 import NiftyBracketTrade from '../models/NiftyBracketTrade.js';
 import NiftyJackpotBid from '../models/NiftyJackpotBid.js';
@@ -1238,6 +1239,72 @@ router.post('/game-bet/place', protectUser, async (req, res) => {
     });
   } catch (error) {
     console.error('Game bet place error:', error);
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Get recent game results for Up/Down games
+router.get('/game-results/:gameId', protectUser, async (req, res) => {
+  try {
+    const { gameId } = req.params;
+    const limit = parseInt(req.query.limit) || 20;
+    
+    if (!['updown', 'btcupdown'].includes(gameId)) {
+      return res.status(400).json({ message: 'Invalid game ID' });
+    }
+    
+    const results = await GameResult.getRecentResults(gameId, limit);
+    res.json(results);
+  } catch (error) {
+    console.error('Error fetching game results:', error);
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Save game result (called when a window closes)
+router.post('/game-result', protectUser, async (req, res) => {
+  try {
+    const { gameId, windowNumber, openPrice, closePrice, windowStartTime, windowEndTime } = req.body;
+    
+    if (!['updown', 'btcupdown'].includes(gameId)) {
+      return res.status(400).json({ message: 'Invalid game ID' });
+    }
+    
+    const priceChange = closePrice - openPrice;
+    const priceChangePercent = ((priceChange / openPrice) * 100);
+    const result = priceChange >= 0 ? 'UP' : 'DOWN';
+    
+    // Check if result already exists for this window
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    
+    const existingResult = await GameResult.findOne({
+      gameId,
+      windowNumber,
+      windowDate: { $gte: today }
+    });
+    
+    if (existingResult) {
+      return res.json({ message: 'Result already exists', result: existingResult });
+    }
+    
+    const gameResult = await GameResult.create({
+      gameId,
+      windowNumber,
+      windowDate: today,
+      openPrice,
+      closePrice,
+      result,
+      priceChange,
+      priceChangePercent,
+      windowStartTime,
+      windowEndTime,
+      resultTime: new Date()
+    });
+    
+    res.status(201).json(gameResult);
+  } catch (error) {
+    console.error('Error saving game result:', error);
     res.status(500).json({ message: error.message });
   }
 });

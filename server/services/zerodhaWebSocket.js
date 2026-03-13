@@ -11,6 +11,12 @@ export const initZerodhaWebSocket = (socketIO) => {
   console.log('Zerodha WebSocket service initialized');
 };
 
+// Essential tokens that should always be subscribed (for games and indices)
+const ESSENTIAL_TOKENS = [
+  256265,   // NIFTY 50 (Index)
+  260105,   // NIFTY BANK (Index)
+];
+
 // Connect to Zerodha WebSocket
 export const connectTicker = (apiKey, accessToken, tokens = []) => {
   if (ticker) {
@@ -26,8 +32,11 @@ export const connectTicker = (apiKey, accessToken, tokens = []) => {
 
   ticker.on('connect', () => {
     console.log('Zerodha WebSocket connected');
-    if (tokens.length > 0) {
-      subscribeTokens(tokens);
+    // Always subscribe to essential tokens (NIFTY 50, BANKNIFTY) for games
+    const allTokens = [...new Set([...ESSENTIAL_TOKENS, ...tokens])];
+    console.log(`Subscribing to ${allTokens.length} tokens (including ${ESSENTIAL_TOKENS.length} essential tokens)`);
+    if (allTokens.length > 0) {
+      subscribeTokens(allTokens);
     }
   });
 

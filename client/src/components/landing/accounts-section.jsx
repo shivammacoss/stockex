@@ -1,6 +1,6 @@
 import { Button } from "@/components/landing/ui/button"
 import { User, PlayCircle, Building2, TrendingUp, PieChart, Wrench, Wallet, Activity, BookOpen, Users, BarChart3, DollarSign } from "lucide-react"
-import { OpenAccountDialog, DemoTradingDialog, BrokerProgramDialog } from "@/components/landing/auth-dialogs"
+import { Link } from "react-router-dom"
 
 const accounts = [
   {
@@ -55,12 +55,16 @@ function AccountButton({ account }) {
     </Button>
   )
 
-  if (account.dialogType === "user") {
-    return <OpenAccountDialog trigger={buttonElement} />
-  } else if (account.dialogType === "demo") {
-    return <DemoTradingDialog trigger={buttonElement} />
-  } else if (account.dialogType === "broker") {
-    return <BrokerProgramDialog trigger={buttonElement} />
+  // Map dialog types to URLs
+  const urlMap = {
+    user: "/login?register=true",
+    demo: "/login?demo=true",
+    broker: "/broker/login"
+  }
+
+  const url = urlMap[account.dialogType]
+  if (url) {
+    return <Link to={url}>{buttonElement}</Link>
   }
   return buttonElement
 }

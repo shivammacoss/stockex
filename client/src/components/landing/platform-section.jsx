@@ -1,6 +1,6 @@
-import { Button } from "@/components/landing/ui/button"
+ï»¿import { Button } from "@/components/landing/ui/button"
 import { Check, Monitor, Smartphone, Globe } from "lucide-react"
-import { OpenAccountDialog } from "@/components/landing/auth-dialogs"
+import { Link } from "react-router-dom"
 
 const features = [
   "Advanced charts with technical indicators",
@@ -55,13 +55,7 @@ export function PlatformSection() {
               ))}
             </div>
 
-            <OpenAccountDialog
-              trigger={
-                <Button size="lg" className="bg-primary hover:bg-primary/90 text-white px-8">
-                  Access Platform
-                </Button>
-              }
-            />
+            <Link to="/login"><Button size="lg" className="bg-primary hover:bg-primary/90 text-white px-8">Access Platform</Button></Link>
           </div>
 
           {/* Right Content - App Preview */}
@@ -82,7 +76,7 @@ export function PlatformSection() {
               </div>
               <div>
                 <div className="text-sm font-semibold text-deep-blue">STOCKEX</div>
-                <div className="text-xs text-muted-foreground">Web • Mobile • Desktop</div>
+                <div className="text-xs text-muted-foreground">Web â€¢ Mobile â€¢ Desktop</div>
               </div>
             </div>
           </div>
@@ -91,3 +85,4 @@ export function PlatformSection() {
     </section>
   )
 }
+

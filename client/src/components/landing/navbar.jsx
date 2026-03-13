@@ -1,9 +1,9 @@
 
 import { useState, useEffect } from "react"
 import { Link, useLocation } from 'react-router-dom'
-import { Menu, X } from "lucide-react"
+import { Menu, X, Sun, Moon } from "lucide-react"
 import { Button } from "@/components/landing/ui/button"
-import { LoginDialog, OpenAccountDialog } from "@/components/landing/auth-dialogs"
+import { useTheme } from "@/context/ThemeContext"
 
 const navLinks = [
   { href: "/", label: "Home" },
@@ -16,6 +16,7 @@ const navLinks = [
 export function Navbar() {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false)
   const location = useLocation()
+  const { theme, toggleTheme, isDark } = useTheme()
 
   return (
     <header className="fixed top-0 left-0 right-0 z-50 pt-4 px-4">
@@ -53,20 +54,28 @@ export function Navbar() {
 
           {/* Desktop CTA Buttons */}
           <div className="hidden lg:flex items-center gap-2 pr-2">
-            <LoginDialog
-              trigger={
-                <Button variant="ghost" className="text-sm font-medium text-gray-700 hover:text-deep-blue rounded-full">
-                  Log In
-                </Button>
-              }
-            />
-            <OpenAccountDialog
-              trigger={
-                <Button className="bg-yellow-accent hover:bg-yellow-500 text-deep-blue font-semibold px-5 rounded-full">
-                  Open Account
-                </Button>
-              }
-            />
+            {/* Theme Toggle Button */}
+            <button
+              onClick={toggleTheme}
+              className="p-2 rounded-full hover:bg-gray-100 transition-colors"
+              aria-label="Toggle theme"
+            >
+              {isDark ? (
+                <Sun className="w-5 h-5 text-yellow-500" />
+              ) : (
+                <Moon className="w-5 h-5 text-gray-700" />
+              )}
+            </button>
+            <Link to="/login">
+              <Button variant="ghost" className="text-sm font-medium text-gray-700 hover:text-deep-blue rounded-full">
+                Log In
+              </Button>
+            </Link>
+            <Link to="/login?register=true">
+              <Button className="bg-yellow-accent hover:bg-yellow-500 text-deep-blue font-semibold px-5 rounded-full">
+                Open Account
+              </Button>
+            </Link>
           </div>
 
           {/* Mobile Menu Button */}
@@ -105,16 +114,26 @@ export function Navbar() {
                 )
               })}
               <div className="flex flex-col gap-3 pt-4 mt-2 border-t border-gray-100">
-                <LoginDialog
-                  trigger={
-                    <Button variant="outline" className="w-full rounded-full">Log In</Button>
-                  }
-                />
-                <OpenAccountDialog
-                  trigger={
-                    <Button className="w-full bg-yellow-accent hover:bg-yellow-500 text-deep-blue font-semibold rounded-full">Open Account</Button>
-                  }
-                />
+                {/* Mobile Theme Toggle */}
+                <button
+                  onClick={toggleTheme}
+                  className="flex items-center justify-between py-3 px-4 rounded-xl hover:bg-gray-100 transition-colors"
+                >
+                  <span className="text-sm font-medium text-gray-700">
+                    {isDark ? 'Light Mode' : 'Dark Mode'}
+                  </span>
+                  {isDark ? (
+                    <Sun className="w-5 h-5 text-yellow-500" />
+                  ) : (
+                    <Moon className="w-5 h-5 text-gray-700" />
+                  )}
+                </button>
+                <Link to="/login" onClick={() => setIsMobileMenuOpen(false)}>
+                  <Button variant="outline" className="w-full rounded-full">Log In</Button>
+                </Link>
+                <Link to="/login?register=true" onClick={() => setIsMobileMenuOpen(false)}>
+                  <Button className="w-full bg-yellow-accent hover:bg-yellow-500 text-deep-blue font-semibold rounded-full">Open Account</Button>
+                </Link>
               </div>
             </nav>
           </div>

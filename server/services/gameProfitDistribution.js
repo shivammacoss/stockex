@@ -28,6 +28,8 @@ export async function distributeGameProfit(user, amount, gameName, refId, gameKe
     const subBrokerPercent = gameConfig?.profitSubBrokerPercent ?? globalDist.subBrokerPercent ?? 10;
     const brokerPercent = gameConfig?.profitBrokerPercent ?? globalDist.brokerPercent ?? 20;
     const adminPercent = gameConfig?.profitAdminPercent ?? globalDist.adminPercent ?? 30;
+    // Option: If SubBroker not available, should their share go to Broker? (default: true)
+    const subBrokerShareToBroker = gameConfig?.subBrokerShareToBroker ?? true;
     // SuperAdmin gets the remainder (100 - admin - broker - subBroker)
 
     // Build hierarchy chain from user's direct admin up to SuperAdmin
@@ -72,13 +74,16 @@ export async function distributeGameProfit(user, amount, gameName, refId, gameKe
     let adShare = adminPercent;
     let saShare = Math.max(0, 100 - adminPercent - brokerPercent - subBrokerPercent);
 
-    // If no SubBroker, their share goes to Broker (or next up)
+    // If no SubBroker, their share goes to Broker (if enabled) or next up
     if (!hasSubBroker) {
-      if (hasBroker) {
+      if (subBrokerShareToBroker && hasBroker) {
+        // SubBroker share goes to Broker (configurable option)
         brShare += sbShare;
       } else if (hasAdmin) {
+        // If option disabled or no broker, share goes to Admin
         adShare += sbShare;
       } else {
+        // Otherwise goes to SuperAdmin
         saShare += sbShare;
       }
       sbShare = 0;

@@ -1,6 +1,6 @@
 import { Button } from "@/components/landing/ui/button"
 import { Wallet, Activity, Shield, Monitor, TrendingUp, BarChart3 } from "lucide-react"
-import { DemoTradingDialog } from "@/components/landing/auth-dialogs"
+import { Link } from "react-router-dom"
 
 const features = [
   { icon: Wallet, text: "₹1,00,000 virtual balance" },
@@ -36,13 +36,11 @@ export function DemoTradingSection() {
               ))}
             </div>
 
-            <DemoTradingDialog
-              trigger={
-                <Button size="lg" className="bg-yellow-accent hover:bg-yellow-500 text-deep-blue font-semibold px-8 py-6 text-lg">
-                  Open Demo Account
-                </Button>
-              }
-            />
+            <Link to="/login?demo=true">
+              <Button size="lg" className="bg-yellow-accent hover:bg-yellow-500 text-deep-blue font-semibold px-8 py-6 text-lg">
+                Open Demo Account
+              </Button>
+            </Link>
           </div>
 
           {/* Right - Dashboard Preview */}

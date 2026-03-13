@@ -1,6 +1,6 @@
 
 import { Button } from "@/components/landing/ui/button"
-import { OpenAccountDialog } from "@/components/landing/auth-dialogs"
+import { Link } from "react-router-dom"
 import { ArrowRight } from "lucide-react"
 
 
@@ -15,17 +15,15 @@ export function CTABar({ title, description, ctaText = "Open Account" }) {
               <p className="text-white/80">{description}</p>
             )}
           </div>
-          <OpenAccountDialog
-            trigger={
-              <Button
-                size="lg"
-                className="bg-white text-primary hover:bg-white/90 px-8 py-6 text-base font-semibold"
-              >
-                {ctaText}
-                <ArrowRight className="w-5 h-5 ml-2" />
-              </Button>
-            }
-          />
+          <Link to="/login?register=true">
+            <Button
+              size="lg"
+              className="bg-white text-primary hover:bg-white/90 px-8 py-6 text-base font-semibold"
+            >
+              {ctaText}
+              <ArrowRight className="w-5 h-5 ml-2" />
+            </Button>
+          </Link>
         </div>
       </div>
     </section>

@@ -14533,6 +14533,26 @@ const GameSettingsManagement = () => {
               <div className="space-y-4">
                 <h4 className="font-medium text-orange-400">Brokerage Distribution (%)</h4>
                 <p className="text-xs text-gray-500">Set share for each hierarchy level. Remaining % goes to Super Admin wallet.</p>
+                
+                {/* SubBroker share to Broker toggle */}
+                <div className="bg-blue-900/20 border border-blue-500/30 rounded-lg p-3">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <label className="text-sm text-blue-400 font-medium">If Sub-Broker is not available, its share goes to Broker</label>
+                      <p className="text-xs text-gray-500 mt-0.5">When user has no sub-broker, sub-broker's % will be added to broker's share</p>
+                    </div>
+                    <label className="relative inline-flex items-center cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={currentGame?.subBrokerShareToBroker ?? true}
+                        onChange={e => updateGameSetting(selectedGame, 'subBrokerShareToBroker', e.target.checked)}
+                        className="sr-only peer"
+                      />
+                      <div className="w-11 h-6 bg-dark-600 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+                    </label>
+                  </div>
+                </div>
+
                 <div>
                   <label className="block text-sm text-gray-400 mb-1">Sub-Broker (%)</label>
                   <input

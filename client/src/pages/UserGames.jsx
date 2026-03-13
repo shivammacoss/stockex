@@ -627,29 +627,52 @@ const TradingChart = ({ gameId, fullHeight = false, onPriceUpdate, priceLines = 
   const symbol = isBTC ? 'BTC/USDT' : 'NIFTY 50';
   const candleInterval = isBTC ? 60 : 900; // 1-min for BTC, 15-min for Nifty
 
-  // Generate initial historical candles (used as base, updated by live data)
-  const generateHistoricalCandles = (base) => {
+  // Fetch real historical candles from server
+  const fetchHistoricalCandles = async () => {
+    try {
+      // For BTC: Use Binance API
+      // For Nifty: Use Zerodha API with NIFTY 50 token (256265)
+      const endpoint = isBTC 
+        ? '/api/binance/candles/BTCUSDT?interval=1m&limit=80'
+        : '/api/zerodha/historical/256265?interval=15';  // 256265 is NIFTY 50 token
+      
+      const { data } = await axios.get(endpoint);
+      
+      if (data && data.length > 0) {
+        // Data is already formatted by server
+        const candles = data.map(candle => ({
+          time: typeof candle.time === 'number' ? candle.time : Math.floor(new Date(candle.time).getTime() / 1000),
+          open: parseFloat(candle.open),
+          high: parseFloat(candle.high),
+          low: parseFloat(candle.low),
+          close: parseFloat(candle.close),
+        })).filter(c => c.time && !isNaN(c.open)).sort((a, b) => a.time - b.time);
+        
+        // Return last 80 candles
+        return candles.slice(-80);
+      }
+    } catch (error) {
+      console.error('[GameChart] Error fetching historical candles:', error);
+    }
+    return null;
+  };
+
+  // Generate placeholder candles only if API fails (temporary until live data arrives)
+  const generatePlaceholderCandles = (base) => {
     const candles = [];
     const now = Math.floor(Date.now() / 1000);
-    const numCandles = 80;
-    let currentPrice = base;
-
+    const numCandles = 20; // Fewer candles as placeholder
+    
     for (let i = numCandles; i >= 0; i--) {
       const time = Math.floor((now - i * candleInterval) / candleInterval) * candleInterval;
-      const volatility = base * (isBTC ? 0.003 : 0.001);
-      const drift = (Math.random() - 0.48) * volatility;
-      const open = currentPrice;
-      const close = open + drift;
-      const high = Math.max(open, close) + Math.random() * volatility * 0.5;
-      const low = Math.min(open, close) - Math.random() * volatility * 0.5;
+      // Use flat candles at base price - will be replaced by live data
       candles.push({
         time,
-        open: parseFloat(open.toFixed(2)),
-        high: parseFloat(high.toFixed(2)),
-        low: parseFloat(low.toFixed(2)),
-        close: parseFloat(close.toFixed(2)),
+        open: base,
+        high: base,
+        low: base,
+        close: base,
       });
-      currentPrice = close;
     }
     return candles;
   };
@@ -731,14 +754,27 @@ const TradingChart = ({ gameId, fullHeight = false, onPriceUpdate, priceLines = 
 
     candlestickSeriesRef.current = series;
 
-    // Load initial historical candles
-    const candles = generateHistoricalCandles(fallbackPrice);
-    series.setData(candles);
-    lastCandleRef.current = candles[candles.length - 1];
-    livePriceRef.current = candles[candles.length - 1].close;
-    setLivePrice(candles[candles.length - 1].close);
-
-    chart.timeScale().fitContent();
+    // Load initial historical candles from API, fallback to placeholder
+    const loadCandles = async () => {
+      let candles = await fetchHistoricalCandles();
+      
+      if (!candles || candles.length === 0) {
+        console.log('[GameChart] Using placeholder candles, waiting for live data...');
+        candles = generatePlaceholderCandles(fallbackPrice);
+      } else {
+        console.log(`[GameChart] Loaded ${candles.length} real historical candles`);
+        setIsLiveConnected(true);
+        isLiveRef.current = true;
+      }
+      
+      series.setData(candles);
+      lastCandleRef.current = candles[candles.length - 1];
+      livePriceRef.current = candles[candles.length - 1].close;
+      setLivePrice(candles[candles.length - 1].close);
+      chart.timeScale().fitContent();
+    };
+    
+    loadCandles();
 
     const handleResize = () => {
       if (chartContainerRef.current) {
@@ -803,15 +839,27 @@ const TradingChart = ({ gameId, fullHeight = false, onPriceUpdate, priceLines = 
     });
 
     // Listen for Zerodha market ticks (NIFTY 50)
+    // NIFTY 50 token is 256265
     if (!isBTC) {
+      let debugCount = 0;
       socket.on('market_tick', (ticks) => {
-        const niftyTick = Object.values(ticks).find(
-          d => d.symbol === 'NIFTY 50' || d.symbol === 'NIFTY'
-        );
+        // Debug first few ticks
+        if (debugCount < 3) {
+          console.log('[GameChart] Tick keys:', Object.keys(ticks).slice(0, 5));
+          debugCount++;
+        }
+        
+        // Try to find NIFTY 50 by token (256265) or by symbol
+        const niftyTick = ticks['256265'] || ticks[256265] || 
+          Object.values(ticks).find(d => 
+            d.symbol === 'NIFTY 50' || d.symbol === 'NIFTY' || 
+            d.token === 256265 || d.token === '256265'
+          );
         if (niftyTick && niftyTick.ltp) {
           if (!isLiveRef.current) {
             isLiveRef.current = true;
             setIsLiveConnected(true);
+            console.log('[GameChart] NIFTY 50 live connected!', niftyTick.ltp);
           }
           updateCandleWithPrice(niftyTick.ltp);
           if (niftyTick.close) {
@@ -873,27 +921,15 @@ const TradingChart = ({ gameId, fullHeight = false, onPriceUpdate, priceLines = 
     };
   }, [gameId]);
 
-  // Fallback: simulate ticks if no live data after 5 seconds
+  // Show warning if no live data after 10 seconds (no simulation - only real data)
   useEffect(() => {
-    const fallbackTimeout = setTimeout(() => {
-      if (isLiveRef.current) return; // Live data is flowing, no need for fallback
+    const warningTimeout = setTimeout(() => {
+      if (!isLiveRef.current) {
+        console.warn(`[GameChart] No live data received for ${symbol}. Please check WebSocket connection.`);
+      }
+    }, 10000);
 
-      console.log(`[GameChart] No live data for ${symbol}, using simulated ticks`);
-      const simInterval = setInterval(() => {
-        if (isLiveRef.current) {
-          clearInterval(simInterval);
-          return;
-        }
-        const volatility = fallbackPrice * (isBTC ? 0.0008 : 0.0003);
-        const tick = (Math.random() - 0.48) * volatility;
-        const newPrice = parseFloat(((livePriceRef.current || fallbackPrice) + tick).toFixed(2));
-        updateCandleWithPrice(newPrice);
-      }, 1000);
-
-      return () => clearInterval(simInterval);
-    }, 5000);
-
-    return () => clearTimeout(fallbackTimeout);
+    return () => clearTimeout(warningTimeout);
   }, [gameId]);
 
   const displayPrice = livePrice || fallbackPrice;
@@ -907,9 +943,9 @@ const TradingChart = ({ gameId, fullHeight = false, onPriceUpdate, priceLines = 
           <div className="flex items-center gap-2">
             <span className="text-gray-400 text-sm">{symbol}</span>
             <div className="flex items-center gap-1">
-              <div className={`w-2 h-2 rounded-full animate-pulse ${isLiveConnected ? 'bg-green-500' : 'bg-yellow-500'}`}></div>
-              <span className={`text-xs ${isLiveConnected ? 'text-green-400' : 'text-yellow-400'}`}>
-                {isLiveConnected ? 'LIVE' : 'SIMULATED'}
+              <div className={`w-2 h-2 rounded-full animate-pulse ${isLiveConnected ? 'bg-green-500' : 'bg-red-500'}`}></div>
+              <span className={`text-xs ${isLiveConnected ? 'text-green-400' : 'text-red-400'}`}>
+                {isLiveConnected ? 'LIVE' : 'CONNECTING...'}
               </span>
             </div>
           </div>
@@ -947,6 +983,8 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
   const [windowInfo, setWindowInfo] = useState(isBTC ? btcAlwaysOpen : getTradingWindowInfo(gameStartTime, gameEndTime));
   const [activeTrades, setActiveTrades] = useState([]); // pending trades waiting for result
   const [tradeHistory, setTradeHistory] = useState([]);
+  const [gameResults, setGameResults] = useState([]); // Previous window results
+  const [loadingResults, setLoadingResults] = useState(true);
   const currentPriceRef = useRef(null);
   const prevWindowStatusRef = useRef(windowInfo.status);
 
@@ -987,6 +1025,24 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
     return () => clearInterval(interval);
   }, [isBTC, gameStartTime, gameEndTime]);
 
+  // Fetch game results on mount and when window changes
+  const fetchGameResults = useCallback(async () => {
+    try {
+      const { data } = await axios.get(`/api/user/game-results/${game.id}?limit=20`, {
+        headers: { Authorization: `Bearer ${user.token}` }
+      });
+      setGameResults(data);
+    } catch (error) {
+      console.error('Error fetching game results:', error);
+    } finally {
+      setLoadingResults(false);
+    }
+  }, [game.id, user.token]);
+
+  useEffect(() => {
+    fetchGameResults();
+  }, [fetchGameResults]);
+
   // Helper function to resolve a single trade
   const resolveTrade = useCallback(async (trade) => {
     const exitPrice = currentPriceRef.current || 0;
@@ -1022,7 +1078,21 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
       }, {
         headers: { Authorization: `Bearer ${user.token}` }
       });
+      
+      // Save game result for this window
+      await axios.post('/api/user/game-result', {
+        gameId: game.id,
+        windowNumber: trade.windowNumber,
+        openPrice: trade.entryPrice,
+        closePrice: exitPrice,
+        windowStartTime: trade.windowStart,
+        windowEndTime: trade.windowEnd
+      }, {
+        headers: { Authorization: `Bearer ${user.token}` }
+      });
+      
       refreshBalance();
+      fetchGameResults(); // Refresh results list
     } catch (err) {
       console.error('Error resolving trade on server:', err);
     }
@@ -1030,7 +1100,7 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
     // Update state
     setActiveTrades(prev => prev.filter(t => t.id !== trade.id));
     setTradeHistory(prev => [resolvedTrade, ...prev]);
-  }, [game.id, user.token, winMultiplier, brokeragePercent, refreshBalance]);
+  }, [game.id, user.token, winMultiplier, brokeragePercent, refreshBalance, fetchGameResults]);
 
   // BTC: Timer-based resolution (based on selected expiry time)
   const [, forceUpdate] = useState(0); // For countdown re-render
@@ -1525,6 +1595,75 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
               </div>
             )}
 
+            {/* Circuit Breaker Info Section - Compact */}
+            {!isBTC && (
+              <div className="mt-3 flex-shrink-0">
+                <div className="bg-gradient-to-r from-yellow-900/20 to-orange-900/20 rounded-xl p-2.5 border border-yellow-500/30">
+                  <h3 className="text-[10px] font-bold text-yellow-400 flex items-center gap-1 mb-1.5">
+                    <AlertCircle size={10} />
+                    Circuit Breaker Rules
+                  </h3>
+                  <div className="flex gap-2 text-[9px]">
+                    <div className="flex-1 bg-green-900/30 rounded-lg p-1.5 border border-green-500/20">
+                      <span className="font-bold text-green-400">🟢 UPPER CIRCUIT</span>
+                      <p className="text-gray-400 mt-0.5">Ask=0 → BUY blocked</p>
+                    </div>
+                    <div className="flex-1 bg-red-900/30 rounded-lg p-1.5 border border-red-500/20">
+                      <span className="font-bold text-red-400">🔴 LOWER CIRCUIT</span>
+                      <p className="text-gray-400 mt-0.5">Bid=0 → SELL blocked</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Results Section - Previous Window Results */}
+            <div className="mt-3 flex-shrink-0">
+              <div className="flex items-center justify-between mb-1.5">
+                <h3 className="text-xs font-bold text-purple-400 flex items-center gap-1">
+                  <Trophy size={12} />
+                  Previous Results
+                </h3>
+                <button 
+                  onClick={fetchGameResults}
+                  className="text-[10px] text-gray-500 hover:text-gray-300 flex items-center gap-1"
+                >
+                  <RefreshCw size={10} />
+                  Refresh
+                </button>
+              </div>
+              
+              {loadingResults ? (
+                <div className="bg-dark-800 rounded-xl p-2 border border-dark-600 text-center">
+                  <RefreshCw className="animate-spin mx-auto text-purple-400" size={14} />
+                </div>
+              ) : gameResults.length === 0 ? (
+                <div className="bg-dark-800 rounded-xl p-2 border border-dark-600 text-center">
+                  <p className="text-[10px] text-gray-500">No results yet</p>
+                </div>
+              ) : (
+                <div className="flex gap-1 overflow-x-auto pb-1 scrollbar-thin">
+                  {gameResults.slice(0, 10).map((result, idx) => (
+                    <div 
+                      key={result._id || idx} 
+                      className={`flex-shrink-0 bg-dark-800 rounded-lg px-2 py-1.5 border ${
+                        result.result === 'UP' ? 'border-green-500/30' : 'border-red-500/30'
+                      }`}
+                    >
+                      <div className="flex items-center gap-1">
+                        <span className="text-[9px] text-gray-500">#{result.windowNumber}</span>
+                        <span className={`text-[10px] font-bold ${
+                          result.result === 'UP' ? 'text-green-400' : 'text-red-400'
+                        }`}>
+                          {result.result === 'UP' ? '▲' : '▼'}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
             {/* Trade History */}
             <div className="mt-3 flex-1 min-h-0 flex flex-col">
               <div className="flex items-center justify-between mb-1.5 flex-shrink-0">
@@ -1587,6 +1726,7 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
                 </div>
               )}
             </div>
+
           </div>
 
         </div>

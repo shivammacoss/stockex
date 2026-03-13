@@ -1,6 +1,6 @@
-
+ï»¿
 import { Button } from "@/components/landing/ui/button"
-import { OpenAccountDialog } from "@/components/landing/auth-dialogs"
+import { Link } from "react-router-dom"
 import { Check, Star, Zap, Target, TrendingUp } from "lucide-react"
 
 const accountTypes = [
@@ -13,7 +13,7 @@ const accountTypes = [
       { label: "Minimum Deposit", value: "$100" },
       { label: "Platform", value: "MT5" },
       { label: "Commission", value: "$0" },
-      { label: "Spread (Major FX)", value: "2.2 – 2.5 pips" },
+      { label: "Spread (Major FX)", value: "2.2 ï¿½ 2.5 pips" },
       { label: "Leverage", value: "Up to 1:1000*" },
       { label: "Support", value: "24/5" },
     ],
@@ -29,7 +29,7 @@ const accountTypes = [
       { label: "Minimum Deposit", value: "$500" },
       { label: "Platform", value: "MT5" },
       { label: "Commission", value: "Low" },
-      { label: "Spread (Major FX)", value: "1.0 – 1.5 pips" },
+      { label: "Spread (Major FX)", value: "1.0 ï¿½ 1.5 pips" },
       { label: "Leverage", value: "Up to 1:1000*" },
       { label: "Support", value: "24/5 Priority" },
     ],
@@ -117,16 +117,12 @@ export function AccountTypesGrid() {
 
               <p className="text-sm text-muted-foreground mb-6">{account.description}</p>
 
-              <OpenAccountDialog
-                trigger={
-                  <Button
+              <Link to="/login?register=true"><Button
                     className={`w-full ${account.highlighted ? "bg-primary hover:bg-primary/90 text-white" : ""}`}
                     variant={account.highlighted ? "default" : "outline"}
                   >
                     Open Account
-                  </Button>
-                }
-              />
+                  </Button></Link>
             </div>
           ))}
         </div>
@@ -134,3 +130,4 @@ export function AccountTypesGrid() {
     </section>
   )
 }
+

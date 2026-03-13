@@ -1,6 +1,7 @@
 import React from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
+import { ThemeProvider } from './context/ThemeContext';
 // Legacy Admin Login (redirects based on role)
 import AdminLoginLegacy from './pages/AdminLogin';
 // Separate Login Pages
@@ -94,8 +95,9 @@ const ProtectedUserRoute = ({ children }) => {
 function App() {
   return (
     <ErrorBoundary>
-      <AuthProvider>
-        <Router>
+      <ThemeProvider>
+        <AuthProvider>
+          <Router>
           <Routes>
             <Route path="/" element={<LandingPageNew />} />
             <Route path="/about" element={<About />} />
@@ -190,8 +192,9 @@ function App() {
             <Route path="/dashboard" element={<Navigate to="/user/home" replace />} />
             <Route path="/dashboard/*" element={<Navigate to="/user/home" replace />} />
           </Routes>
-        </Router>
-      </AuthProvider>
+          </Router>
+        </AuthProvider>
+      </ThemeProvider>
     </ErrorBoundary>
   );
 }

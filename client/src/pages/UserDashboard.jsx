@@ -1357,10 +1357,52 @@ const InstrumentsPanel = ({ selectedInstrument, onSelectInstrument, onBuySell, u
                       </div>
                     </div>
                     
-                    {/* Bottom row: Category, Change %, and Buttons */}
+                    {/* Bottom row: Category, Expiry, Change %, and Buttons */}
                     <div className="flex items-center justify-between w-full mt-1">
                       <div className="flex items-center gap-2">
                         <div className="text-xs text-gray-500 truncate max-w-[80px]">{inst.category || inst.name}</div>
+                        {/* Show expiry for Futures and Options - extract from symbol if expiry field not available */}
+                        {(() => {
+                          // Check if it's F&O based on segment, instrumentType, or active tab
+                          const isFnO = inst.instrumentType === 'FUTURES' || inst.instrumentType === 'OPTIONS' || 
+                                        inst.segment === 'FNO' || inst.segment === 'NSEFUT' || inst.segment === 'NSEOPT' ||
+                                        inst.segment === 'MCXFUT' || inst.segment === 'MCXOPT' ||
+                                        inst.displaySegment === 'NSEFUT' || inst.displaySegment === 'NSEOPT' ||
+                                        activeSegment === 'NSEFUT' || activeSegment === 'NSEOPT' ||
+                                        activeSegment === 'BSE-FUT' || activeSegment === 'BSE-OPT' ||
+                                        activeSegment === 'MCXFUT' || activeSegment === 'MCXOPT';
+                          
+                          // Try to get expiry from field or extract from symbol
+                          let expiryDisplay = null;
+                          if (inst.expiry) {
+                            expiryDisplay = new Date(inst.expiry).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' });
+                          } else {
+                            // Extract expiry from symbol like "GODREJCP26APR25FUT" or "NIFTY24MAR25FUT"
+                            const symbol = inst.tradingSymbol || inst.symbol || '';
+                            let expiryMatch = symbol.match(/(\d{1,2})(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)(\d{2})/i);
+                            if (expiryMatch) {
+                              expiryDisplay = `${expiryMatch[1]} ${expiryMatch[2].toUpperCase()}`;
+                            } else {
+                              // Pattern 2: Just "26APR" without year
+                              expiryMatch = symbol.match(/(\d{1,2})(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)/i);
+                              if (expiryMatch) {
+                                expiryDisplay = `${expiryMatch[1]} ${expiryMatch[2].toUpperCase()}`;
+                              }
+                            }
+                          }
+                          
+                          // If in F&O segment but no expiry found, show "F&O" badge
+                          if (!expiryDisplay && isFnO) {
+                            expiryDisplay = 'F&O';
+                          }
+                          if (!expiryDisplay) return null;
+                          
+                          return (
+                            <span className="text-[10px] px-1 py-0.5 bg-yellow-500/20 text-yellow-400 rounded">
+                              {expiryDisplay}
+                            </span>
+                          );
+                        })()}
                         <div className={`text-xs ${parseFloat(priceData.changePercent || 0) >= 0 ? 'text-green-400' : 'text-red-400'}`}>
                           {parseFloat(priceData.changePercent || 0) >= 0 ? '+' : ''}{parseFloat(priceData.changePercent || 0).toFixed(2)}%
                         </div>
@@ -1442,8 +1484,14 @@ const InstrumentRow = ({ instrument, isSelected, onSelect, isCall, isPut, isFutu
         <div className={`font-bold text-sm uppercase ${isSelected ? 'text-green-400' : getSymbolColor()}`}>
           {instrument.symbol}
         </div>
-        <div className="text-xs text-gray-500 truncate">
-          {instrument.name || instrument.symbol}
+        <div className="text-xs text-gray-500 truncate flex items-center gap-1">
+          <span>{instrument.name || instrument.symbol}</span>
+          {/* Show expiry for Futures and Options */}
+          {(instrument.instrumentType === 'FUTURES' || instrument.instrumentType === 'OPTIONS') && instrument.expiry && (
+            <span className="text-[10px] px-1 py-0.5 bg-yellow-500/20 text-yellow-400 rounded">
+              {instrument.expiry}
+            </span>
+          )}
         </div>
       </div>
       
@@ -2723,6 +2771,11 @@ const TradingPanel = ({ instrument, orderType, setOrderType, walletData, onClose
   const liveBid = isCrypto ? livePrice : (liveData.bid || livePrice);
   const liveAsk = isCrypto ? livePrice : (liveData.ask || livePrice);
   
+  // Circuit detection - Upper Circuit: ask=0, Lower Circuit: bid=0
+  const isUpperCircuit = !isCrypto && liveAsk === 0 && liveBid > 0;
+  const isLowerCircuit = !isCrypto && liveBid === 0 && liveAsk > 0;
+  const circuitStatus = isUpperCircuit ? 'UPPER' : isLowerCircuit ? 'LOWER' : null;
+  
   // For crypto: Calculate quantity from USD amount or vice versa
   const cryptoUnitPrice = livePrice || 1;
   const cryptoUnits = cryptoInputMode === 'amount' 
@@ -3044,7 +3097,23 @@ const TradingPanel = ({ instrument, orderType, setOrderType, walletData, onClose
             <div className={`font-bold ${isCrypto ? 'text-orange-400' : isCall ? 'text-green-400' : isPut ? 'text-red-400' : isFutures ? 'text-yellow-400' : ''}`}>
               {instrument?.symbol}
             </div>
-            <div className="text-xs text-gray-400">{instrument?.exchange} • {isCrypto ? 'CRYPTO' : getSegmentLabel()}</div>
+            <div className="text-xs text-gray-400 flex items-center gap-1">
+              <span>{instrument?.exchange} • {isCrypto ? 'CRYPTO' : getSegmentLabel()}</span>
+              {/* Show expiry for Futures and Options */}
+              {(isFutures || isOptions) && instrument?.expiry && (
+                <span className="px-1.5 py-0.5 bg-yellow-500/20 text-yellow-400 rounded text-[10px]">
+                  Exp: {instrument.expiry}
+                </span>
+              )}
+              {/* Circuit Indicator */}
+              {circuitStatus && (
+                <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold animate-pulse ${
+                  circuitStatus === 'UPPER' ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'
+                }`}>
+                  {circuitStatus} CIRCUIT
+                </span>
+              )}
+            </div>
           </div>
           {!isCrypto && (
             <button 
