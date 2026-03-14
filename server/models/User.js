@@ -134,7 +134,7 @@ const userSchema = new mongoose.Schema({
     type: String,
     default: null
   },
-  // Enhanced Wallet System
+  // Enhanced Wallet System - TradePro Trading Engine
   wallet: {
     // Cash Balance (Free Balance) - Main wallet where admin deposits funds
     cashBalance: {
@@ -142,26 +142,74 @@ const userSchema = new mongoose.Schema({
       default: 0
     },
     // Trading Balance - Funds available for trading (transferred from main wallet)
+    // Formula: depositTotal - withdrawalTotal + totalRealizedPnL - totalCommissions
     tradingBalance: {
       type: Number,
       default: 0
     },
-    // Used Margin - Currently blocked for open positions
+    // Equity - Real-time value (balance + unrealizedPnL)
+    // Recalculated on EVERY price tick
+    equity: {
+      type: Number,
+      default: 0
+    },
+    // Used Margin - SUM of all open position margins
     usedMargin: {
       type: Number,
       default: 0
+    },
+    // Free Margin - equity - usedMargin (available for new trades)
+    freeMargin: {
+      type: Number,
+      default: 0
+    },
+    // Margin Level - (equity / usedMargin) * 100
+    // Infinity when usedMargin = 0, display as '--' in UI
+    marginLevel: {
+      type: Number,
+      default: null
+    },
+    // Margin Call Active - true when marginLevel <= 100%
+    marginCallActive: {
+      type: Boolean,
+      default: false
     },
     // Collateral Value (Stocks pledged, FD, etc.)
     collateralValue: {
       type: Number,
       default: 0
     },
-    // Realized P&L - Booked profit/loss from closed trades
+    // Total Unrealized P&L - SUM of unrealized PnL of all open positions
+    totalUnrealizedPnL: {
+      type: Number,
+      default: 0
+    },
+    // Total Realized P&L - SUM of realized PnL of all closed positions today
+    totalRealizedPnL: {
+      type: Number,
+      default: 0
+    },
+    // Total Commissions paid
+    totalCommissions: {
+      type: Number,
+      default: 0
+    },
+    // Deposit Total - Sum of all deposits
+    depositTotal: {
+      type: Number,
+      default: 0
+    },
+    // Withdrawal Total - Sum of all withdrawals
+    withdrawalTotal: {
+      type: Number,
+      default: 0
+    },
+    // Realized P&L - Booked profit/loss from closed trades (legacy)
     realizedPnL: {
       type: Number,
       default: 0
     },
-    // Unrealized P&L - Live profit/loss from open positions (MTM)
+    // Unrealized P&L - Live profit/loss from open positions (MTM) (legacy)
     unrealizedPnL: {
       type: Number,
       default: 0
@@ -181,22 +229,82 @@ const userSchema = new mongoose.Schema({
       type: Number,
       default: 0
     },
+    // Blocked margin (legacy)
+    blocked: {
+      type: Number,
+      default: 0
+    },
+    // Last wallet recalculation timestamp
+    lastUpdatedAt: {
+      type: Date,
+      default: Date.now
+    },
     transactions: [walletTransactionSchema]
   },
   
-  // Separate Crypto Wallet - No margin system, spot trading only
+  // Separate Crypto Wallet - Spot trading with margin monitoring
   cryptoWallet: {
     // Crypto Balance in USD
     balance: {
       type: Number,
       default: 0
     },
-    // Realized P&L from crypto trades
+    // Equity - balance + totalUnrealizedPnL
+    equity: {
+      type: Number,
+      default: 0
+    },
+    // Used Margin - SUM of all open crypto position margins
+    usedMargin: {
+      type: Number,
+      default: 0
+    },
+    // Free Margin - equity - usedMargin
+    freeMargin: {
+      type: Number,
+      default: 0
+    },
+    // Margin Level - (equity / usedMargin) * 100
+    marginLevel: {
+      type: Number,
+      default: null
+    },
+    // Margin Call Active
+    marginCallActive: {
+      type: Boolean,
+      default: false
+    },
+    // Total Unrealized P&L
+    totalUnrealizedPnL: {
+      type: Number,
+      default: 0
+    },
+    // Total Realized P&L
+    totalRealizedPnL: {
+      type: Number,
+      default: 0
+    },
+    // Total Commissions
+    totalCommissions: {
+      type: Number,
+      default: 0
+    },
+    // Deposit Total
+    depositTotal: {
+      type: Number,
+      default: 0
+    },
+    // Withdrawal Total
+    withdrawalTotal: {
+      type: Number,
+      default: 0
+    },
+    // Realized P&L from crypto trades (legacy)
     realizedPnL: {
       type: Number,
       default: 0
     },
-    // Unrealized P&L from open crypto positions
+    // Unrealized P&L from open crypto positions (legacy)
     unrealizedPnL: {
       type: Number,
       default: 0
@@ -205,6 +313,11 @@ const userSchema = new mongoose.Schema({
     todayRealizedPnL: {
       type: Number,
       default: 0
+    },
+    // Last updated timestamp
+    lastUpdatedAt: {
+      type: Date,
+      default: Date.now
     }
   },
   
@@ -250,17 +363,62 @@ const userSchema = new mongoose.Schema({
       type: Number,
       default: 0
     },
+    // Equity - balance + totalUnrealizedPnL
+    equity: {
+      type: Number,
+      default: 0
+    },
     // Used Margin - Currently blocked for open MCX positions
     usedMargin: {
       type: Number,
       default: 0
     },
-    // Realized P&L from MCX trades
+    // Free Margin - equity - usedMargin
+    freeMargin: {
+      type: Number,
+      default: 0
+    },
+    // Margin Level - (equity / usedMargin) * 100
+    marginLevel: {
+      type: Number,
+      default: null
+    },
+    // Margin Call Active
+    marginCallActive: {
+      type: Boolean,
+      default: false
+    },
+    // Total Unrealized P&L
+    totalUnrealizedPnL: {
+      type: Number,
+      default: 0
+    },
+    // Total Realized P&L
+    totalRealizedPnL: {
+      type: Number,
+      default: 0
+    },
+    // Total Commissions
+    totalCommissions: {
+      type: Number,
+      default: 0
+    },
+    // Deposit Total
+    depositTotal: {
+      type: Number,
+      default: 0
+    },
+    // Withdrawal Total
+    withdrawalTotal: {
+      type: Number,
+      default: 0
+    },
+    // Realized P&L from MCX trades (legacy)
     realizedPnL: {
       type: Number,
       default: 0
     },
-    // Unrealized P&L from open MCX positions
+    // Unrealized P&L from open MCX positions (legacy)
     unrealizedPnL: {
       type: Number,
       default: 0
@@ -274,6 +432,11 @@ const userSchema = new mongoose.Schema({
     todayUnrealizedPnL: {
       type: Number,
       default: 0
+    },
+    // Last updated timestamp
+    lastUpdatedAt: {
+      type: Date,
+      default: Date.now
     }
   },
   

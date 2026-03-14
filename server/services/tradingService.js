@@ -8,6 +8,9 @@ import Notification from '../models/Notification.js';
 import Charges from '../models/Charges.js';
 import WalletLedger from '../models/WalletLedger.js';
 import SystemSettings from '../models/SystemSettings.js';
+import RiskConfig from '../models/RiskConfig.js';
+import WalletService from './walletService.js';
+import CircuitBreakerService from './circuitBreakerService.js';
 
 // Lot sizes for different instruments
 const LOT_SIZES = {
@@ -378,9 +381,20 @@ class TradingService {
   }
 
   // Place order - Uses user's segment and script settings for all calculations
+  // TradePro Trading Engine - 16-step validation pipeline
   static async placeOrder(userId, orderData) {
+    // ==================== STEP 1: USER ACTIVE CHECK ====================
     const user = await User.findById(userId).populate('admin', 'segmentPermissions');
     if (!user) throw new Error('User not found');
+    
+    if (!user.isActive) {
+      throw new Error('Account is suspended/inactive. Contact admin.');
+    }
+    
+    // Check if trading is blocked until a specific time (daily loss limit)
+    if (user.tradingBlockedUntil && new Date() < new Date(user.tradingBlockedUntil)) {
+      throw new Error('Trading is blocked until tomorrow due to daily loss limit.');
+    }
 
     // Attach parent admin's segment permissions to user for permission checks
     if (user.admin?.segmentPermissions) {
@@ -388,17 +402,44 @@ class TradingService {
     }
 
     const admin = await this.getAdminSettings(user);
+    
+    // Get risk config for this user
+    const riskConfig = await RiskConfig.getConfig(user.adminCode);
 
     if (user.rmsSettings?.tradingBlocked) {
       throw new Error('Trading blocked. Contact admin.');
     }
 
+    // ==================== STEP 2: MARKET HOURS CHECK ====================
     const exchange = orderData.exchange || 'NSE';
     const marketStatus = await this.isMarketOpen(exchange);
     const allowOutsideHours = admin?.tradingSettings?.allowTradingOutsideMarketHours || false;
     
     if (orderData.orderType === 'MARKET' && !marketStatus.open && !allowOutsideHours) {
       throw new Error(marketStatus.reason);
+    }
+    
+    // ==================== STEP 5: CIRCUIT LIMIT CHECK (TradePro) ====================
+    // Check instrument circuit status before proceeding
+    const instrument = await Instrument.findOne({ 
+      $or: [
+        { token: orderData.token?.toString() },
+        { symbol: orderData.symbol, exchange: orderData.exchange }
+      ]
+    });
+    
+    if (instrument) {
+      // Check if order side is allowed based on circuit status
+      const circuitCheck = CircuitBreakerService.checkOrderAllowed(instrument, orderData.side);
+      if (!circuitCheck.allowed) {
+        throw new Error(circuitCheck.reason);
+      }
+      
+      // Check if price is within circuit limits
+      const priceCheck = CircuitBreakerService.checkPriceWithinLimits(instrument, orderData.price);
+      if (!priceCheck.valid) {
+        throw new Error(priceCheck.reason);
+      }
     }
 
     // POSITION NETTING: Check if there's an existing opposite position for same symbol
@@ -1055,6 +1096,11 @@ class TradingService {
     }
     
     await trade.save();
+
+    // ==================== STEP 16: RECALCULATE WALLET STATE (TradePro) ====================
+    // Recalculate entire wallet state after trade placement
+    const walletField = WalletService.getWalletFieldFromTrade(trade);
+    await WalletService.recalculateWallet(userId, orderData.segment);
 
     // Check margin usage and send warning if > 70% (only for non-crypto trades)
     if (!isCrypto) {

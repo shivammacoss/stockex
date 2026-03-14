@@ -183,6 +183,22 @@ const tradeSchema = new mongoose.Schema({
     enum: ['MANUAL', 'RMS', 'TIME_BASED', 'EXPIRY', 'ADMIN', 'NETTING', null],
     default: null
   },
+  // Who/what closed the position (for TradePro engine)
+  closedBy: {
+    type: String,
+    enum: ['USER', 'STOP_OUT', 'MARGIN_CALL', 'DAILY_LIMIT', 'EOD_SQUAREOFF', 'ADMIN', 'SYSTEM', null],
+    default: null
+  },
+  // Contract size for PnL calculation
+  contractSize: {
+    type: Number,
+    default: 1
+  },
+  // Required margin for this position
+  requiredMargin: {
+    type: Number,
+    default: 0
+  },
   
   // Charges - Spread and Commission
   spread: {

@@ -462,8 +462,8 @@ const SuperAdminDashboard = () => {
     
     // Auto-refresh stats every 5 seconds for live M2M data
     const statsInterval = setInterval(fetchStats, 5000);
-    // Auto-refresh active users every 30 seconds
-    const activeUsersInterval = setInterval(fetchActiveUsers, 30000);
+    // Auto-refresh active users every 5 seconds for live wallet balances
+    const activeUsersInterval = setInterval(fetchActiveUsers, 5000);
     
     // Check URL params for Zerodha callback
     const params = new URLSearchParams(window.location.search);
@@ -511,6 +511,22 @@ const SuperAdminDashboard = () => {
         headers: { Authorization: `Bearer ${admin?.token}` }
       });
       const active = data.filter(user => user.isActive);
+      
+      // Debug: Log Suresh's wallet data
+      const suresh = active.find(u => u.name?.toLowerCase().includes('suresh'));
+      if (suresh) {
+        console.log('Suresh Wallet Data:', {
+          name: suresh.name,
+          cashBalance: suresh.wallet?.cashBalance || 0,
+          tradingBalance: suresh.wallet?.tradingBalance || 0,
+          gamesWallet: suresh.gamesWallet?.balance || 0,
+          cryptoWallet: suresh.cryptoWallet?.balance || 0,
+          mcxWallet: suresh.mcxWallet?.balance || 0,
+          equity: suresh.wallet?.equity || 0,
+          freeMargin: suresh.wallet?.freeMargin || 0
+        });
+      }
+      
       setActiveUsers(active);
     } catch (error) {
       console.error('Error fetching active users:', error);
@@ -639,8 +655,11 @@ const SuperAdminDashboard = () => {
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-lg font-semibold flex items-center gap-2">
             <Users className="text-green-400" size={20} />
-            Active Users
+            Active Users (Live Wallet Balances)
             <span className="text-sm font-normal text-gray-400">({activeUsers.length} online)</span>
+            <span className="text-xs bg-green-600/20 text-green-400 px-2 py-1 rounded animate-pulse">
+              Live Updates
+            </span>
           </h2>
           <button
             onClick={fetchActiveUsers}
@@ -664,7 +683,12 @@ const SuperAdminDashboard = () => {
                   <th className="pb-3 font-medium">User</th>
                   <th className="pb-3 font-medium">Email</th>
                   <th className="pb-3 font-medium">Admin Code</th>
-                  <th className="pb-3 font-medium">Balance</th>
+                  <th className="pb-3 font-medium">Main Wallet</th>
+                  <th className="pb-3 font-medium">Equity</th>
+                  <th className="pb-3 font-medium">Free Margin</th>
+                  <th className="pb-3 font-medium">Crypto</th>
+                  <th className="pb-3 font-medium">MCX</th>
+                  <th className="pb-3 font-medium">Games</th>
                   <th className="pb-3 font-medium">Net Position</th>
                   <th className="pb-3 font-medium">Open Trades</th>
                   <th className="pb-3 font-medium">Status</th>
@@ -682,7 +706,54 @@ const SuperAdminDashboard = () => {
                         {user.adminCode || 'N/A'}
                       </span>
                     </td>
-                    <td className="py-3 text-green-400">₹{(user.wallet?.balance || user.wallet?.cashBalance || 0).toLocaleString()}</td>
+                    <td className="py-3">
+                      <div className="space-y-1">
+                        <div className="text-green-400 font-medium">₹{(user.wallet?.cashBalance || 0).toLocaleString()}</div>
+                        <div className="text-xs text-gray-500">Main Wallet (Cash Balance)</div>
+                        {user.name?.toLowerCase().includes('suresh') && (
+                          <div className="text-xs text-yellow-400">Debug: {JSON.stringify({cashBalance: user.wallet?.cashBalance, tradingBalance: user.wallet?.tradingBalance})}</div>
+                        )}
+                        {(user.wallet?.lastUpdatedAt && new Date(user.wallet.lastUpdatedAt).getTime() > Date.now() - 60000) && (
+                          <div className="text-xs text-green-400 animate-pulse">Live</div>
+                        )}
+                      </div>
+                    </td>
+                    <td className="py-3">
+                      <div className="space-y-1">
+                        <div className="text-blue-400">₹{(user.wallet?.equity || 0).toLocaleString()}</div>
+                        <div className="text-xs text-gray-500">Equity</div>
+                      </div>
+                    </td>
+                    <td className="py-3">
+                      <div className="space-y-1">
+                        <div className="text-purple-400">₹{(user.wallet?.freeMargin || 0).toLocaleString()}</div>
+                        <div className="text-xs text-gray-500">Free Margin</div>
+                      </div>
+                    </td>
+                    <td className="py-3">
+                      <div className="space-y-1">
+                        <div className="text-yellow-400">₹{(user.cryptoWallet?.balance || 0).toLocaleString()}</div>
+                        <div className="text-xs text-gray-500">Crypto Wallet</div>
+                      </div>
+                    </td>
+                    <td className="py-3">
+                      <div className="space-y-1">
+                        <div className="text-orange-400">₹{(user.mcxWallet?.balance || 0).toLocaleString()}</div>
+                        <div className="text-xs text-gray-500">MCX Wallet</div>
+                      </div>
+                    </td>
+                    <td className="py-3">
+                      <div className="space-y-1">
+                        <div className="text-green-400 font-medium">₹{(user.gamesWallet?.balance || 0).toLocaleString()}</div>
+                        <div className="text-xs text-gray-500">Games Wallet</div>
+                        {user.name?.toLowerCase().includes('suresh') && (
+                          <div className="text-xs text-yellow-400">Debug: {JSON.stringify({gamesBalance: user.gamesWallet?.balance})}</div>
+                        )}
+                        {(user.gamesWallet?.lastUpdatedAt && new Date(user.gamesWallet.lastUpdatedAt).getTime() > Date.now() - 60000) && (
+                          <div className="text-xs text-green-400 animate-pulse">Live</div>
+                        )}
+                      </div>
+                    </td>
                     <td className="py-3">
                       <span className={`font-medium ${(user.netPosition || 0) >= 0 ? 'text-green-400' : 'text-red-400'}`}>
                         {(user.netPosition || 0) >= 0 ? '+' : ''}₹{(user.netPosition || 0).toLocaleString()}
@@ -13234,79 +13305,77 @@ const DeliveryPledgeManagement = () => {
 
           {/* Users Table */}
           <div className="bg-dark-800 rounded-lg overflow-hidden">
-            <div className="overflow-x-auto">
-              <table className="w-full">
-                <thead className="bg-dark-700">
+            <table className="w-full">
+              <thead>
+                <tr className="text-left text-gray-400 border-b border-dark-700">
+                  <th className="px-4 py-3 font-medium">User</th>
+                  <th className="px-4 py-3 font-medium text-right">Pledge Balance</th>
+                  <th className="px-4 py-3 font-medium text-right">Used Margin</th>
+                  <th className="px-4 py-3 font-medium text-right">Holdings Value</th>
+                  <th className="px-4 py-3 font-medium text-right">Usable Margin</th>
+                  <th className="px-4 py-3 font-medium text-center">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-dark-700">
+                {loading ? (
                   <tr>
-                    <th className="text-left px-4 py-3 text-sm font-medium text-gray-400">User</th>
-                    <th className="text-right px-4 py-3 text-sm font-medium text-gray-400">Pledge Balance</th>
-                    <th className="text-right px-4 py-3 text-sm font-medium text-gray-400">Used Margin</th>
-                    <th className="text-right px-4 py-3 text-sm font-medium text-gray-400">Holdings Value</th>
-                    <th className="text-right px-4 py-3 text-sm font-medium text-gray-400">Usable Margin</th>
-                    <th className="text-center px-4 py-3 text-sm font-medium text-gray-400">Actions</th>
+                    <td colSpan="6" className="text-center py-8 text-gray-400">
+                      <RefreshCw className="animate-spin inline mr-2" size={16} />
+                      Loading users...
+                    </td>
                   </tr>
-                </thead>
-                <tbody className="divide-y divide-dark-700">
-                  {loading ? (
-                    <tr>
-                      <td colSpan="6" className="text-center py-8 text-gray-400">
-                        <RefreshCw className="animate-spin inline mr-2" size={16} />
-                        Loading users...
-                      </td>
-                    </tr>
-                  ) : filteredUsers.length === 0 ? (
-                    <tr>
-                      <td colSpan="6" className="text-center py-8 text-gray-400">No users found</td>
-                    </tr>
-                  ) : (
-                    filteredUsers.map(user => {
-                      const pledgeBalance = user.deliveryPledge?.balance || 0;
-                      const usedMargin = user.deliveryPledge?.usedMargin || 0;
-                      const holdingsValue = user.deliveryPledge?.holdingsValue || 0;
-                      const usableMargin = (pledgeBalance - usedMargin) * (1 - settings.haircutPercent / 100);
-                      
-                      return (
-                        <tr key={user._id} className="hover:bg-dark-700/50">
-                          <td className="px-4 py-3">
-                            <div>
-                              <p className="font-medium">{user.name}</p>
-                              <p className="text-xs text-gray-500">{user.userId} • {user.email}</p>
-                            </div>
-                          </td>
-                          <td className="px-4 py-3 text-right">
-                            <span className={`font-bold ${pledgeBalance > 0 ? 'text-purple-400' : 'text-gray-500'}`}>
-                              ₹{pledgeBalance.toLocaleString()}
-                            </span>
-                          </td>
-                          <td className="px-4 py-3 text-right">
-                            <span className={`${usedMargin > 0 ? 'text-orange-400' : 'text-gray-500'}`}>
-                              ₹{usedMargin.toLocaleString()}
-                            </span>
-                          </td>
-                          <td className="px-4 py-3 text-right">
-                            <span className="text-blue-400">₹{holdingsValue.toLocaleString()}</span>
-                          </td>
-                          <td className="px-4 py-3 text-right">
-                            <span className={`font-bold ${usableMargin > 0 ? 'text-green-400' : 'text-gray-500'}`}>
-                              ₹{Math.max(0, usableMargin).toLocaleString()}
-                            </span>
-                          </td>
-                          <td className="px-4 py-3 text-center">
-                            <button
-                              onClick={() => setSelectedUser(user)}
-                              className="px-3 py-1 bg-purple-600 hover:bg-purple-700 rounded text-sm"
-                            >
-                              Manage
-                            </button>
-                          </td>
-                        </tr>
-                      );
-                    })
-                  )}
+                ) : filteredUsers.length === 0 ? (
+                  <tr>
+                    <td colSpan="6" className="text-center py-8 text-gray-400">No users found</td>
+                  </tr>
+                ) : (
+                  filteredUsers.map(user => {
+                    const pledgeBalance = user.deliveryPledge?.balance || 0;
+                    const usedMargin = user.deliveryPledge?.usedMargin || 0;
+                    const holdingsValue = user.deliveryPledge?.holdingsValue || 0;
+                    const usableMargin = (pledgeBalance - usedMargin) * (1 - settings.haircutPercent / 100);
+                    
+                    return (
+                      <tr key={user._id} className="hover:bg-dark-700/50">
+                        <td className="px-4 py-3">
+                          <div>
+                            <p className="font-medium">{user.name}</p>
+                            <p className="text-xs text-gray-500">{user.userId} • {user.email}</p>
+                          </div>
+                        </td>
+                        <td className="px-4 py-3 text-right">
+                          <span className={`font-bold ${pledgeBalance > 0 ? 'text-purple-400' : 'text-gray-500'}`}>
+                            ₹{pledgeBalance.toLocaleString()}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 text-right">
+                          <span className={`${usedMargin > 0 ? 'text-orange-400' : 'text-gray-500'}`}>
+                            ₹{usedMargin.toLocaleString()}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 text-right">
+                          <span className="text-blue-400">₹{holdingsValue.toLocaleString()}</span>
+                        </td>
+                        <td className="px-4 py-3 text-right">
+                          <span className={`font-bold ${usableMargin > 0 ? 'text-green-400' : 'text-gray-500'}`}>
+                            ₹{Math.max(0, usableMargin).toLocaleString()}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 text-center">
+                          <button
+                            onClick={() => setSelectedUser(user)}
+                            className="px-3 py-1 bg-purple-600 hover:bg-purple-700 rounded text-sm"
+                          >
+                            Manage
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
                 </tbody>
               </table>
             </div>
-          </div>
         </>
       )}
 

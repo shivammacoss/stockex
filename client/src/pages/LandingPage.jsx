@@ -681,6 +681,96 @@ const LandingPage = () => {
         </div>
       </section>
 
+      {/* IQ Quiz Section */}
+      <section className="py-20 bg-gradient-to-b from-purple-900/20 to-dark-900">
+        <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="text-center mb-12">
+            <p className="text-purple-400 font-semibold mb-2">Test Yourself</p>
+            <h2 className="text-3xl sm:text-4xl font-bold mb-4">Let's Test Your IQ Level</h2>
+            <p className="text-gray-400 text-lg">Take this quick 5-question quiz to test your general knowledge!</p>
+          </div>
+
+          <div className="max-w-2xl mx-auto">
+            {!quizStarted ? (
+              <div className="text-center bg-dark-800 border border-purple-500/30 rounded-2xl p-8">
+                <Brain className="w-16 h-16 text-purple-400 mx-auto mb-6" />
+                <p className="text-gray-300 mb-6">Challenge yourself with 5 simple questions about India. Are you ready?</p>
+                <button
+                  onClick={() => setQuizStarted(true)}
+                  className="bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 px-10 py-4 rounded-xl font-bold text-lg transition flex items-center gap-3 mx-auto"
+                >
+                  <Target className="w-6 h-6" />
+                  Start Quiz
+                </button>
+              </div>
+            ) : quizCompleted ? (
+              <div className="text-center bg-dark-800 border border-purple-500/30 rounded-2xl p-8">
+                <Trophy className="w-20 h-20 text-yellow-400 mx-auto mb-6" />
+                <h3 className="text-3xl font-bold mb-4">Quiz Completed!</h3>
+                <p className="text-gray-400 text-lg mb-4">You got {correctCount} out of {quizQuestions.length} correct</p>
+                <p className={`text-3xl font-bold mb-8 ${getQuizResult(correctCount).color}`}>
+                  {getQuizResult(correctCount).emoji} {getQuizResult(correctCount).message}
+                </p>
+                <button
+                  onClick={resetQuiz}
+                  className="bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 px-8 py-3 rounded-xl font-semibold transition"
+                >
+                  Try Again
+                </button>
+              </div>
+            ) : (
+              <div className="bg-dark-800 border border-purple-500/30 rounded-2xl p-8">
+                <div className="flex items-center justify-between mb-6">
+                  <span className="text-purple-400 font-bold text-lg">Question {currentQuestion + 1} of {quizQuestions.length}</span>
+                  <div className="flex gap-2">
+                    {quizQuestions.map((_, idx) => (
+                      <div
+                        key={idx}
+                        className={`w-3 h-3 rounded-full transition ${
+                          idx < currentQuestion ? 'bg-green-500' : idx === currentQuestion ? 'bg-purple-500 animate-pulse' : 'bg-dark-600'
+                        }`}
+                      />
+                    ))}
+                  </div>
+                </div>
+                <h4 className="text-xl font-bold mb-6">{quizQuestions[currentQuestion].question}</h4>
+                <div className="space-y-3 mb-8">
+                  {quizQuestions[currentQuestion].options.map((option, idx) => (
+                    <button
+                      key={idx}
+                      onClick={() => handleAnswerSelect(currentQuestion, idx)}
+                      className={`w-full text-left px-5 py-4 rounded-xl border-2 transition ${
+                        selectedAnswers[currentQuestion] === idx
+                          ? 'border-purple-500 bg-purple-500/20 text-white'
+                          : 'border-dark-600 bg-dark-700 hover:border-purple-500/50 text-gray-300'
+                      }`}
+                    >
+                      <span className="font-bold mr-3 text-purple-400">{String.fromCharCode(65 + idx)}.</span>
+                      {option}
+                    </button>
+                  ))}
+                </div>
+                <div className="flex justify-between items-center">
+                  <button
+                    onClick={resetQuiz}
+                    className="text-gray-400 hover:text-white transition px-4 py-2"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleNextQuestion}
+                    disabled={selectedAnswers[currentQuestion] === undefined}
+                    className="bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 disabled:opacity-50 disabled:cursor-not-allowed px-8 py-3 rounded-xl font-semibold transition"
+                  >
+                    {currentQuestion < quizQuestions.length - 1 ? 'Next Question →' : 'Submit Quiz'}
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      </section>
+
       {/* Blog Section */}
       <section className="py-20 bg-dark-800/50">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -918,91 +1008,6 @@ const LandingPage = () => {
                   <Send className="w-4 h-4" />
                 </button>
               </form>
-            </div>
-          </div>
-
-          {/* IQ Quiz Section */}
-          <div className="border-t border-dark-700 pt-8 mb-8">
-            <div className="max-w-2xl mx-auto">
-              {!quizStarted ? (
-                <div className="text-center">
-                  <div className="flex items-center justify-center gap-3 mb-4">
-                    <Brain className="w-8 h-8 text-purple-400" />
-                    <h3 className="text-xl font-bold">Let's Test Your IQ Level</h3>
-                  </div>
-                  <p className="text-gray-400 mb-6">Take this quick 5-question quiz to test your general knowledge!</p>
-                  <button
-                    onClick={() => setQuizStarted(true)}
-                    className="bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 px-8 py-3 rounded-lg font-semibold transition flex items-center gap-2 mx-auto"
-                  >
-                    <Target className="w-5 h-5" />
-                    Start Quiz
-                  </button>
-                </div>
-              ) : quizCompleted ? (
-                <div className="text-center bg-dark-800 border border-dark-600 rounded-2xl p-8">
-                  <Trophy className="w-16 h-16 text-yellow-400 mx-auto mb-4" />
-                  <h3 className="text-2xl font-bold mb-2">Quiz Completed!</h3>
-                  <p className="text-gray-400 mb-4">You got {correctCount} out of {quizQuestions.length} correct</p>
-                  <p className={`text-2xl font-bold mb-6 ${getQuizResult(correctCount).color}`}>
-                    {getQuizResult(correctCount).emoji} {getQuizResult(correctCount).message}
-                  </p>
-                  <button
-                    onClick={resetQuiz}
-                    className="bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 px-6 py-2 rounded-lg font-semibold transition"
-                  >
-                    Try Again
-                  </button>
-                </div>
-              ) : (
-                <div className="bg-dark-800 border border-dark-600 rounded-2xl p-6">
-                  <div className="flex items-center justify-between mb-4">
-                    <span className="text-purple-400 font-semibold">Question {currentQuestion + 1} of {quizQuestions.length}</span>
-                    <div className="flex gap-1">
-                      {quizQuestions.map((_, idx) => (
-                        <div
-                          key={idx}
-                          className={`w-2 h-2 rounded-full ${
-                            idx < currentQuestion ? 'bg-green-500' : idx === currentQuestion ? 'bg-purple-500' : 'bg-dark-600'
-                          }`}
-                        />
-                      ))}
-                    </div>
-                  </div>
-                  <h4 className="text-lg font-bold mb-4">{quizQuestions[currentQuestion].question}</h4>
-                  <div className="space-y-3 mb-6">
-                    {quizQuestions[currentQuestion].options.map((option, idx) => (
-                      <button
-                        key={idx}
-                        onClick={() => handleAnswerSelect(currentQuestion, idx)}
-                        className={`w-full text-left px-4 py-3 rounded-lg border transition ${
-                          selectedAnswers[currentQuestion] === idx
-                            ? 'border-purple-500 bg-purple-500/20 text-white'
-                            : 'border-dark-600 bg-dark-700 hover:border-purple-500/50 text-gray-300'
-                        }`}
-                      >
-                        <span className="font-medium mr-2">{String.fromCharCode(65 + idx)}.</span>
-                        {option}
-                      </button>
-                    ))}
-                  </div>
-                  <div className="flex justify-between">
-                    <button
-                      onClick={resetQuiz}
-                      className="text-gray-400 hover:text-white transition"
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      onClick={handleNextQuestion}
-                      disabled={selectedAnswers[currentQuestion] === undefined}
-                      className="bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 disabled:opacity-50 disabled:cursor-not-allowed px-6 py-2 rounded-lg font-semibold transition"
-                    >
-                      {currentQuestion < quizQuestions.length - 1 ? 'Next' : 'Submit'}
-                    </button>
-                  </div>
-                </div>
-              )}
             </div>
           </div>
 

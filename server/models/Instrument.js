@@ -169,6 +169,74 @@ const instrumentSchema = new mongoose.Schema({
   isFeatured: {
     type: Boolean,
     default: false
+  },
+  
+  // ==================== CIRCUIT BREAKER FIELDS ====================
+  // Previous day close price (set daily before market open)
+  previousDayClosePrice: {
+    type: Number,
+    default: 0
+  },
+  // Circuit limit percentage (2, 5, 10, or 20 - admin configurable per script)
+  circuitLimitPercent: {
+    type: Number,
+    default: 10,
+    enum: [2, 5, 10, 15, 20, 30]
+  },
+  // Upper circuit price = previousDayClosePrice * (1 + circuitLimitPercent/100)
+  upperCircuit: {
+    type: Number,
+    default: 0
+  },
+  // Lower circuit price = previousDayClosePrice * (1 - circuitLimitPercent/100)
+  lowerCircuit: {
+    type: Number,
+    default: 0
+  },
+  // True when price hits upper circuit
+  upperCircuitHit: {
+    type: Boolean,
+    default: false
+  },
+  // True when price hits lower circuit
+  lowerCircuitHit: {
+    type: Boolean,
+    default: false
+  },
+  // False when upperCircuitHit = true (only SELL allowed)
+  allowBuy: {
+    type: Boolean,
+    default: true
+  },
+  // False when lowerCircuitHit = true (only BUY allowed)
+  allowSell: {
+    type: Boolean,
+    default: true
+  },
+  // Contract size for margin/PnL calculation (for F&O)
+  contractSize: {
+    type: Number,
+    default: 1
+  },
+  // Spread points (admin configurable)
+  spreadPoints: {
+    type: Number,
+    default: 0
+  },
+  // Fixed margin per lot (if set, overrides exposure-based calculation)
+  fixedMarginPerLot: {
+    type: Number,
+    default: 0
+  },
+  // Max allowed quantity per order
+  maxAllowedQty: {
+    type: Number,
+    default: 10000
+  },
+  // Is script blocked for trading
+  isBlocked: {
+    type: Boolean,
+    default: false
   }
 }, { timestamps: true });
 

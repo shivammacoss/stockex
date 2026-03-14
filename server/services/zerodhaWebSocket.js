@@ -1,14 +1,18 @@
 import { KiteTicker } from 'kiteconnect';
+import MarginMonitorService from './marginMonitorService.js';
 
 let ticker = null;
 let io = null;
 let subscribedTokens = [];
 let marketData = {};
+let marginMonitorEnabled = true; // Toggle for margin monitoring
 
 // Initialize WebSocket with Socket.IO instance
 export const initZerodhaWebSocket = (socketIO) => {
   io = socketIO;
-  console.log('Zerodha WebSocket service initialized');
+  // Initialize margin monitor with same Socket.IO instance
+  MarginMonitorService.init(socketIO);
+  console.log('Zerodha WebSocket service initialized with TradePro Margin Monitor');
 };
 
 // Essential tokens that should always be subscribed (for games and indices)
@@ -184,6 +188,16 @@ const processTicks = (ticks) => {
   if (io && Object.keys(updates).length > 0) {
     io.emit('market_tick', updates);
   }
+  
+  // ==================== TRADEPRO MARGIN MONITOR INTEGRATION ====================
+  // Process price ticks for margin monitoring (PnL, equity, stop-out checks)
+  if (marginMonitorEnabled && Object.keys(updates).length > 0) {
+    // Process each tick for margin monitoring (async, non-blocking)
+    for (const [token, tickData] of Object.entries(updates)) {
+      MarginMonitorService.onPriceTick(token, tickData.ltp, tickData)
+        .catch(err => console.error(`Margin monitor error for token ${token}:`, err.message));
+    }
+  }
 };
 
 // Get current market data
@@ -209,6 +223,15 @@ export const disconnectTicker = () => {
   }
 };
 
+// Toggle margin monitoring on/off
+export const setMarginMonitorEnabled = (enabled) => {
+  marginMonitorEnabled = enabled;
+  console.log(`Margin monitoring ${enabled ? 'enabled' : 'disabled'}`);
+};
+
+// Get margin monitor status
+export const isMarginMonitorEnabled = () => marginMonitorEnabled;
+
 export default {
   initZerodhaWebSocket,
   connectTicker,
@@ -216,5 +239,7 @@ export default {
   unsubscribeTokens,
   getMarketData,
   getTickerStatus,
-  disconnectTicker
+  disconnectTicker,
+  setMarginMonitorEnabled,
+  isMarginMonitorEnabled
 };

@@ -1150,7 +1150,7 @@ router.post('/users/:userId/transfer', protectAdmin, superAdminOnly, async (req,
 router.get('/all-users', protectAdmin, superAdminOnly, async (req, res) => {
   try {
     const users = await User.find()
-      .select('-password')
+      .select('-password -__v')
       .populate('admin', 'name adminCode')
       .sort({ createdAt: -1 });
     
