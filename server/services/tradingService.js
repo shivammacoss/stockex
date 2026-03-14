@@ -759,13 +759,29 @@ class TradingService {
         throw new Error(`Cannot place trade. Your trading balance is ₹0. Please add funds to your trading account.`);
       }
       
-      // Include Delivery Pledge as available margin (with haircut applied)
+      // NEW DELIVERY PLEDGE LOGIC:
+      // Pledge margin can ONLY be used for NFO/Futures margin requirement, NOT for losses
+      // Check if this is an NFO/Futures trade (not Cash/Delivery)
+      const isNFOTrade = orderData.segment === 'NFO' || orderData.segment === 'NSEFUT' || 
+                         orderData.segment === 'NSEOPT' || orderData.segment === 'FNO' ||
+                         orderData.exchange === 'NFO' || orderData.instrumentType === 'FUTURES' ||
+                         orderData.instrumentType === 'OPTIONS';
+      const isCashTrade = orderData.productType === 'CNC' || orderData.productType === 'DELIVERY' ||
+                          orderData.segment === 'NSE-EQ' || orderData.segment === 'BSE-EQ' ||
+                          orderData.segment === 'EQUITY';
+      
+      // Pledge margin only available for NFO/Futures trades (for margin only, not losses)
       const pledgeBalance = user.deliveryPledge?.balance || 0;
       const pledgeUsedMargin = user.deliveryPledge?.usedMargin || 0;
-      const pledgeSettings = admin?.deliveryPledgeSettings || { haircutPercent: 10 };
+      const pledgeSettings = admin?.deliveryPledgeSettings || { haircutPercent: 10, pledgeMarginPercent: 50 };
       const haircutPercent = pledgeSettings.haircutPercent || 10;
-      const usablePledge = (pledgeBalance - pledgeUsedMargin) * (1 - haircutPercent / 100);
       
+      // Usable pledge = (balance - usedMargin) * (1 - haircut%)
+      // Only available for NFO/Futures trades
+      const usablePledge = isNFOTrade ? (pledgeBalance - pledgeUsedMargin) * (1 - haircutPercent / 100) : 0;
+      
+      // For Cash/Delivery trades: 1:1 leverage, no pledge benefit
+      // For NFO/Futures trades: wallet + pledge margin available for margin requirement
       availableBalance = (walletBalance - blockedMargin) + Math.max(0, usablePledge);
       
       // CRITICAL: Ensure available balance is positive
@@ -775,7 +791,8 @@ class TradingService {
       
       // Check if user has enough for margin + commission
       if ((marginRequired + totalCommission) > availableBalance) {
-        throw new Error(`Insufficient funds. Required: ₹${(marginRequired + totalCommission).toLocaleString()}, Available: ₹${availableBalance.toLocaleString()} (includes ₹${Math.max(0, usablePledge).toLocaleString()} pledge margin)`);
+        const pledgeMsg = isNFOTrade && usablePledge > 0 ? ` (Pledge: ₹${Math.max(0, usablePledge).toLocaleString()} used FIRST, then Wallet)` : '';
+        throw new Error(`Insufficient funds. Required: ₹${(marginRequired + totalCommission).toLocaleString()}, Available: ₹${availableBalance.toLocaleString()}${pledgeMsg}`);
       }
     }
 
@@ -920,13 +937,58 @@ class TradingService {
     } else {
       // Regular trades: Block margin in usedMargin, deduct only commission from balance
       // Available = tradingBalance - usedMargin, so margin is only tracked in usedMargin
-      newTradingBalance = (user.wallet.tradingBalance || 0) - totalCommission; // Only commission deducted
-      newUsedMargin = (user.wallet.usedMargin || 0) + marginRequired; // Block margin
-      newBlocked = (user.wallet.blocked || 0) + marginRequired;
+      
+      // NEW DELIVERY PLEDGE LOGIC for NFO/Futures:
+      // Check if this is an NFO/Futures trade that can use pledge margin
+      const isNFOTrade = orderData.segment === 'NFO' || orderData.segment === 'NSEFUT' || 
+                         orderData.segment === 'NSEOPT' || orderData.segment === 'FNO' ||
+                         orderData.exchange === 'NFO' || orderData.instrumentType === 'FUTURES' ||
+                         orderData.instrumentType === 'OPTIONS';
+      
+      const walletBalance = user.wallet.tradingBalance || 0;
+      const walletUsedMargin = user.wallet.usedMargin || 0;
+      const walletAvailable = walletBalance - walletUsedMargin;
+      
+      // Calculate how much margin comes from pledge vs wallet
+      // NEW LOGIC: Pledge FIRST, then Wallet
+      let marginFromWallet = 0;
+      let marginFromPledge = 0;
+      
+      if (isNFOTrade) {
+        // For NFO trades, use pledge margin FIRST, then wallet
+        const pledgeBalance = user.deliveryPledge?.balance || 0;
+        const pledgeUsedMargin = user.deliveryPledge?.usedMargin || 0;
+        const pledgeSettings = admin?.deliveryPledgeSettings || { haircutPercent: 10 };
+        const haircutPercent = pledgeSettings.haircutPercent || 10;
+        const usablePledge = (pledgeBalance - pledgeUsedMargin) * (1 - haircutPercent / 100);
+        
+        // PRIORITY: Use pledge margin FIRST, then wallet for remaining
+        if (usablePledge > 0) {
+          marginFromPledge = Math.min(marginRequired, usablePledge);
+          marginFromWallet = Math.max(0, marginRequired - marginFromPledge);
+          console.log(`NFO Trade: Using ₹${marginFromPledge.toLocaleString()} from pledge (FIRST) + ₹${marginFromWallet.toLocaleString()} from wallet`);
+        } else {
+          // No pledge available, use wallet only
+          marginFromWallet = marginRequired;
+        }
+      } else {
+        // Non-NFO trades use wallet only
+        marginFromWallet = marginRequired;
+      }
+      
+      newTradingBalance = walletBalance - totalCommission; // Only commission deducted
+      newUsedMargin = walletUsedMargin + marginFromWallet; // Block wallet margin
+      newBlocked = (user.wallet.blocked || 0) + marginFromWallet;
       newCryptoBalance = user.cryptoWallet?.balance || 0; // Unchanged
       // MCX wallet unchanged
       newMcxBalance = user.mcxWallet?.balance || 0;
       newMcxUsedMargin = user.mcxWallet?.usedMargin || 0;
+      
+      // Track pledge margin usage for NFO trades
+      if (marginFromPledge > 0) {
+        // Store pledge margin used in trade for release on close
+        trade.pledgeMarginUsed = marginFromPledge;
+      }
     }
     
     // Prevent negative balances
@@ -950,6 +1012,13 @@ class TradingService {
     if (isMCXTrade) {
       updateFields['mcxWallet.balance'] = newMcxBalance;
       updateFields['mcxWallet.usedMargin'] = newMcxUsedMargin;
+    }
+    
+    // Update pledge margin usage for NFO trades
+    const marginFromPledge = trade.pledgeMarginUsed || 0;
+    if (marginFromPledge > 0) {
+      updateFields['deliveryPledge.usedMargin'] = (user.deliveryPledge?.usedMargin || 0) + marginFromPledge;
+      updateFields['deliveryPledge.lastUpdated'] = new Date();
     }
     
     // Deduct available quantity when opening a position (non-crypto only)
@@ -1208,9 +1277,16 @@ class TradingService {
       newMcxBalance = (user.mcxWallet?.balance || 0) + netPnL;
       newMcxRealizedPnL = (user.mcxWallet?.realizedPnL || 0) + netPnL;
     } else {
+      // NEW DELIVERY PLEDGE LOGIC:
+      // Release wallet margin (marginUsed) - pledge margin is tracked separately
+      // Losses MUST come from actual wallet, NOT from pledge margin
       newUsedMargin = Math.max(0, (user.wallet.usedMargin || 0) - trade.marginUsed);
       newBlocked = Math.max(0, (user.wallet.blocked || 0) - trade.marginUsed);
+      
+      // P&L is applied to wallet balance (losses come from wallet, not pledge)
+      // Pledge margin is only for margin requirement, not for covering losses
       newTradingBalance = (user.wallet.tradingBalance || 0) + netPnL;
+      
       newCryptoBalance = user.cryptoWallet?.balance || 0;
       newCryptoRealizedPnL = user.cryptoWallet?.realizedPnL || 0;
       newMcxBalance = user.mcxWallet?.balance || 0;
@@ -1232,6 +1308,15 @@ class TradingService {
       'wallet.tradingBalance': newTradingBalance,
       'wallet.realizedPnL': newRealizedPnL
     };
+    
+    // Release pledge margin if it was used for this trade (NFO/Futures)
+    const pledgeMarginUsed = trade.pledgeMarginUsed || 0;
+    if (pledgeMarginUsed > 0) {
+      const currentPledgeUsedMargin = user.deliveryPledge?.usedMargin || 0;
+      updateFields['deliveryPledge.usedMargin'] = Math.max(0, currentPledgeUsedMargin - pledgeMarginUsed);
+      updateFields['deliveryPledge.lastUpdated'] = new Date();
+      console.log(`NFO Trade Close: Released ₹${pledgeMarginUsed.toLocaleString()} pledge margin. P&L: ₹${netPnL.toLocaleString()} (from wallet)`);
+    }
     
     if (trade.isCrypto) {
       updateFields['cryptoWallet.balance'] = newCryptoBalance;

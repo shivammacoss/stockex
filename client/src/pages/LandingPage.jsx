@@ -24,7 +24,10 @@ import {
   Play,
   Award,
   Shield,
-  UserPlus
+  UserPlus,
+  Brain,
+  Trophy,
+  Target
 } from 'lucide-react';
 
 const LandingPage = () => {
@@ -38,6 +41,76 @@ const LandingPage = () => {
     email: '',
     message: ''
   });
+
+  // IQ Quiz State
+  const [quizStarted, setQuizStarted] = useState(false);
+  const [currentQuestion, setCurrentQuestion] = useState(0);
+  const [selectedAnswers, setSelectedAnswers] = useState({});
+  const [quizCompleted, setQuizCompleted] = useState(false);
+  const [correctCount, setCorrectCount] = useState(0);
+
+  const quizQuestions = [
+    {
+      question: "Who is the Prime Minister of India?",
+      options: ["Rahul Gandhi", "Narendra Modi", "Amit Shah", "Yogi Adityanath"],
+      correct: 1
+    },
+    {
+      question: "What is the tallest statue in India?",
+      options: ["Statue of Unity", "Statue of Liberty", "Thiruvalluvar Statue", "Shivaji Statue"],
+      correct: 0
+    },
+    {
+      question: "What is the longest river in India?",
+      options: ["Yamuna", "Brahmaputra", "Ganga", "Godavari"],
+      correct: 2
+    },
+    {
+      question: "What is the capital of India?",
+      options: ["Mumbai", "Kolkata", "New Delhi", "Chennai"],
+      correct: 2
+    },
+    {
+      question: "What is the Maruti 800?",
+      options: ["A motorcycle", "India's first affordable car", "A train", "An airplane"],
+      correct: 1
+    }
+  ];
+
+  const getQuizResult = (score) => {
+    if (score === 5) return { message: "Your IQ is great!", color: "text-green-400", emoji: "🏆" };
+    if (score === 4) return { message: "Your IQ level is great!", color: "text-green-400", emoji: "🌟" };
+    if (score === 3) return { message: "Yes, you can do it!", color: "text-yellow-400", emoji: "💪" };
+    if (score === 2) return { message: "You can do much better!", color: "text-orange-400", emoji: "📈" };
+    if (score === 1) return { message: "You can do better!", color: "text-orange-400", emoji: "🎯" };
+    return { message: "Keep learning and try again!", color: "text-red-400", emoji: "📚" };
+  };
+
+  const handleAnswerSelect = (questionIndex, answerIndex) => {
+    setSelectedAnswers({ ...selectedAnswers, [questionIndex]: answerIndex });
+  };
+
+  const handleNextQuestion = () => {
+    if (currentQuestion < quizQuestions.length - 1) {
+      setCurrentQuestion(currentQuestion + 1);
+    } else {
+      // Calculate score
+      let score = 0;
+      quizQuestions.forEach((q, index) => {
+        if (selectedAnswers[index] === q.correct) score++;
+      });
+      setCorrectCount(score);
+      setQuizCompleted(true);
+    }
+  };
+
+  const resetQuiz = () => {
+    setQuizStarted(false);
+    setCurrentQuestion(0);
+    setSelectedAnswers({});
+    setQuizCompleted(false);
+    setCorrectCount(0);
+  };
 
   // Fetch certified brokers on mount
   useEffect(() => {
@@ -845,6 +918,91 @@ const LandingPage = () => {
                   <Send className="w-4 h-4" />
                 </button>
               </form>
+            </div>
+          </div>
+
+          {/* IQ Quiz Section */}
+          <div className="border-t border-dark-700 pt-8 mb-8">
+            <div className="max-w-2xl mx-auto">
+              {!quizStarted ? (
+                <div className="text-center">
+                  <div className="flex items-center justify-center gap-3 mb-4">
+                    <Brain className="w-8 h-8 text-purple-400" />
+                    <h3 className="text-xl font-bold">Let's Test Your IQ Level</h3>
+                  </div>
+                  <p className="text-gray-400 mb-6">Take this quick 5-question quiz to test your general knowledge!</p>
+                  <button
+                    onClick={() => setQuizStarted(true)}
+                    className="bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 px-8 py-3 rounded-lg font-semibold transition flex items-center gap-2 mx-auto"
+                  >
+                    <Target className="w-5 h-5" />
+                    Start Quiz
+                  </button>
+                </div>
+              ) : quizCompleted ? (
+                <div className="text-center bg-dark-800 border border-dark-600 rounded-2xl p-8">
+                  <Trophy className="w-16 h-16 text-yellow-400 mx-auto mb-4" />
+                  <h3 className="text-2xl font-bold mb-2">Quiz Completed!</h3>
+                  <p className="text-gray-400 mb-4">You got {correctCount} out of {quizQuestions.length} correct</p>
+                  <p className={`text-2xl font-bold mb-6 ${getQuizResult(correctCount).color}`}>
+                    {getQuizResult(correctCount).emoji} {getQuizResult(correctCount).message}
+                  </p>
+                  <button
+                    onClick={resetQuiz}
+                    className="bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 px-6 py-2 rounded-lg font-semibold transition"
+                  >
+                    Try Again
+                  </button>
+                </div>
+              ) : (
+                <div className="bg-dark-800 border border-dark-600 rounded-2xl p-6">
+                  <div className="flex items-center justify-between mb-4">
+                    <span className="text-purple-400 font-semibold">Question {currentQuestion + 1} of {quizQuestions.length}</span>
+                    <div className="flex gap-1">
+                      {quizQuestions.map((_, idx) => (
+                        <div
+                          key={idx}
+                          className={`w-2 h-2 rounded-full ${
+                            idx < currentQuestion ? 'bg-green-500' : idx === currentQuestion ? 'bg-purple-500' : 'bg-dark-600'
+                          }`}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                  <h4 className="text-lg font-bold mb-4">{quizQuestions[currentQuestion].question}</h4>
+                  <div className="space-y-3 mb-6">
+                    {quizQuestions[currentQuestion].options.map((option, idx) => (
+                      <button
+                        key={idx}
+                        onClick={() => handleAnswerSelect(currentQuestion, idx)}
+                        className={`w-full text-left px-4 py-3 rounded-lg border transition ${
+                          selectedAnswers[currentQuestion] === idx
+                            ? 'border-purple-500 bg-purple-500/20 text-white'
+                            : 'border-dark-600 bg-dark-700 hover:border-purple-500/50 text-gray-300'
+                        }`}
+                      >
+                        <span className="font-medium mr-2">{String.fromCharCode(65 + idx)}.</span>
+                        {option}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="flex justify-between">
+                    <button
+                      onClick={resetQuiz}
+                      className="text-gray-400 hover:text-white transition"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={handleNextQuestion}
+                      disabled={selectedAnswers[currentQuestion] === undefined}
+                      className="bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 disabled:opacity-50 disabled:cursor-not-allowed px-6 py-2 rounded-lg font-semibold transition"
+                    >
+                      {currentQuestion < quizQuestions.length - 1 ? 'Next' : 'Submit'}
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
 

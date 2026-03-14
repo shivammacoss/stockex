@@ -208,25 +208,33 @@ const userSchema = new mongoose.Schema({
     }
   },
   
-  // Delivery Pledge - Margin from delivery (CNC) trades that can be used for trading
-  // When user buys in delivery, a % of buy value is added to pledge
-  // When user sells in delivery, a % of sell value is added to pledge
-  // This pledge can be used as margin for trading any instrument
+  // Delivery Pledge - Margin from delivery (CNC) trades
+  // NEW LOGIC:
+  // 1. NSE/BSE Cash segment: 1:1 leverage (no leverage, full amount deducted)
+  // 2. When user BUYS stock in Cash segment, stock is auto-pledged to StockEx
+  // 3. User gets X% (dynamic, default 50%) of stock value as pledge margin for NFO/Futures ONLY
+  // 4. Pledge margin can ONLY be used for margin requirement in Futures/NFO
+  // 5. Pledge margin CANNOT be used to cover losses - losses must come from actual wallet
   deliveryPledge: {
-    // Total pledged amount available as margin
+    // Total pledged amount available as margin for NFO/Futures ONLY
     balance: {
       type: Number,
       default: 0
     },
-    // Amount currently used as margin for open positions
+    // Amount currently used as margin for open NFO/Futures positions
     usedMargin: {
       type: Number,
       default: 0
     },
-    // Total value of delivery holdings (for reference)
+    // Total value of delivery holdings (stocks held)
     holdingsValue: {
       type: Number,
       default: 0
+    },
+    // Pledge margin percent (dynamic, set by admin)
+    marginPercent: {
+      type: Number,
+      default: 50
     },
     // History of pledge additions
     lastUpdated: {

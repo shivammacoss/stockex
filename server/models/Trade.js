@@ -157,6 +157,12 @@ const tradeSchema = new mongoose.Schema({
     type: Number,
     default: 0
   },
+  // Pledge margin used for NFO/Futures trades (from delivery pledge)
+  // This is tracked separately so losses come from wallet, not pledge
+  pledgeMarginUsed: {
+    type: Number,
+    default: 0
+  },
   leverage: {
     type: Number,
     default: 1
